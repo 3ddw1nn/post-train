@@ -1,0 +1,35 @@
+import { requireUser } from "@/lib/auth";
+import { PLATFORMS } from "@/lib/platforms";
+import { PlatformIcon } from "@/components/platform-icon";
+import { FooterBar } from "../../footer-bar";
+
+export const metadata = { title: "Add your accounts" };
+
+export default async function OnboardingConnectAdd() {
+  await requireUser();
+  const grid = PLATFORMS.filter((p) => p.onboardingGrid);
+  return (
+    <div className="fade-up mx-auto max-w-2xl">
+      <h1 className="text-2xl font-bold">Add all your accounts</h1>
+      <p className="mt-1 text-sm text-muted">
+        Connect with each platform&apos;s official sign-in. We never see or store your
+        passwords.
+      </p>
+      <div className="mt-6 grid grid-cols-2 gap-3 sm:grid-cols-3">
+        {grid.map((p) => (
+          <div key={p.id} className="card flex flex-col items-center gap-3 p-5">
+            <PlatformIcon id={p.id} size={30} />
+            <p className="text-sm font-semibold">{p.name}</p>
+            <a
+              href={`/oauth/mock/${p.id}?return=${encodeURIComponent("/onboarding/connect")}`}
+              className="btn-primary w-full !py-1.5"
+            >
+              Add
+            </a>
+          </div>
+        ))}
+      </div>
+      <FooterBar backHref="/onboarding/connect" />
+    </div>
+  );
+}
