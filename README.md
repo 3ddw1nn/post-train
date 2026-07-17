@@ -59,6 +59,31 @@ curl -X POST -H "Authorization: Bearer $KEY" -H "Content-Type: application/json"
 Full reference at `/docs/api`. The MCP server (11 tools) lives at `/api/mcp/mcp` —
 streamable-HTTP, same Bearer key.
 
+## Deploying
+
+This app needs **one persistent, always-on process with a persistent disk** — not a
+serverless/edge platform. Two reasons: storage is a SQLite file + local disk media (an
+ephemeral filesystem wipes both on every cold start/redeploy), and the scheduled-post
+worker is an in-process `setInterval` (`instrumentation.ts`) that needs to keep ticking
+even with no incoming traffic, and would double-publish if you ever ran more than one
+instance. Vercel's default deploy model doesn't fit this; a small always-on VM/container
+does.
+
+A `Dockerfile` + `fly.toml` are included, tested locally end-to-end (build → run with a
+mounted volume → restart the container → confirm the account/data survived the
+restart). To deploy on [Fly.io](https://fly.io):
+
+```bash
+brew install flyctl        # or see fly.io/docs/flyctl/install
+fly auth login
+fly launch --copy-config --no-deploy   # keep the existing fly.toml when asked
+fly volumes create post_train_data --size 1 --region iad
+fly deploy
+```
+
+The same `Dockerfile` works on Railway, Render, or any host that runs Docker images with
+an attached persistent volume — just point the volume at `/app/.data`.
+
 ## Layout
 
 - `lib/` — domain logic: db schema, auth, entitlements, billing, queue engine, tz math,
