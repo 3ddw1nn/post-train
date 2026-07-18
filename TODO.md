@@ -51,7 +51,7 @@ links only appear in the terminal. Nothing is ever sent.
 - [x] Brevo account + API key + verified sender (`ehleedev@gmail.com` — swap to a real domain later; Gmail-as-sender hurts deliverability)
 - [x] Swap `queueEmail()` body for Brevo API call (call sites unchanged; dev fallback = console log)
 - [x] `BREVO_API_KEY` / `EMAIL_FROM` / `EMAIL_FROM_NAME` in `.env.local` — confirmed working (real password-reset email delivered)
-- [ ] Add `BREVO_API_KEY` etc. to Fly secrets before deploying
+- [ ] Add `BREVO_API_KEY` etc. to Vercel + Render env vars (worker sends emails too)
 
 ## ✅ 3. Stripe billing — REAL, tested end-to-end
 
@@ -69,7 +69,7 @@ generate $0 invoices, so there was no real charge yet to refund against.
 - [x] API add-on wired to real Stripe subscription items (add/swap/remove)
 - [x] Refund route → real `stripe.refunds.create` + cancel (code path only, not charge-tested)
 - [x] Removed lazy `settle()` roll-forward — webhooks are now the source of truth
-- [ ] Add `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / price IDs to Fly secrets before deploying
+- [ ] Add `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / price IDs to Vercel env vars before going live
 - [ ] In production, replace local `stripe listen` with a real webhook endpoint registered in the Stripe dashboard
 - [ ] Test a real refund against an actual charge (needs a trial to lapse or a test clock)
 
@@ -175,7 +175,7 @@ free CPU). $0/month total; scheduled work may start up to ~5 min late.
 ## 🟢 5. Deferred (fine to skip for launch)
 
 - [ ] Video transcoding — "server video processing" pref is a no-op today; wait until
-      a platform actually rejects uploads (then: fly worker + ffmpeg, or Mux)
+      a platform actually rejects uploads (then: ffmpeg on the Render worker, or Mux)
 - [ ] Webhook retry scanning (`webhook_deliveries.attempts` exists; worker doesn't retry yet)
 - [x] R2 token re-scoped to `post-train-media` bucket only (verified: can access the bucket, denied on account-wide ops)
 

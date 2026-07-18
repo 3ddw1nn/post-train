@@ -100,18 +100,11 @@ Steps:
 4. Point `NEXT_PUBLIC_APP_URL`, OAuth redirect URIs (LinkedIn/Twitter dev
    consoles too), and the Stripe webhook endpoint at the **Vercel** domain.
 
-### Deploy on Fly.io (always-on, not free)
+### Alternative: any always-on Docker host
 
-Posts fire exactly on schedule with no pinger workaround needed — Fly keeps
-the process alive continuously (`min_machines_running = 1` in `fly.toml`) for a
-small ongoing cost.
-
-```bash
-brew install flyctl        # or see fly.io/docs/flyctl/install
-fly auth login
-fly launch --copy-config --no-deploy   # keep the existing fly.toml when asked
-fly deploy
-```
+The same `Dockerfile` runs on any host that keeps one container alive
+continuously (Fly.io, Railway, a VPS). Set `WORKER_ENABLED=1` there and posts
+fire exactly on schedule with no pinger needed — for whatever that host charges.
 
 ## Cloudflare R2 media
 

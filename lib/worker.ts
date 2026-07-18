@@ -1,7 +1,7 @@
 // Job tick: publishes due posts and advances Content Studio renders. Runs
 // two ways depending on host:
-//  - Fly (or any always-on host): the in-process 15s interval below, started
-//    once from instrumentation.ts.
+//  - Any always-on host (WORKER_ENABLED=1): the in-process 15s interval below,
+//    started once from instrumentation.ts.
 //  - Render free tier (or any host that sleeps on idle): an external pinger
 //    hits GET /api/cron/tick, which calls runWorkerTick() directly — see
 //    app/api/cron/tick/route.ts.

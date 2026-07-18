@@ -2,8 +2,8 @@
 // tier). Register this URL with a free external pinger (e.g. cron-job.org)
 // every ~5 minutes: https://your-app/api/cron/tick?token=$CRON_SECRET
 // The request itself counts as inbound traffic, so it also prevents/reverses
-// idle spin-down. On always-on hosts (Fly) this is unused — lib/worker.ts's
-// in-process interval already covers it.
+// idle spin-down. On always-on hosts (WORKER_ENABLED=1) this is unused —
+// lib/worker.ts's in-process interval already covers it.
 import { timingSafeEqual } from "node:crypto";
 import { runWorkerTick } from "@/lib/worker";
 

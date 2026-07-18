@@ -1,4 +1,4 @@
-# Post Train — stateless web deploy (Fly.io / Railway / Render / any Docker host).
+# Post Train — stateless web deploy (Render worker / Railway / any Docker host).
 
 FROM node:24-alpine AS deps
 WORKDIR /app
