@@ -39,6 +39,11 @@ export async function runWorkerTick(): Promise<{ published: number; studioAdvanc
 }
 
 export function startWorker() {
+  // Hybrid deploy: only the designated worker instance (Render, WORKER_ENABLED=1)
+  // runs the interval — the Vercel app must not tick, or posts could publish
+  // twice (processDuePosts has no cross-process claim, unlike studio jobs).
+  // Dev keeps ticking with zero config.
+  if (process.env.NODE_ENV === "production" && process.env.WORKER_ENABLED !== "1") return;
   if (g.__ptWorker) return;
   g.__ptWorker = setInterval(runWorkerTick, 15_000);
   console.log("[worker] scheduler started (15s tick)");

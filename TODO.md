@@ -144,25 +144,33 @@ and verified end-to-end in mock mode; this section is what's left to go live.
 - [ ] Decide before launch: purchasable credit add-ons beyond the flat monthly
       cap (deferred; upgrade path is noted in code)
 
-## 🟠 8. Deploy to Render free tier — needs pinger + R2
+## 🟠 8. Free hybrid deploy — Vercel (app) + Render (worker) + Convex + R2
 
-Currently: `render.yaml` + `/api/cron/tick` are built and verified locally (auth
-correctly rejects/accepts, runs the real tick), but nothing is deployed yet.
+Decided 2026-07-18: users hit Vercel (fast, free); the Render free service runs
+the same codebase as a pinger-woken background worker (publish + ffmpeg renders,
+free CPU). $0/month total; scheduled work may start up to ~5 min late.
 
-- [x] `render.yaml` Blueprint, `GET /api/cron/tick?token=` endpoint (timing-safe
-      compare, fails closed if `CRON_SECRET` isn't set)
-- [x] `lib/worker.ts` refactored so the in-process interval (Fly) and the HTTP
-      tick (Render) share one busy-gated `runWorkerTick()` — never double-runs
-- [ ] R2 env vars (see below) — **required** on Render free, not just
-      recommended; its filesystem is ephemeral so local-fallback media gets
-      wiped on every spin-down/redeploy
-- [ ] `CRON_SECRET` — generate (`openssl rand -hex 32`) and set in the Render
-      dashboard
-- [ ] Create the Render Blueprint deploy, add all env vars as secrets
-- [ ] Register the cron URL with a free pinger (cron-job.org or similar) on a
+- [x] `render.yaml` Blueprint (now sets `WORKER_ENABLED=1`), `GET /api/cron/tick`
+      endpoint (timing-safe compare, fails closed without `CRON_SECRET`)
+- [x] `lib/worker.ts`: interval gated on `WORKER_ENABLED=1` in production so the
+      Vercel app never ticks (double-publish risk — posts have no cross-process
+      claim); dev still ticks with zero config
+- [x] Render Blueprint deploy created (`post-train`, Docker, free, Oregon) — env
+      vars not yet set
+- [ ] Production Convex deployment (`npx convex deploy`) — currently everything
+      points at the dev deployment; set its URL on both Vercel + Render, and
+      re-set the support-chat AI keys via `npx convex env set` on prod
+- [ ] R2 env vars on **both** deployments (Cloudflare dashboard → R2 API token);
+      add both domains to the bucket CORS policy
+- [ ] `PT_SECRET` — one value, identical on both deployments (worker must
+      decrypt what the app encrypts)
+- [ ] `CRON_SECRET` on Render; register the tick URL with cron-job.org on a
       5-minute interval
-- [ ] First real deploy smoke test: sign up, schedule a post a few minutes
-      out, confirm it actually fires
+- [ ] Vercel: import repo, set app env vars, `NEXT_PUBLIC_APP_URL` +
+      OAuth redirect URIs (update LinkedIn/Twitter dev consoles too) + Stripe
+      webhook endpoint → Vercel domain
+- [ ] Smoke test: sign up on the Vercel URL, schedule a post a few minutes out,
+      confirm the Render worker fires it; render a grid video end-to-end
 
 ## 🟢 5. Deferred (fine to skip for launch)
 

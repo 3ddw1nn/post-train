@@ -65,26 +65,40 @@ started from `instrumentation.ts`) ideally run in one always-on Node process. Th
 database is Convex and media should be Cloudflare R2 in production, so no
 persistent volume is required on either host below.
 
-### Deploy on Render (free)
+### Free hybrid: Vercel (app) + Render (worker) + Convex + R2
 
-Render's free web services sleep after 15 minutes with no inbound HTTP traffic,
-which would delay scheduled posts and studio renders indefinitely. The fix:
-an external free pinger hits `GET /api/cron/tick` every ~5 minutes, which both
-wakes the service and runs the worker tick directly (`lib/worker.ts`'s
-`runWorkerTick()`) — so scheduled items fire within roughly that window instead
-of exactly on time.
+The recommended $0 deploy. Users only ever touch the Vercel deployment (fast,
+no cold starts); the Render free service runs the same codebase purely as the
+background worker — publishing scheduled posts and running ffmpeg studio
+renders — woken every ~5 minutes by a free external pinger. Render's free-tier
+sleep never affects users because nobody visits its URL; it only means
+scheduled work can start up to ~5 minutes late.
 
-1. **R2 is required, not optional, on Render free** — its filesystem is ephemeral,
-   so without R2 any locally-stored media is wiped on every spin-down or redeploy.
-   Set the R2 env vars below.
-2. Generate a cron secret: `openssl rand -hex 32` → set as `CRON_SECRET`.
-3. In the Render dashboard: **New → Blueprint**, point at this repo (reads
-   `render.yaml`), and add your env vars as secrets (`NEXT_PUBLIC_CONVEX_URL`,
-   `R2_*`, `STRIPE_*`, `CRON_SECRET`, etc. — same variables as local `.env.local`).
-4. Register `https://<your-app>.onrender.com/api/cron/tick?token=<CRON_SECRET>`
+Shared requirements:
+
+- **R2 is required** (not optional): Vercel and Render can't share a disk, and
+  both filesystems are ephemeral. All media must live in R2 — set the R2 vars
+  on **both** deployments, and add both domains to the bucket CORS policy.
+- **`PT_SECRET` must be identical on both** deployments — the app encrypts
+  social-account credentials with it and the worker decrypts them.
+- Both deployments point at the same production Convex deployment
+  (`npx convex deploy`, then use its URL as `NEXT_PUBLIC_CONVEX_URL`).
+
+Steps:
+
+1. **Vercel** (serves the app): import the GitHub repo at vercel.com, framework
+   auto-detects Next.js. Set all app env vars (`NEXT_PUBLIC_CONVEX_URL`, `R2_*`,
+   `STRIPE_*`, OAuth creds, `BREVO_*`, `PT_SECRET`). Do **not** set
+   `WORKER_ENABLED` — the Vercel app must not tick (double-publish risk).
+2. **Render** (worker): **New → Blueprint** on this repo (reads `render.yaml`,
+   which sets `WORKER_ENABLED=1`). Set the same env vars plus `CRON_SECRET`
+   (`openssl rand -hex 32`).
+3. Register `https://<render-app>.onrender.com/api/cron/tick?token=<CRON_SECRET>`
    with a free pinger (e.g. [cron-job.org](https://cron-job.org)) on a 5-minute
-   interval. Pinging that often keeps the service continuously warm, which stays
-   within Render's 750 free instance-hours/month.
+   interval — this wakes the worker and runs the tick. That cadence keeps the
+   service warm within Render's 750 free instance-hours/month.
+4. Point `NEXT_PUBLIC_APP_URL`, OAuth redirect URIs (LinkedIn/Twitter dev
+   consoles too), and the Stripe webhook endpoint at the **Vercel** domain.
 
 ### Deploy on Fly.io (always-on, not free)
 

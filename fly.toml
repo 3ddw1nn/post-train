@@ -9,6 +9,8 @@ primary_region = "iad"
 
 [env]
 PORT = "3000"
+# Fly is an always-on single-instance deploy: it serves the app AND ticks the worker.
+WORKER_ENABLED = "1"
 
 [http_service]
 internal_port = 3000

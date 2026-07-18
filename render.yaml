@@ -15,5 +15,10 @@ services:
     envVars:
       - key: PORT
         value: 3000
+      # Hybrid role: this Render service is the background worker (publishes
+      # scheduled posts, runs ffmpeg studio renders). The user-facing app is
+      # served by Vercel, which must NOT tick — see lib/worker.ts.
+      - key: WORKER_ENABLED
+        value: "1"
       # Set the rest (NEXT_PUBLIC_CONVEX_URL, R2_*, STRIPE_*, CRON_SECRET,
       # etc.) as secrets in the Render dashboard — not committed here.
