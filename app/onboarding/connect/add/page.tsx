@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { PLATFORMS } from "@/lib/platforms";
+import { PLATFORMS, connectHref } from "@/lib/platforms";
 import { PlatformIcon } from "@/components/platform-icon";
 import { FooterBar } from "../../footer-bar";
 
@@ -21,7 +21,7 @@ export default async function OnboardingConnectAdd() {
             <PlatformIcon id={p.id} size={30} />
             <p className="text-sm font-semibold">{p.name}</p>
             <a
-              href={`/oauth/mock/${p.id}?return=${encodeURIComponent("/onboarding/connect")}`}
+              href={connectHref(p.id, { returnTo: "/onboarding/connect" })}
               className="btn-primary w-full !py-1.5"
             >
               Add

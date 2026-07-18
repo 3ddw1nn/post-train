@@ -8,7 +8,7 @@ export const metadata = { title: "Queue" };
 export default async function QueueSettingsPage() {
   const user = await requireOnboardedUser();
   const ws = await currentWorkspace(user);
-  const slots = slotsForWorkspace(ws.id);
+  const slots = await slotsForWorkspace(ws.id);
 
   return (
     <QueueEditor

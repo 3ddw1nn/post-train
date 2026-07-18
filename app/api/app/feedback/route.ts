@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { getDb, now, uid } from "@/lib/db";
+import { insertRecord, now, uid } from "@/lib/db";
 
 export async function POST(req: Request) {
   const user = await requireUser();
@@ -8,8 +8,6 @@ export async function POST(req: Request) {
   if (!text) {
     return Response.json({ error: { message: "Say something first 🙂" } }, { status: 400 });
   }
-  getDb()
-    .prepare("INSERT INTO feedback (id, user_id, body, created_at) VALUES (?, ?, ?, ?)")
-    .run(uid(), user.id, text.slice(0, 4000), now());
+  await insertRecord("feedback", { id: uid(), user_id: user.id, body: text.slice(0, 4000), created_at: now() });
   return Response.json({ ok: true });
 }

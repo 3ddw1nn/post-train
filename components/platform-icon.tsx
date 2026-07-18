@@ -49,11 +49,13 @@ export function PlatformIconRow({
 export function AccountAvatar({
   username,
   platformId,
+  avatarUrl,
   size = 40,
   selected,
 }: {
   username: string;
   platformId: string;
+  avatarUrl?: string | null;
   size?: number;
   selected?: boolean;
 }) {
@@ -71,15 +73,25 @@ export function AccountAvatar({
       }`}
       style={{ width: size, height: size }}
     >
-      <span
-        className="flex h-full w-full items-center justify-center rounded-full text-white font-bold"
-        style={{
-          background: `hsl(${hue} 45% 55%)`,
-          fontSize: size * 0.42,
-        }}
-      >
-        {initial}
-      </span>
+      {avatarUrl ? (
+        // eslint-disable-next-line @next/next/no-img-element -- external, per-user URLs from 4+ platforms; not worth Next/Image's domain allowlist churn
+        <img
+          src={avatarUrl}
+          alt={username}
+          className="h-full w-full rounded-full object-cover"
+          referrerPolicy="no-referrer"
+        />
+      ) : (
+        <span
+          className="flex h-full w-full items-center justify-center rounded-full text-white font-bold"
+          style={{
+            background: `hsl(${hue} 45% 55%)`,
+            fontSize: size * 0.42,
+          }}
+        >
+          {initial}
+        </span>
+      )}
       <span
         className="absolute -bottom-0.5 -right-0.5 flex items-center justify-center rounded-full bg-white shadow ring-1 ring-line"
         style={{ width: size * 0.48, height: size * 0.48 }}

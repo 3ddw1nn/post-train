@@ -14,14 +14,14 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
-  if (findUserByEmail(email)) {
+  if (await findUserByEmail(email)) {
     return Response.json(
       { error: { message: "An account with this email already exists." } },
       { status: 409 }
     );
   }
   const tz = typeof body?.timezone === "string" && isValidTimezone(body.timezone) ? body.timezone : "UTC";
-  const user = createUser({
+  const user = await createUser({
     email,
     password,
     displayName: body?.display_name ? String(body.display_name) : undefined,

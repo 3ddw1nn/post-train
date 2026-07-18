@@ -1,10 +1,10 @@
 import { authenticateApiKey, jsonError } from "@/lib/api-auth";
-import { getDb } from "@/lib/db";
+import { listRecords } from "@/lib/db";
 import { DomainError, getPostRow } from "@/lib/posts";
 
 export async function GET(req: Request) {
   try {
-    const ctx = authenticateApiKey(req);
+    const ctx = await authenticateApiKey(req);
     const url = new URL(req.url);
     const postId = url.searchParams.get("post_id");
     const limit = Math.min(Number(url.searchParams.get("limit") ?? 50) || 50, 100);
@@ -13,28 +13,21 @@ export async function GET(req: Request) {
     const where: string[] = ["p.workspace_id = ?"];
     const params: (string | number)[] = [ctx.workspace.id];
     if (postId) {
-      const post = getPostRow(postId);
+      const post = await getPostRow(postId);
       if (!post || post.workspace_id !== ctx.workspace.id) {
         throw new DomainError(404, "Post not found.");
       }
-      where.push("r.post_id = ?");
-      params.push(postId);
     }
-    const db = getDb();
-    const whereSql = where.join(" AND ");
-    const count = (
-      db
-        .prepare(
-          `SELECT COUNT(*) c FROM post_results r JOIN posts p ON p.id = r.post_id WHERE ${whereSql}`
-        )
-        .get(...params) as { c: number }
-    ).c;
-    const rows = db
-      .prepare(
-        `SELECT r.* FROM post_results r JOIN posts p ON p.id = r.post_id
-         WHERE ${whereSql} ORDER BY r.completed_at DESC LIMIT ? OFFSET ?`
-      )
-      .all(...params, limit, offset) as Record<string, unknown>[];
+    const posts = await listRecords<{ id: string; workspace_id: string }>("posts", {
+      workspace_id: ctx.workspace.id,
+    });
+    const postIds = new Set(posts.map((p) => p.id));
+    let rows = (await listRecords<Record<string, unknown>>("post_results"))
+      .filter((r) => postIds.has(String(r.post_id)));
+    if (postId) rows = rows.filter((r) => r.post_id === postId);
+    rows.sort((a, b) => String(b.completed_at).localeCompare(String(a.completed_at)));
+    const count = rows.length;
+    rows = rows.slice(offset, offset + limit);
     return Response.json({
       data: rows.map((r) => ({
         id: r.id,

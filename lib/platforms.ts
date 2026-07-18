@@ -9,6 +9,7 @@ import {
   siThreads,
   siPinterest,
   siGoogle,
+  siMastodon,
 } from "simple-icons";
 
 export type PlatformId =
@@ -21,7 +22,8 @@ export type PlatformId =
   | "bluesky"
   | "threads"
   | "pinterest"
-  | "google_business";
+  | "google_business"
+  | "mastodon";
 
 export type PostType = "text" | "image" | "video" | "story";
 
@@ -116,6 +118,19 @@ export const PLATFORMS: Platform[] = [
     shareUrl: (u, id) => `https://bsky.app/profile/${u}/post/${id}`,
   },
   {
+    id: "mastodon",
+    name: "Mastodon",
+    slug: "mastodon",
+    hex: `#${siMastodon.hex}`,
+    path: siMastodon.path,
+    supports: ["text", "image", "video"],
+    analytics: false,
+    onboardingGrid: true,
+    // Real share URL comes back from the publish call itself (instance-specific);
+    // this is only a fallback for the pre-connect simulated preview.
+    shareUrl: (u, id) => `https://mastodon.social/@${u}/${id}`,
+  },
+  {
     id: "threads",
     name: "Threads",
     slug: "threads",
@@ -153,6 +168,15 @@ export const PLATFORMS: Platform[] = [
 export const platform = (id: string): Platform | undefined =>
   PLATFORMS.find((p) => p.id === id);
 
+/** Twitter/LinkedIn use a real OAuth 2.0 redirect flow; everything else still uses the mock consent screen. */
+export function connectHref(id: PlatformId, opts: { returnTo: string; reconnect?: number }): string {
+  const params = new URLSearchParams({ return: opts.returnTo });
+  if (opts.reconnect) params.set("reconnect", String(opts.reconnect));
+  if (id === "twitter") return `/api/connections/twitter/start?${params}`;
+  if (id === "linkedin") return `/api/connections/linkedin/start?${params}`;
+  return `/oauth/mock/${id}?${params}`;
+}
+
 export const platformBySlug = (slug: string): Platform | undefined =>
   PLATFORMS.find((p) => p.slug === slug);
 
@@ -160,8 +184,23 @@ export const platformsForType = (type: PostType) =>
   PLATFORMS.filter((p) => p.supports.includes(type));
 
 /** Platforms that only take the first 4 images of a carousel. */
-export const FOUR_IMAGE_PLATFORMS: PlatformId[] = ["twitter", "bluesky", "threads"];
+export const FOUR_IMAGE_PLATFORMS: PlatformId[] = ["twitter", "bluesky", "threads", "mastodon"];
 
 export const ANALYTICS_PLATFORMS: PlatformId[] = ["tiktok", "youtube", "instagram"];
 
 export const CAPTION_MAX = 2200;
+
+/** Shared across the dashboard + onboarding connect pages — both are valid `return` targets after a real OAuth flow. */
+export const CONNECT_ERRORS: Record<string, string> = {
+  oauth_cancelled: "Connection cancelled — no account was linked.",
+  plan_limit: "Your plan's connected-account limit is reached — upgrade to connect more.",
+  mastodon_auth_failed: "Mastodon authorization failed or was cancelled.",
+  mastodon_auth_expired: "That Mastodon session expired — try connecting again.",
+  mastodon_platform_error: "Mastodon couldn't complete the connection — try again in a moment.",
+  twitter_auth_failed: "Twitter/X authorization failed or was cancelled.",
+  twitter_auth_expired: "That Twitter/X session expired — try connecting again.",
+  twitter_platform_error: "Twitter/X couldn't complete the connection — try again in a moment.",
+  linkedin_auth_failed: "LinkedIn authorization failed or was cancelled.",
+  linkedin_auth_expired: "That LinkedIn session expired — try connecting again.",
+  linkedin_platform_error: "LinkedIn couldn't complete the connection — try again in a moment.",
+};

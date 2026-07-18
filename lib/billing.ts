@@ -1,9 +1,11 @@
-// Simulated billing service mirroring Stripe subscription semantics.
-// ponytail: this is the Stripe seam — swap startCheckout/confirmCheckout/cancel/pause/etc.
-// for real Stripe Checkout sessions + webhook upserts; the subscriptions table already
-// mirrors the Stripe fields (status, cancel_at_period_end, trial/period ends).
-import { getDb, now, uid } from "./db";
-import { PLANS, API_ADDON, TRIAL_DAYS } from "./billing-data";
+// Real Stripe billing. Subscription lifecycle (activation, renewal, past_due,
+// cancellation) is driven by webhooks (app/api/webhooks/stripe/route.ts) —
+// this file only issues Stripe API calls and mirrors the immediate result
+// into Convex so the UI doesn't have to wait a round trip for the webhook.
+import { convexMutation, convexQuery, now } from "./db";
+import { PLANS, API_ADDON, TRIAL_DAYS, type PaidPlan } from "./billing-data";
+import { stripe, planPriceId, addonPriceId } from "./stripe";
+import { api } from "@/convex/_generated/api";
 
 export { PLANS, API_ADDON, TRIAL_DAYS };
 
@@ -19,122 +21,143 @@ export type Subscription = {
   current_period_end: string | null;
   api_addon: number;
   api_addon_interval: string | null;
+  stripe_customer_id?: string | null;
+  stripe_subscription_id?: string | null;
   created_at: string;
   updated_at: string;
 };
 
-const addDays = (d: Date, days: number) => new Date(d.getTime() + days * 86400_000);
-const addMonths = (d: Date, months: number) => {
-  const c = new Date(d);
-  c.setMonth(c.getMonth() + months);
-  return c;
-};
-
-export function getSubscription(userId: string): Subscription | null {
-  const sub = getDb()
-    .prepare("SELECT * FROM subscriptions WHERE user_id = ?")
-    .get(userId) as Subscription | undefined;
-  if (!sub) return null;
-  return settle(sub);
+export async function getSubscription(userId: string): Promise<Subscription | null> {
+  return await convexQuery<Subscription | null>(api.billing.getSubscription, { user_id: userId });
 }
 
-/** Lazily roll subscription state forward (stands in for Stripe lifecycle webhooks). */
-function settle(sub: Subscription): Subscription {
-  const db = getDb();
-  const ts = new Date();
-  let changed = false;
-  if (sub.status === "trialing" && sub.trial_ends_at && new Date(sub.trial_ends_at) <= ts) {
-    if (sub.cancel_at_period_end) {
-      sub.status = "canceled";
-    } else {
-      sub.status = "active"; // simulated successful first charge
-    }
-    changed = true;
-  }
-  if (
-    sub.status === "active" &&
-    sub.cancel_at_period_end &&
-    sub.current_period_end &&
-    new Date(sub.current_period_end) <= ts
-  ) {
-    sub.status = "canceled";
-    changed = true;
-  }
-  if (changed) {
-    db.prepare("UPDATE subscriptions SET status = ?, updated_at = ? WHERE id = ?").run(
-      sub.status,
-      now(),
-      sub.id
-    );
-  }
-  return sub;
+function requireStripeSubscriptionId(sub: Subscription | null): string {
+  if (!sub?.stripe_subscription_id) throw new Error("No active subscription found.");
+  return sub.stripe_subscription_id;
 }
 
-/** Called on return from (simulated) checkout. Creates/updates the subscription with a 7-day trial. */
-export function confirmCheckout(userId: string, plan: Exclude<Plan, "free">, interval: "month" | "year") {
-  const db = getDb();
-  const ts = new Date();
-  const existing = db
-    .prepare("SELECT * FROM subscriptions WHERE user_id = ?")
-    .get(userId) as Subscription | undefined;
-  const periodEnd = interval === "year" ? addMonths(ts, 12) : addMonths(ts, 1);
-  if (existing && ["trialing", "active"].includes(existing.status) && !existing.cancel_at_period_end) {
-    // plan change on a live subscription: keep status, swap plan/interval
-    db.prepare(
-      "UPDATE subscriptions SET plan = ?, interval = ?, updated_at = ? WHERE id = ?"
-    ).run(plan, interval, now(), existing.id);
-  } else if (existing) {
-    // re-subscribe after cancel/pause: fresh trial-less activation
-    db.prepare(
-      `UPDATE subscriptions SET plan = ?, interval = ?, status = 'active', cancel_at_period_end = 0,
-       trial_ends_at = NULL, current_period_end = ?, updated_at = ? WHERE id = ?`
-    ).run(plan, interval, periodEnd.toISOString(), now(), existing.id);
-  } else {
-    db.prepare(
-      `INSERT INTO subscriptions (id, user_id, plan, interval, status, trial_ends_at, current_period_end, created_at, updated_at)
-       VALUES (?, ?, ?, ?, 'trialing', ?, ?, ?, ?)`
-    ).run(
-      uid(),
-      userId,
+/** New subscriber: real Stripe Checkout Session (hosted page), 7-day trial. */
+export async function createCheckoutSession(
+  userId: string,
+  userEmail: string,
+  plan: PaidPlan,
+  interval: "month" | "year",
+  origin: string
+): Promise<string> {
+  const existing = await getSubscription(userId);
+  const session = await stripe().checkout.sessions.create({
+    mode: "subscription",
+    line_items: [{ price: planPriceId(plan, interval), quantity: 1 }],
+    subscription_data: {
+      trial_period_days: existing ? undefined : TRIAL_DAYS,
+      metadata: { user_id: userId },
+    },
+    client_reference_id: userId,
+    ...(existing?.stripe_customer_id
+      ? { customer: existing.stripe_customer_id }
+      : { customer_email: userEmail }),
+    success_url: `${origin}/dashboard/settings/billing?checkout=success`,
+    cancel_url: `${origin}/dashboard/settings/plans`,
+  });
+  if (!session.url) throw new Error("Stripe did not return a checkout URL.");
+  return session.url;
+}
+
+/** Existing subscriber changing plans: update the live Stripe subscription in place (prorated). */
+export async function changePlan(userId: string, plan: PaidPlan, interval: "month" | "year") {
+  const sub = await getSubscription(userId);
+  const subId = requireStripeSubscriptionId(sub);
+  const stripeSub = await stripe().subscriptions.retrieve(subId);
+  const item = stripeSub.items.data[0];
+  const updated = await stripe().subscriptions.update(subId, {
+    items: [{ id: item.id, price: planPriceId(plan, interval) }],
+    proration_behavior: "create_prorations",
+  });
+  await convexMutation(api.billing.patchByUser, {
+    user_id: userId,
+    patch: {
       plan,
       interval,
-      addDays(ts, TRIAL_DAYS).toISOString(),
-      periodEnd.toISOString(),
-      now(),
-      now()
-    );
+      status: updated.status,
+      current_period_end: new Date(updated.items.data[0].current_period_end * 1000).toISOString(),
+      updated_at: now(),
+    },
+  });
+}
+
+export async function cancelSubscription(userId: string) {
+  const sub = await getSubscription(userId);
+  const subId = requireStripeSubscriptionId(sub);
+  await stripe().subscriptions.update(subId, { cancel_at_period_end: true });
+  await convexMutation(api.billing.patchByUser, {
+    user_id: userId,
+    patch: { cancel_at_period_end: 1, updated_at: now() },
+  });
+}
+
+export async function pauseSubscription(userId: string) {
+  const sub = await getSubscription(userId);
+  const subId = requireStripeSubscriptionId(sub);
+  await stripe().subscriptions.update(subId, { pause_collection: { behavior: "void" } });
+  await convexMutation(api.billing.patchByUser, {
+    user_id: userId,
+    patch: { status: "paused", updated_at: now() },
+  });
+}
+
+export async function resumeSubscription(userId: string) {
+  const sub = await getSubscription(userId);
+  const subId = requireStripeSubscriptionId(sub);
+  const updated = await stripe().subscriptions.update(subId, {
+    pause_collection: null,
+    cancel_at_period_end: false,
+  });
+  await convexMutation(api.billing.patchByUser, {
+    user_id: userId,
+    patch: { status: updated.status, cancel_at_period_end: 0, updated_at: now() },
+  });
+}
+
+export async function setApiAddon(userId: string, on: boolean, interval: "month" | "year" = "year") {
+  const sub = await getSubscription(userId);
+  const subId = requireStripeSubscriptionId(sub);
+  const price = addonPriceId(interval);
+  const stripeSub = await stripe().subscriptions.retrieve(subId, { expand: ["items.data.price"] });
+  const existingItem = stripeSub.items.data.find(
+    (i) => i.price.id === process.env.STRIPE_PRICE_ADDON_MONTHLY || i.price.id === process.env.STRIPE_PRICE_ADDON_YEARLY
+  );
+
+  if (on) {
+    if (existingItem) {
+      if (existingItem.price.id !== price) {
+        await stripe().subscriptionItems.update(existingItem.id, { price });
+      }
+    } else {
+      await stripe().subscriptionItems.create({ subscription: subId, price });
+    }
+  } else if (existingItem) {
+    await stripe().subscriptionItems.del(existingItem.id);
   }
-  db.prepare(
-    "UPDATE users SET first_subscribed_at = COALESCE(first_subscribed_at, ?) WHERE id = ?"
-  ).run(now(), userId);
+
+  await convexMutation(api.billing.patchByUser, {
+    user_id: userId,
+    patch: { api_addon: on ? 1 : 0, api_addon_interval: on ? interval : null, updated_at: now() },
+  });
 }
 
-export function cancelSubscription(userId: string) {
-  getDb()
-    .prepare(
-      "UPDATE subscriptions SET cancel_at_period_end = 1, updated_at = ? WHERE user_id = ?"
-    )
-    .run(now(), userId);
-}
-
-export function pauseSubscription(userId: string) {
-  getDb()
-    .prepare("UPDATE subscriptions SET status = 'paused', updated_at = ? WHERE user_id = ?")
-    .run(now(), userId);
-}
-
-export function resumeSubscription(userId: string) {
-  getDb()
-    .prepare(
-      "UPDATE subscriptions SET status = 'active', cancel_at_period_end = 0, updated_at = ? WHERE user_id = ?"
-    )
-    .run(now(), userId);
-}
-
-export function setApiAddon(userId: string, on: boolean, interval: "month" | "year" = "year") {
-  getDb()
-    .prepare(
-      "UPDATE subscriptions SET api_addon = ?, api_addon_interval = ?, updated_at = ? WHERE user_id = ?"
-    )
-    .run(on ? 1 : 0, on ? interval : null, now(), userId);
+/** Refund-on-request within 7 days of a charge (spec FAQ) — refunds the latest invoice's charge. */
+export async function refundLatestCharge(userId: string): Promise<void> {
+  const sub = await getSubscription(userId);
+  const subId = requireStripeSubscriptionId(sub);
+  const stripeSub = await stripe().subscriptions.retrieve(subId, { expand: ["latest_invoice"] });
+  const invoice = stripeSub.latest_invoice;
+  const chargeId =
+    typeof invoice === "object" && invoice && "charge" in invoice ? (invoice.charge as string | null) : null;
+  if (!chargeId) throw new Error("No charge found on this subscription to refund.");
+  await stripe().refunds.create({ charge: chargeId });
+  await stripe().subscriptions.cancel(subId);
+  await convexMutation(api.billing.patchByUser, {
+    user_id: userId,
+    patch: { status: "canceled", cancel_at_period_end: 1, updated_at: now() },
+  });
 }

@@ -66,6 +66,7 @@ const PATHS: Record<string, React.ReactNode> = {
   zap: <path d="M13 2 3 14h7l-1 8 11-13h-7l1-7Z" />,
   mountain: <path d="m8 3 4 8 5-5 5 15H2L8 3Z" />,
   mail: <path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2ZM22 7l-10 6L2 7" />,
+  shield: <path d="M12 3 4 6v6c0 5 3.5 8.5 8 9 4.5-.5 8-4 8-9V6l-8-3ZM9 12l2 2 4-4" />,
 };
 
 export function Icon({

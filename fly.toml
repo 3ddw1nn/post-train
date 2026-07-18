@@ -1,6 +1,6 @@
 # Fly.io deploy config for Post Train.
 # `fly launch --copy-config --no-deploy` will offer to overwrite this — keep
-# the mounts/http_service sections below when it does.
+# the http_service section below when it does.
 
 app = "post-train"
 primary_region = "iad"
@@ -9,10 +9,6 @@ primary_region = "iad"
 
 [env]
 PORT = "3000"
-
-[[mounts]]
-source = "post_train_data"
-destination = "/app/.data"
 
 [http_service]
 internal_port = 3000

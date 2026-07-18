@@ -3,6 +3,7 @@ import { requireOnboardedUser } from "@/lib/auth";
 import { getSubscription } from "@/lib/billing";
 import { studioAccess } from "@/lib/entitlements";
 import { Icon } from "@/components/icons";
+import { StudioJobsList } from "@/components/studio";
 
 export const metadata = { title: "Content Studio" };
 
@@ -32,7 +33,7 @@ const TEMPLATES = [
 
 export default async function StudioPage() {
   const user = await requireOnboardedUser();
-  const sub = getSubscription(user.id);
+  const sub = await getSubscription(user.id);
   const unlocked = studioAccess(sub);
 
   return (
@@ -43,7 +44,7 @@ export default async function StudioPage() {
         {/* Featured banner */}
         <div className="mt-5 rounded-2xl border-2 border-primary bg-primary-soft p-5">
           <div className="flex flex-wrap items-center gap-2">
-            <span className="pill bg-primary text-[#0c2e1a]">NEW</span>
+            <span className="pill bg-primary text-primary-contrast">NEW</span>
             <span className="pill bg-violet-100 text-violet-700">AI-Powered</span>
           </div>
           <h2 className="mt-2 flex items-center gap-2 text-xl font-bold">
@@ -58,7 +59,7 @@ export default async function StudioPage() {
             <span>📊 Infinite views</span>
           </div>
           <Link
-            href={unlocked ? "/dashboard/create/video?template=ai-ugc" : "/dashboard/settings/plans"}
+            href={unlocked ? "/dashboard/content-studio/ai-ugc" : "/dashboard/settings/plans"}
             className="btn-primary mt-4"
           >
             {unlocked ? "Try AI UGC Creator" : "Upgrade to Use"}
@@ -87,7 +88,7 @@ export default async function StudioPage() {
               <div className="mt-auto flex items-center gap-2 pt-4">
                 {unlocked ? (
                   <Link
-                    href={`/dashboard/create/video?template=${t.id}`}
+                    href={`/dashboard/content-studio/${t.id}`}
                     className="btn-primary flex-1 !py-1.5"
                   >
                     Use Template
@@ -100,16 +101,12 @@ export default async function StudioPage() {
                     Upgrade to Use
                   </Link>
                 )}
-                <span
-                  className="btn-subtle !px-2 !py-1.5 cursor-help"
-                  title="Template editors compose your clips server-side in the production build; here 'Use Template' pre-selects the template in the video composer."
-                >
-                  <Icon name="eye" size={14} />
-                </span>
               </div>
             </div>
           ))}
         </div>
+
+        {unlocked && <StudioJobsList />}
       </div>
     </div>
   );

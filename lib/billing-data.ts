@@ -16,8 +16,8 @@ export const PLANS: Record<
   creator: {
     name: "Creator",
     audience: "For solo creators getting consistent",
-    monthly: 29,
-    yearly: 319,
+    monthly: 28,
+    yearly: 308,
     accounts: 15,
     badge: "Most popular",
     features: [
@@ -32,8 +32,8 @@ export const PLANS: Record<
   growth: {
     name: "Growth",
     audience: "For brands posting across many accounts",
-    monthly: 49,
-    yearly: 539,
+    monthly: 48,
+    yearly: 528,
     accounts: 50,
     features: [
       "50 connected social accounts",
@@ -46,8 +46,8 @@ export const PLANS: Record<
   pro: {
     name: "Pro",
     audience: "For agencies and power operators",
-    monthly: 99,
-    yearly: 990,
+    monthly: 98,
+    yearly: 980,
     accounts: null,
     badge: "Best deal",
     features: [

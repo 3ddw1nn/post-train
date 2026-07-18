@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireOnboardedUser } from "@/lib/auth";
 import { currentWorkspace } from "@/lib/workspaces";
-import { getDb } from "@/lib/db";
+import { listRecords } from "@/lib/db";
 import { postsInRange, type PostRow } from "@/lib/posts";
 import { formatInTz, wallTimeToUtc } from "@/lib/tz";
 import { Icon } from "@/components/icons";
@@ -69,17 +69,13 @@ export default async function CalendarPage({
   const rangeEnd = new Date(
     wallTimeToUtc(tz, last.y, last.m, last.d, 0, 0).getTime() + 86400_000
   ).toISOString();
-  const posts = postsInRange(ws.id, rangeStart, rangeEnd, params.platform || undefined);
-
-  const db = getDb();
-  const thumbStmt = db.prepare(
-    `SELECT m.id, m.kind FROM post_media pm JOIN media m ON m.id = pm.media_id
-     WHERE pm.post_id = ? ORDER BY pm.sort_order LIMIT 1`
-  );
-  const destStmt = db.prepare(
-    `SELECT a.username, a.platform FROM post_destinations d
-     JOIN social_accounts a ON a.id = d.social_account_id WHERE d.post_id = ? LIMIT 1`
-  );
+  const posts = await postsInRange(ws.id, rangeStart, rangeEnd, params.platform || undefined);
+  const [mediaLinks, mediaRows, destRows, accounts] = await Promise.all([
+    listRecords<{ post_id: string; media_id: string; sort_order: number }>("post_media"),
+    listRecords<{ id: string; kind: string }>("media"),
+    listRecords<{ post_id: string; social_account_id: number }>("post_destinations"),
+    listRecords<{ id: number; username: string; platform: string; avatar_url: string | null }>("social_accounts"),
+  ]);
 
   const byDay = new Map<string, PostRow[]>();
   for (const p of posts) {
@@ -123,7 +119,7 @@ export default async function CalendarPage({
                 key={v}
                 href={`/dashboard/posts/calendar?view=${v}&date=${params.date ?? fmtDate(new Date())}${platformQ(params.platform)}`}
                 className={`rounded-lg px-3 py-1 text-sm font-semibold capitalize ${
-                  view === v ? "bg-primary text-[#0c2e1a]" : "text-muted hover:text-ink"
+                  view === v ? "bg-primary text-primary-contrast" : "text-muted hover:text-ink"
                 }`}
               >
                 {v}
@@ -158,7 +154,7 @@ export default async function CalendarPage({
                 <div className="flex items-center justify-between">
                   <span
                     className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
-                      isToday ? "bg-primary text-[#0c2e1a]" : muted ? "text-muted/60" : ""
+                      isToday ? "bg-primary text-primary-contrast" : muted ? "text-muted/60" : ""
                     }`}
                   >
                     {day.d}
@@ -176,7 +172,7 @@ export default async function CalendarPage({
                     <Link
                       href={`/dashboard/create?date=${dateStr}`}
                       aria-label={`Create post on ${dateStr}`}
-                      className="rounded bg-primary p-1 text-[#0c2e1a]"
+                      className="rounded bg-primary p-1 text-primary-contrast"
                     >
                       <Icon name="plus" size={11} strokeWidth={3} />
                     </Link>
@@ -191,10 +187,14 @@ export default async function CalendarPage({
                 ) : (
                   <div className="mt-1 flex flex-col gap-1">
                     {dayPosts.slice(0, view === "month" ? 3 : 20).map((p) => {
-                      const thumb = thumbStmt.get(p.id) as { id: string; kind: string } | undefined;
-                      const dest = destStmt.get(p.id) as
-                        | { username: string; platform: string }
-                        | undefined;
+                      const firstLink = mediaLinks
+                        .filter((m) => m.post_id === p.id)
+                        .sort((a, b) => a.sort_order - b.sort_order)[0];
+                      const thumb = firstLink ? mediaRows.find((m) => m.id === firstLink.media_id) : undefined;
+                      const firstDest = destRows.find((d) => d.post_id === p.id);
+                      const dest = firstDest
+                        ? accounts.find((a) => a.id === firstDest.social_account_id)
+                        : undefined;
                       const when = p.scheduled_at ?? p.posted_at!;
                       return (
                         <Link
@@ -226,6 +226,7 @@ export default async function CalendarPage({
                             <AccountAvatar
                               username={dest.username}
                               platformId={dest.platform}
+                              avatarUrl={dest.avatar_url}
                               size={16}
                             />
                           )}

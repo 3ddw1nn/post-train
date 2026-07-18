@@ -7,8 +7,8 @@ export async function POST(req: Request) {
   try {
     const user = await requireUser();
     const body = await req.json().catch(() => ({}));
-    const post = await createPost(user, workspacesForUser(user.id), body);
-    return Response.json(serializePost(post), { status: 201 });
+    const post = await createPost(user, await workspacesForUser(user.id), body);
+    return Response.json(await serializePost(post), { status: 201 });
   } catch (e) {
     return jsonError(e);
   }

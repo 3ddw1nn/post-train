@@ -38,7 +38,7 @@ export default function McpPage() {
               A conversation, not a dashboard
             </p>
             <div className="mt-4 flex flex-col gap-3 text-sm">
-              <p className="ml-auto max-w-xs rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 font-medium text-[#0c2e1a]">
+              <p className="ml-auto max-w-xs rounded-2xl rounded-br-sm bg-primary px-4 py-2.5 font-medium text-primary-contrast">
                 Schedule this demo video to all my accounts for tomorrow morning
               </p>
               <p className="max-w-sm rounded-2xl rounded-bl-sm bg-page px-4 py-2.5">
@@ -59,7 +59,7 @@ export default function McpPage() {
             "Ask your AI to list your accounts — then start posting.",
           ].map((s, i) => (
             <li key={i} className="card flex items-start gap-3 p-4 text-sm">
-              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary font-bold text-[#0c2e1a]">
+              <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary font-bold text-primary-contrast">
                 {i + 1}
               </span>
               {s}

@@ -7,6 +7,12 @@ import { Icon } from "./icons";
 import { InfoTip } from "./ui";
 import { PlatformIconRow } from "./platform-icon";
 
+const PLAN_ICON: Record<string, string> = {
+  creator: "sparkles",
+  growth: "chart",
+  pro: "stack",
+};
+
 const ALL_PLATFORM_IDS = [
   "twitter",
   "instagram",
@@ -32,8 +38,8 @@ export function PlanPicker({
 
   return (
     <div>
-      <div className="flex items-center justify-center gap-3">
-        <div className="relative inline-flex rounded-full border border-line bg-white p-1">
+      <div className="flex flex-col items-center gap-2">
+        <div className="inline-flex rounded-full border border-line bg-white p-1">
           {(["month", "year"] as const).map((i) => (
             <button
               key={i}
@@ -46,10 +52,10 @@ export function PlanPicker({
               {i === "month" ? "Monthly" : "Yearly"}
             </button>
           ))}
-          <span className="pill absolute -right-3 -top-3 rotate-6 bg-primary text-[#0c2e1a]">
-            FREE TRIAL
-          </span>
         </div>
+        <p className="text-xs font-medium text-primary-deep">
+          7-day free trial on every paid plan — cancel anytime
+        </p>
       </div>
 
       <div className="mt-8 grid gap-5 lg:grid-cols-3">
@@ -68,22 +74,23 @@ export function PlanPicker({
           return (
             <div
               key={key}
-              className={`card relative flex flex-col p-6 ${
-                featured ? "border-2 border-primary shadow-lg" : ""
-              }`}
+              className={`card relative flex flex-col p-6 ${featured ? "ring-1 ring-primary" : ""}`}
             >
-              <div className="flex items-center justify-between">
-                <h3 className="text-lg font-bold">{plan.name}</h3>
+              <div className="flex items-start justify-between">
+                <span className="flex h-10 w-10 items-center justify-center rounded-lg border border-line bg-page text-primary-deep">
+                  <Icon name={PLAN_ICON[key]} size={18} strokeWidth={1.8} />
+                </span>
                 {plan.badge && (
                   <span
                     className={`pill ${
-                      featured ? "bg-primary text-[#0c2e1a]" : "bg-ink text-white"
+                      featured ? "bg-primary text-primary-contrast" : "bg-ink text-white"
                     }`}
                   >
                     {plan.badge}
                   </span>
                 )}
               </div>
+              <h3 className="mt-3 text-lg font-bold">{plan.name}</h3>
               <p className="mt-0.5 text-sm text-muted">{plan.audience}</p>
               <div className="mt-4 flex items-start gap-1">
                 <span className="text-4xl font-extrabold tracking-tight">${dollars}</span>

@@ -1,21 +1,14 @@
-import { getDb } from "./db";
+import { convexQuery } from "./db";
+import { api } from "@/convex/_generated/api";
 import type { SocialAccountRow } from "./posts";
 
 /** Connected (non-removed) accounts for a workspace. */
-export function accountsForWorkspace(workspaceId: string): SocialAccountRow[] {
-  return getDb()
-    .prepare(
-      "SELECT * FROM social_accounts WHERE workspace_id = ? AND status != 'disconnected' ORDER BY platform, connected_at"
-    )
-    .all(workspaceId) as SocialAccountRow[];
+export async function accountsForWorkspace(workspaceId: string): Promise<SocialAccountRow[]> {
+  return await convexQuery<SocialAccountRow[]>(api.accounts.listForWorkspace, {
+    workspace_id: workspaceId,
+  });
 }
 
-export function countAccounts(workspaceId: string): number {
-  return (
-    getDb()
-      .prepare(
-        "SELECT COUNT(*) c FROM social_accounts WHERE workspace_id = ? AND status != 'disconnected'"
-      )
-      .get(workspaceId) as { c: number }
-  ).c;
+export async function countAccounts(workspaceId: string): Promise<number> {
+  return (await accountsForWorkspace(workspaceId)).length;
 }

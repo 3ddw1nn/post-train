@@ -3,12 +3,18 @@ import { Logo } from "@/components/logo";
 import { PLATFORMS } from "@/lib/platforms";
 import { MarketingNav } from "./marketing-nav";
 import { TOOL_LIST } from "@/lib/tools-registry";
+import { ChatLauncher } from "@/components/interactive";
+import { getSessionUser } from "@/lib/auth";
 
-export default function MarketingLayout({ children }: { children: React.ReactNode }) {
+export default async function MarketingLayout({ children }: { children: React.ReactNode }) {
+  const user = await getSessionUser();
   return (
     <div className="bg-white text-ink">
-      <MarketingNav />
+      <MarketingNav
+        user={user ? { name: user.display_name || user.email, isStaff: !!user.is_staff } : null}
+      />
       <main>{children}</main>
+      <ChatLauncher variant="marketing" />
       <footer className="border-t border-line bg-page">
         <div className="mx-auto grid max-w-6xl gap-10 px-6 py-14 sm:grid-cols-2 lg:grid-cols-4">
           <div>
@@ -20,7 +26,7 @@ export default function MarketingLayout({ children }: { children: React.ReactNod
           <div>
             <p className="text-xs font-bold uppercase tracking-wide text-muted">Links</p>
             <ul className="mt-3 flex flex-col gap-2 text-sm">
-              <li><a href="mailto:support@posttrain.example" className="hover:underline">Support</a></li>
+              <li><a href="mailto:ehleedev@gmail.com" className="hover:underline">Support</a></li>
               <li><Link href="/#pricing" className="hover:underline">Pricing</Link></li>
               <li><Link href="/blog" className="hover:underline">Blog</Link></li>
               <li><Link href="/affiliates" className="hover:underline">Affiliates</Link></li>

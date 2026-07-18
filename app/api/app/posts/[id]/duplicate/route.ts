@@ -7,10 +7,10 @@ export async function POST(_req: Request, ctx: { params: Promise<{ id: string }>
   try {
     const user = await requireUser();
     const { id } = await ctx.params;
-    const post = getPostRow(id);
-    const wsIds = new Set(workspacesForUser(user.id).map((w) => w.id));
+    const post = await getPostRow(id);
+    const wsIds = new Set((await workspacesForUser(user.id)).map((w) => w.id));
     if (!post || !wsIds.has(post.workspace_id)) throw new DomainError(404, "Post not found.");
-    const draft = duplicatePost(post, user.id);
+    const draft = await duplicatePost(post, user.id);
     return Response.json({ ok: true, id: draft.id });
   } catch (e) {
     return jsonError(e);

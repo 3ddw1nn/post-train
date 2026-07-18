@@ -2,15 +2,16 @@ import Link from "next/link";
 import { requireOnboardedUser } from "@/lib/auth";
 import { getSubscription } from "@/lib/billing";
 import { teamsCreate } from "@/lib/entitlements";
-import { getDb } from "@/lib/db";
+import { canManageWorkspace, type WorkspaceRole } from "@/lib/permissions";
+import { listRecords } from "@/lib/db";
 import { Icon } from "@/components/icons";
 import { EmptyState } from "@/components/ui";
-import { CreateTeamButton, InviteForm, RefreshButton } from "./teams-widgets";
+import { CreateTeamButton, InviteForm, RefreshButton, MemberActions } from "./teams-widgets";
 
 export const metadata = { title: "Teams" };
 
-type TeamRow = { id: string; name: string; creator_id: string; created_at: string };
-type MemberRow = { email_invited: string; status: string; display_name: string | null };
+type TeamRow = { id: string; name: string; creator_id: string; workspace_id: string; created_at: string };
+type MemberRow = { id: number; email_invited: string; status: string; display_name: string | null };
 
 export default async function TeamsPage({
   searchParams,
@@ -18,23 +19,29 @@ export default async function TeamsPage({
   searchParams: Promise<{ joined?: string; error?: string }>;
 }) {
   const user = await requireOnboardedUser();
-  const sub = getSubscription(user.id);
+  const sub = await getSubscription(user.id);
   const canCreate = teamsCreate(sub);
   const params = await searchParams;
-  const db = getDb();
-
-  const teams = db
-    .prepare(
-      `SELECT DISTINCT t.* FROM teams t
-       LEFT JOIN team_members m ON m.team_id = t.id
-       WHERE t.creator_id = ? OR (m.user_id = ? AND m.status = 'active')
-       ORDER BY t.created_at`
-    )
-    .all(user.id, user.id) as TeamRow[];
-  const memberStmt = db.prepare(
-    `SELECT m.email_invited, m.status, u.display_name FROM team_members m
-     LEFT JOIN users u ON u.id = m.user_id WHERE m.team_id = ? ORDER BY m.created_at`
+  const allTeams = await listRecords<TeamRow>("teams");
+  const allMembers = await listRecords<
+    (MemberRow & { team_id: string; user_id: string | null; created_at: string })
+  >("team_members");
+  const users = await listRecords<{ id: string; display_name: string }>("users");
+  const workspaceMembers = await listRecords<{ workspace_id: string; user_id: string; role: string }>(
+    "workspace_members"
   );
+  const activeTeamIds = new Set(
+    allMembers.filter((m) => m.user_id === user.id && m.status === "active").map((m) => m.team_id)
+  );
+  const teams = allTeams
+    .filter((t) => t.creator_id === user.id || activeTeamIds.has(t.id))
+    .sort((a, b) => a.created_at.localeCompare(b.created_at));
+  const canManageByTeam = new Map(
+    await Promise.all(teams.map(async (t) => [t.id, await canManageWorkspace(t.workspace_id, user.id)] as const))
+  );
+  const roleOf = (workspaceId: string, userId: string | null): WorkspaceRole | null =>
+    (workspaceMembers.find((m) => m.workspace_id === workspaceId && m.user_id === userId)?.role as WorkspaceRole) ??
+    null;
 
   return (
     <div className="fade-up mx-auto max-w-3xl">
@@ -57,14 +64,14 @@ export default async function TeamsPage({
       )}
 
       {!canCreate && (
-        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-blue-600 p-4 text-white">
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl bg-primary-deep p-4 text-white">
           <div>
             <p className="font-bold">Pro subscription required to create teams</p>
-            <p className="text-sm text-blue-100">
+            <p className="text-sm text-white/80">
               You can still join teams as a member without Pro!
             </p>
           </div>
-          <Link href="/dashboard/settings/plans" className="btn bg-white text-blue-700 hover:bg-blue-50">
+          <Link href="/dashboard/settings/plans" className="btn bg-white text-primary-deep hover:bg-primary-soft">
             Upgrade to Pro
           </Link>
         </div>
@@ -93,14 +100,26 @@ export default async function TeamsPage({
       ) : (
         <div className="mt-3 flex flex-col gap-3">
           {teams.map((t) => {
-            const members = memberStmt.all(t.id) as MemberRow[];
-            const isCreator = t.creator_id === user.id;
+            const members = allMembers
+              .filter((m) => m.team_id === t.id && m.status !== "removed")
+              .sort((a, b) => a.created_at.localeCompare(b.created_at))
+              .map((m) => ({
+                id: m.id,
+                user_id: m.user_id,
+                email_invited: m.email_invited,
+                status: m.status,
+                display_name: m.user_id
+                  ? users.find((u) => u.id === m.user_id)?.display_name ?? null
+                  : null,
+                role: roleOf(t.workspace_id, m.user_id),
+              }));
+            const canManage = canManageByTeam.get(t.id) ?? false;
             return (
               <div key={t.id} className="card p-5">
                 <div className="flex items-center gap-2">
                   <Icon name="users" size={18} className="text-muted" />
                   <p className="font-bold">{t.name}</p>
-                  {isCreator && (
+                  {canManage && (
                     <span className="pill bg-gray-100 text-gray-600">You manage this</span>
                   )}
                 </div>
@@ -116,13 +135,16 @@ export default async function TeamsPage({
                         }`}
                       />
                       <span className="font-medium">{m.display_name ?? m.email_invited}</span>
-                      <span className="ml-auto text-xs text-muted">
-                        {m.status === "active" ? "member" : "invite pending"}
+                      <span className="ml-auto text-xs capitalize text-muted">
+                        {m.status === "active" ? m.role ?? "member" : "invite pending"}
                       </span>
+                      {canManage && m.status === "active" && m.role !== "owner" && m.user_id && (
+                        <MemberActions userId={m.user_id} teamMemberId={m.id} role={m.role ?? "member"} />
+                      )}
                     </div>
                   ))}
                 </div>
-                {isCreator && (
+                {canManage && (
                   <div className="mt-4 border-t border-line pt-3">
                     <InviteForm teamId={t.id} />
                   </div>

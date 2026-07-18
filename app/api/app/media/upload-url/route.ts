@@ -13,7 +13,7 @@ export async function POST(req: Request) {
     );
   }
   try {
-    const result = createUploadUrl(
+    const result = await createUploadUrl(
       ws.id,
       {
         mime_type: String(body.mime_type),

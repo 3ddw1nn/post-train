@@ -1,6 +1,7 @@
 // Queue scheduling engine per spec 11 §4: weekly slot grid, earliest free slot,
 // ≤90-day scan, optional ±10 min jitter, timezone priority explicit > profile > UTC.
-import { getDb } from "./db";
+import { convexQuery } from "./db";
+import { api } from "@/convex/_generated/api";
 
 export type QueueSlot = {
   id: number;
@@ -18,28 +19,21 @@ export class QueueError extends Error {
   }
 }
 
-export function slotsForWorkspace(workspaceId: string): QueueSlot[] {
-  return getDb()
-    .prepare("SELECT * FROM queue_slots WHERE workspace_id = ? ORDER BY time_local")
-    .all(workspaceId) as QueueSlot[];
+export async function slotsForWorkspace(workspaceId: string): Promise<QueueSlot[]> {
+  return await convexQuery<QueueSlot[]>(api.queue.slotsForWorkspace, { workspace_id: workspaceId });
 }
 
-function slotOccupied(workspaceId: string, utc: Date): boolean {
+async function slotOccupied(workspaceId: string, utc: Date): Promise<boolean> {
   // A slot occurrence is taken if a scheduled/processing post sits within ±10 min
   // (covers jittered assignments too).
   const lo = new Date(utc.getTime() - 10 * 60000).toISOString();
   const hi = new Date(utc.getTime() + 10 * 60000).toISOString();
-  return !!getDb()
-    .prepare(
-      `SELECT 1 FROM posts WHERE workspace_id = ? AND status IN ('scheduled','processing')
-       AND is_draft = 0 AND scheduled_at > ? AND scheduled_at < ? LIMIT 1`
-    )
-    .get(workspaceId, lo, hi);
+  return await convexQuery<boolean>(api.queue.slotOccupied, { workspace_id: workspaceId, lo, hi });
 }
 
 /** Earliest unoccupied slot after `after`, scanning up to 90 days. Throws QueueError. */
-export function nextQueueSlot(workspaceId: string, tz: string, after = new Date()): Date {
-  const slots = slotsForWorkspace(workspaceId);
+export async function nextQueueSlot(workspaceId: string, tz: string, after = new Date()): Promise<Date> {
+  const slots = await slotsForWorkspace(workspaceId);
   if (slots.length === 0) {
     throw new QueueError("no_schedule", "No queue schedule configured for this workspace.");
   }
@@ -51,7 +45,7 @@ export function nextQueueSlot(workspaceId: string, tz: string, after = new Date(
       const [hh, mm] = slot.time_local.split(":").map(Number);
       const utc = wallTimeToUtc(tz, y, m, d, hh, mm);
       if (utc.getTime() <= after.getTime()) continue;
-      if (slotOccupied(workspaceId, utc)) continue;
+      if (await slotOccupied(workspaceId, utc)) continue;
       return utc;
     }
   }

@@ -1,5 +1,5 @@
 import { findUserByEmail, requireUser } from "@/lib/auth";
-import { getDb } from "@/lib/db";
+import { patchRecord } from "@/lib/db";
 
 export async function POST(req: Request) {
   const user = await requireUser();
@@ -8,13 +8,13 @@ export async function POST(req: Request) {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     return Response.json({ error: { message: "Enter a valid email address." } }, { status: 400 });
   }
-  const existing = findUserByEmail(email);
+  const existing = await findUserByEmail(email);
   if (existing && existing.id !== user.id) {
     return Response.json(
       { error: { message: "That email is already in use." } },
       { status: 409 }
     );
   }
-  getDb().prepare("UPDATE users SET email = ? WHERE id = ?").run(email.toLowerCase(), user.id);
+  await patchRecord("users", user.id, { email: email.toLowerCase() });
   return Response.json({ ok: true });
 }

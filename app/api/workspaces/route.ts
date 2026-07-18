@@ -8,6 +8,6 @@ export async function POST(req: Request) {
   if (!name) {
     return Response.json({ error: { message: "Workspace name is required." } }, { status: 400 });
   }
-  const ws = createWorkspace(user.id, name.slice(0, 60));
+  const ws = await createWorkspace(user.id, name.slice(0, 60));
   return Response.json({ ok: true, id: ws.id });
 }

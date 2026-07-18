@@ -5,6 +5,9 @@ import { useEffect, useState } from "react";
 import { Logo } from "@/components/logo";
 import { Icon } from "@/components/icons";
 import { Dropdown, Countdown } from "@/components/interactive";
+import { AvatarMenu } from "@/components/avatar-menu";
+
+type NavUser = { name: string; isStaff: boolean };
 
 const LINKS = [
   { label: "Pricing", href: "/#pricing" },
@@ -15,7 +18,7 @@ const LINKS = [
   { label: "Blog", href: "/blog" },
 ];
 
-export function MarketingNav() {
+export function MarketingNav({ user }: { user: NavUser | null }) {
   const [open, setOpen] = useState(false);
   const [promo, setPromo] = useState(false);
   const promoEnd = (() => {
@@ -52,7 +55,7 @@ export function MarketingNav() {
       <header className="sticky top-0 z-50 border-b border-line bg-white/90 backdrop-blur">
         <div className="mx-auto flex max-w-6xl items-center justify-between gap-4 px-6 py-3">
           <Link href="/">
-            <Logo size={26} />
+            <Logo size={36} />
           </Link>
           <nav className="hidden items-center gap-5 text-sm font-semibold lg:flex">
             {LINKS.map((l) => (
@@ -81,27 +84,40 @@ export function MarketingNav() {
             <Link href="/dashboard/settings/billing" className="text-ink/80 hover:text-ink">
               Billing
             </Link>
-            <Link href="/signin" className="btn-subtle !py-1.5">
-              Login
-            </Link>
-            <Link href="/create-account" className="btn-primary !py-1.5">
-              Try it for free
-            </Link>
+            {user ? (
+              <>
+                <Link href="/dashboard/create" className="btn-primary !py-1.5">
+                  Dashboard
+                </Link>
+                <AvatarMenu name={user.name} isStaff={user.isStaff} />
+              </>
+            ) : (
+              <>
+                <Link href="/signin" className="btn-subtle !py-1.5">
+                  Login
+                </Link>
+                <Link href="/create-account" className="btn-primary !py-1.5">
+                  Try it for free
+                </Link>
+              </>
+            )}
           </nav>
-          <button
-            type="button"
-            className="btn-subtle !px-2.5 lg:hidden"
-            aria-label="Open main menu"
-            onClick={() => setOpen(true)}
-          >
-            <Icon name="list" size={18} />
-          </button>
+          <div className="lg:hidden">
+            <button
+              type="button"
+              className="btn-subtle !px-2.5"
+              aria-label="Open main menu"
+              onClick={() => setOpen(true)}
+            >
+              <Icon name="list" size={18} />
+            </button>
+          </div>
         </div>
       </header>
       {open && (
         <div className="fixed inset-0 z-[60] bg-white p-6 lg:hidden">
           <div className="flex items-center justify-between">
-            <Logo size={24} />
+            <Logo size={32} />
             <button
               type="button"
               aria-label="Close menu"
@@ -120,10 +136,31 @@ export function MarketingNav() {
             <Link href="/tools" onClick={() => setOpen(false)}>Free Tools</Link>
             <Link href="/growth-guide" onClick={() => setOpen(false)}>Growth Guide</Link>
             <Link href="/docs/api" onClick={() => setOpen(false)}>API</Link>
-            <Link href="/signin" onClick={() => setOpen(false)}>Login</Link>
-            <Link href="/create-account" className="btn-primary mt-2 w-full" onClick={() => setOpen(false)}>
-              Try it for free
-            </Link>
+            {user ? (
+              <>
+                <Link href="/dashboard/settings/billing" onClick={() => setOpen(false)}>Billing</Link>
+                {user.isStaff && (
+                  <Link href="/staff" onClick={() => setOpen(false)}>Staff Dashboard</Link>
+                )}
+                <button
+                  type="button"
+                  className="text-left text-danger"
+                  onClick={() => fetch("/api/auth/signout", { method: "POST" }).then(() => (window.location.href = "/signin"))}
+                >
+                  Logout
+                </button>
+                <Link href="/dashboard/create" className="btn-primary mt-2 w-full" onClick={() => setOpen(false)}>
+                  Dashboard
+                </Link>
+              </>
+            ) : (
+              <>
+                <Link href="/signin" onClick={() => setOpen(false)}>Login</Link>
+                <Link href="/create-account" className="btn-primary mt-2 w-full" onClick={() => setOpen(false)}>
+                  Try it for free
+                </Link>
+              </>
+            )}
           </nav>
         </div>
       )}

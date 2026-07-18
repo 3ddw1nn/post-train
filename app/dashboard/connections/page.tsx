@@ -15,8 +15,8 @@ export default async function ConnectionsPage({
   const user = await requireOnboardedUser();
   const ws = await currentWorkspace(user);
   const { error } = await searchParams;
-  const accounts = accountsForWorkspace(ws.id);
-  const sub = getSubscription(user.id);
+  const accounts = await accountsForWorkspace(ws.id);
+  const sub = await getSubscription(user.id);
   const cap = maxAccounts(sub);
 
   return (
@@ -26,8 +26,9 @@ export default async function ConnectionsPage({
         platform: a.platform,
         username: a.username,
         status: a.status,
+        avatar_url: a.avatar_url,
       }))}
-      used={countAccounts(ws.id)}
+      used={await countAccounts(ws.id)}
       cap={Number.isFinite(cap) ? cap : null}
       error={error ?? null}
     />

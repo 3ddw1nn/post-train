@@ -14,9 +14,8 @@ pnpm install
 pnpm dev           # http://localhost:3000
 ```
 
-Zero external services required: storage is SQLite via Node's built-in `node:sqlite`
-(Node 22.13+/24 required), media lives on disk, and everything writes to `./.data/`
-(delete it to reset).
+Database state is hosted in Convex. Uploaded media is stored in Cloudflare R2 when
+R2 env vars are configured, with local disk fallback for development.
 
 **Try the golden path:** create an account → 3-step onboarding (persona → connect
 accounts → pick a plan) → simulated checkout ($0 trial) → land on Billing → hit
@@ -61,28 +60,92 @@ streamable-HTTP, same Bearer key.
 
 ## Deploying
 
-This app needs **one persistent, always-on process with a persistent disk** — not a
-serverless/edge platform. Two reasons: storage is a SQLite file + local disk media (an
-ephemeral filesystem wipes both on every cold start/redeploy), and the scheduled-post
-worker is an in-process `setInterval` (`instrumentation.ts`) that needs to keep ticking
-even with no incoming traffic, and would double-publish if you ever ran more than one
-instance. Vercel's default deploy model doesn't fit this; a small always-on VM/container
-does.
+This app's scheduled-post worker and Content Studio renders (`lib/worker.ts`,
+started from `instrumentation.ts`) ideally run in one always-on Node process. The
+database is Convex and media should be Cloudflare R2 in production, so no
+persistent volume is required on either host below.
 
-A `Dockerfile` + `fly.toml` are included, tested locally end-to-end (build → run with a
-mounted volume → restart the container → confirm the account/data survived the
-restart). To deploy on [Fly.io](https://fly.io):
+### Deploy on Render (free)
+
+Render's free web services sleep after 15 minutes with no inbound HTTP traffic,
+which would delay scheduled posts and studio renders indefinitely. The fix:
+an external free pinger hits `GET /api/cron/tick` every ~5 minutes, which both
+wakes the service and runs the worker tick directly (`lib/worker.ts`'s
+`runWorkerTick()`) — so scheduled items fire within roughly that window instead
+of exactly on time.
+
+1. **R2 is required, not optional, on Render free** — its filesystem is ephemeral,
+   so without R2 any locally-stored media is wiped on every spin-down or redeploy.
+   Set the R2 env vars below.
+2. Generate a cron secret: `openssl rand -hex 32` → set as `CRON_SECRET`.
+3. In the Render dashboard: **New → Blueprint**, point at this repo (reads
+   `render.yaml`), and add your env vars as secrets (`NEXT_PUBLIC_CONVEX_URL`,
+   `R2_*`, `STRIPE_*`, `CRON_SECRET`, etc. — same variables as local `.env.local`).
+4. Register `https://<your-app>.onrender.com/api/cron/tick?token=<CRON_SECRET>`
+   with a free pinger (e.g. [cron-job.org](https://cron-job.org)) on a 5-minute
+   interval. Pinging that often keeps the service continuously warm, which stays
+   within Render's 750 free instance-hours/month.
+
+### Deploy on Fly.io (always-on, not free)
+
+Posts fire exactly on schedule with no pinger workaround needed — Fly keeps
+the process alive continuously (`min_machines_running = 1` in `fly.toml`) for a
+small ongoing cost.
 
 ```bash
 brew install flyctl        # or see fly.io/docs/flyctl/install
 fly auth login
 fly launch --copy-config --no-deploy   # keep the existing fly.toml when asked
-fly volumes create post_train_data --size 1 --region iad
 fly deploy
 ```
 
-The same `Dockerfile` works on Railway, Render, or any host that runs Docker images with
-an attached persistent volume — just point the volume at `/app/.data`.
+## Cloudflare R2 media
+
+Set these environment variables to store uploads in R2:
+
+```bash
+R2_ACCOUNT_ID=
+R2_ACCESS_KEY_ID=
+R2_SECRET_ACCESS_KEY=
+R2_BUCKET=
+R2_PUBLIC_BASE_URL= # optional custom/public bucket domain, no trailing slash
+```
+
+Configure the R2 bucket CORS policy to allow browser uploads from your app origin:
+
+```json
+[
+  {
+    "AllowedOrigins": ["http://localhost:3000", "https://your-domain.com"],
+    "AllowedMethods": ["PUT", "GET", "HEAD"],
+    "AllowedHeaders": ["content-type"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+Without R2 env vars, uploads fall back to `./.data/media` for local development.
+
+The same `Dockerfile` works on Railway, Render, or any host that runs Docker images.
+
+## Content Studio video generation
+
+The Content Studio templates render server-side with **ffmpeg** (bundled in the
+Docker image; `brew install ffmpeg` for local dev). The AI UGC creator uses two
+providers, both optional:
+
+```bash
+CREATIFY_API_ID=      # stock UGC personas (paid Creatify API plan; 5 credits / 30s video)
+CREATIFY_API_KEY=
+FAL_KEY=              # custom persona images via fal.ai, pay-as-you-go (~$0.056/s of video)
+STUDIO_MOCK=          # "1" forces mock mode; unset = auto-mock in dev when no keys are set
+FFMPEG_PATH=          # optional ffmpeg binary override (FFPROBE_PATH likewise)
+```
+
+With no provider keys in development the studio runs in **mock mode**: the full
+job pipeline executes, but "generation" produces a free local placeholder clip.
+AI generations are capped per workspace per month (`STUDIO_AI_MONTHLY_CAP` in
+`lib/entitlements.ts`).
 
 ## Layout
 

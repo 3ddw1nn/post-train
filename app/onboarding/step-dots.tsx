@@ -17,7 +17,7 @@ export function StepDots() {
           <span
             className={`flex h-7 w-7 items-center justify-center rounded-full text-xs font-bold ${
               n < current
-                ? "bg-primary text-[#0c2e1a]"
+                ? "bg-primary text-primary-contrast"
                 : n === current
                   ? "border-2 border-primary bg-white text-primary-deep"
                   : "border border-line bg-white text-muted"

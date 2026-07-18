@@ -1,8 +1,9 @@
 import { requireUser } from "@/lib/auth";
-import { confirmCheckout } from "@/lib/billing";
+import { changePlan } from "@/lib/billing";
 import { PLANS, type PaidPlan } from "@/lib/billing-data";
-import { getDb, now } from "@/lib/db";
 
+// Existing subscriber switching plans — updates the live Stripe subscription
+// in place (prorated) rather than starting a new Checkout Session.
 export async function POST(req: Request) {
   const user = await requireUser();
   const body = await req.json().catch(() => null);
@@ -11,11 +12,6 @@ export async function POST(req: Request) {
   if (!PLANS[plan]) {
     return Response.json({ error: { message: "Unknown plan." } }, { status: 400 });
   }
-  confirmCheckout(user.id, plan, interval);
-  // Returning from checkout completes onboarding (spec 11 §2)
-  if (!user.onboarded_at) {
-    getDb().prepare("UPDATE users SET onboarded_at = ? WHERE id = ?").run(now(), user.id);
-  }
-  // Checkout return always lands on the Billing tab (spec 04 guards)
+  await changePlan(user.id, plan, interval);
   return Response.json({ ok: true, redirect: "/dashboard/settings/billing" });
 }

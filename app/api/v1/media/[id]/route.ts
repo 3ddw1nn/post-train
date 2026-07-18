@@ -4,9 +4,9 @@ import { DomainError } from "@/lib/posts";
 
 export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {
-    const api = authenticateApiKey(req);
+    const api = await authenticateApiKey(req);
     const { id } = await ctx.params;
-    if (!deleteMedia(api.workspace.id, id)) {
+    if (!(await deleteMedia(api.workspace.id, id))) {
       throw new DomainError(404, "Media not found.");
     }
     return Response.json({ ok: true });

@@ -1,10 +1,12 @@
 import { notFound } from "next/navigation";
 import { requireUser } from "@/lib/auth";
 import { platform as platformOf } from "@/lib/platforms";
-import { getDb } from "@/lib/db";
+import { recordById } from "@/lib/db";
 import { PlatformIcon } from "@/components/platform-icon";
 import { LogoMark } from "@/components/logo";
 import { ConsentForm } from "./consent-form";
+import { BlueskyForm } from "./bluesky-form";
+import { MastodonForm } from "./mastodon-form";
 
 export const metadata = { title: "Authorize" };
 
@@ -27,9 +29,7 @@ export default async function MockOAuthPage({
 
   let existingUsername = "";
   if (q.reconnect) {
-    const row = getDb()
-      .prepare("SELECT username FROM social_accounts WHERE id = ?")
-      .get(Number(q.reconnect)) as { username: string } | undefined;
+    const row = await recordById<{ username: string }>("social_accounts", Number(q.reconnect));
     existingUsername = row?.username ?? "";
   }
   const suggestion =
@@ -47,18 +47,40 @@ export default async function MockOAuthPage({
         <h1 className="mt-5 text-center text-lg font-bold">
           Authorize Post Train to access your {p.name} account?
         </h1>
-        <p className="mt-2 text-center text-xs text-muted">
-          Simulated {p.name} consent screen — in production this is {p.name}&apos;s own
-          OAuth dialog. Post Train only ever uses official platform sign-in and never
-          sees your password.
-        </p>
-        <ConsentForm
-          platform={p.id}
-          platformName={p.name}
-          suggestion={suggestion}
-          returnTo={q.return ?? "/dashboard/connections"}
-          reconnect={q.reconnect}
-        />
+        {p.id === "bluesky" ? (
+          <>
+            <p className="mt-2 text-center text-xs text-muted">
+              Sign in with a Bluesky app password. Your post goes out for real.
+            </p>
+            <BlueskyForm
+              suggestion={existingUsername}
+              returnTo={q.return ?? "/dashboard/connections"}
+            />
+          </>
+        ) : p.id === "mastodon" ? (
+          <>
+            <p className="mt-2 text-center text-xs text-muted">
+              Mastodon is federated — tell us which server your account is on. Your post
+              goes out for real.
+            </p>
+            <MastodonForm returnTo={q.return ?? "/dashboard/connections"} reconnect={q.reconnect} />
+          </>
+        ) : (
+          <>
+            <p className="mt-2 text-center text-xs text-muted">
+              Simulated {p.name} consent screen — in production this is {p.name}&apos;s own
+              OAuth dialog. Post Train only ever uses official platform sign-in and never
+              sees your password.
+            </p>
+            <ConsentForm
+              platform={p.id}
+              platformName={p.name}
+              suggestion={suggestion}
+              returnTo={q.return ?? "/dashboard/connections"}
+              reconnect={q.reconnect}
+            />
+          </>
+        )}
       </div>
     </main>
   );

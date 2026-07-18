@@ -1,5 +1,5 @@
 import { hashPassword, requireUser, verifyPassword } from "@/lib/auth";
-import { getDb } from "@/lib/db";
+import { patchRecord } from "@/lib/db";
 
 export async function POST(req: Request) {
   const user = await requireUser();
@@ -18,6 +18,6 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
-  getDb().prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(hashPassword(next), user.id);
+  await patchRecord("users", user.id, { password_hash: hashPassword(next) });
   return Response.json({ ok: true });
 }

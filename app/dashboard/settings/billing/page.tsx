@@ -11,10 +11,24 @@ export const metadata = { title: "Billing" };
 
 export default async function BillingPage() {
   const user = await requireOnboardedUser();
-  const sub = getSubscription(user.id);
+  const sub = await getSubscription(user.id);
   const plan = sub && sub.plan !== "free" ? PLANS[sub.plan as PaidPlan] : null;
   const live = entitled(sub);
   const price = plan ? (sub!.interval === "year" ? plan.yearly : plan.monthly) : 0;
+
+  if (user.is_staff) {
+    return (
+      <section className="card p-5">
+        <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted">
+          <Icon name="card" size={13} /> Current Plan
+        </p>
+        <h2 className="mt-2 text-2xl font-extrabold">Staff Account</h2>
+        <p className="mt-1 text-sm text-muted">
+          Full access to every feature — no billing or subscription needed.
+        </p>
+      </section>
+    );
+  }
 
   return (
     <div className="flex flex-col gap-4">

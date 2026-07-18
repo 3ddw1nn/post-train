@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { requireUser, sign } from "@/lib/auth";
-import { getDb, now } from "@/lib/db";
+import { convexMutation, findRecord, insertRecord, now } from "@/lib/db";
+import { api } from "@/convex/_generated/api";
 
 export async function GET(req: Request) {
   const user = await requireUser();
@@ -11,20 +12,19 @@ export async function GET(req: Request) {
   const [teamId, email] = Buffer.from(token, "base64url").toString().split("|");
   if (email !== user.email) redirect("/dashboard/teams?error=wrong_account");
 
-  const db = getDb();
-  const team = db
-    .prepare("SELECT * FROM teams WHERE id = ?")
-    .get(teamId) as { id: string; workspace_id: string } | undefined;
+  const team = await findRecord<{ id: string; workspace_id: string }>("teams", { id: teamId });
   if (!team) redirect("/dashboard/teams?error=bad_invite");
 
-  db.prepare(
-    "UPDATE team_members SET status = 'active', user_id = ? WHERE team_id = ? AND email_invited = ?"
-  ).run(user.id, teamId, email);
+  await convexMutation(api.teams.acceptInvite, { team_id: teamId, user_id: user.id, email });
   // Membership grants access to the team's shared workspace
-  db.prepare(
-    `INSERT INTO workspace_members (workspace_id, user_id, role, created_at)
-     VALUES (?, ?, 'member', ?)
-     ON CONFLICT(workspace_id, user_id) DO NOTHING`
-  ).run(team.workspace_id, user.id, now());
+  const existing = await findRecord("workspace_members", { workspace_id: team.workspace_id, user_id: user.id });
+  if (!existing) {
+    await insertRecord("workspace_members", {
+      workspace_id: team.workspace_id,
+      user_id: user.id,
+      role: "member",
+      created_at: now(),
+    });
+  }
   redirect("/dashboard/teams?joined=1");
 }

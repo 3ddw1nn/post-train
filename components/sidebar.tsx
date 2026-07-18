@@ -25,7 +25,6 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
   {
     label: "Create",
     items: [
-      { label: "New post", href: "/dashboard/create", icon: "pencil", match: ["/dashboard/create"] },
       { label: "Studio", href: "/dashboard/content-studio", icon: "sparkles" },
       { label: "Bulk tools", href: "/dashboard/bulk-tools", icon: "stack" },
     ],
@@ -176,11 +175,11 @@ function WorkspaceSwitcher({
         trigger={
           <button
             type="button"
-            className="flex w-full items-center gap-2 rounded-lg border border-line bg-white px-2.5 py-2 text-left text-[13px] font-semibold hover:bg-page"
+            className="flex items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-left text-[13px] font-semibold hover:bg-page"
           >
-            <Icon name="home" size={15} className="text-muted" />
-            <span className="flex-1 truncate">{current?.name}</span>
-            <Icon name="chevronsUpDown" size={13} className="text-muted" />
+            <Icon name="home" size={14} className="text-muted" />
+            <span className="hidden max-w-[130px] truncate sm:inline">{current?.name}</span>
+            <Icon name="chevronsUpDown" size={12} className="text-muted" />
           </button>
         }
       >
@@ -285,26 +284,22 @@ export function Sidebar({
   planLabel,
   workspaces,
   currentWorkspaceId,
+  isStaff,
 }: {
   displayName: string;
   planLabel: string;
   workspaces: WorkspaceLite[];
   currentWorkspaceId: string;
+  isStaff?: boolean;
 }) {
   const path = usePathname();
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  const nav = (
+  const railNav = (
     <nav className="flex h-full flex-col gap-4 overflow-y-auto p-4">
-      <Link href="/dashboard/create" onClick={() => setDrawerOpen(false)}>
+      <Link href="/" onClick={() => setDrawerOpen(false)}>
         <Logo size={24} />
       </Link>
-      <div>
-        <p className="mb-1.5 px-1 text-[11px] font-bold uppercase tracking-wide text-muted">
-          Workspace
-        </p>
-        <WorkspaceSwitcher workspaces={workspaces} currentId={currentWorkspaceId} />
-      </div>
       <Link
         href="/dashboard/create"
         className="btn-primary w-full"
@@ -358,33 +353,38 @@ export function Sidebar({
           </Link>
         </div>
       </div>
-      <div className="mt-auto border-t border-line pt-3">
-        <UserFooter name={displayName} planLabel={planLabel} />
-      </div>
     </nav>
   );
 
   return (
     <>
-      {/* Desktop fixed sidebar */}
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[210px] border-r border-line bg-white lg:block">
-        {nav}
+      {/* Sidebar: full height, front layer — brand + nav live here */}
+      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[210px] border-r border-line bg-white shadow-[2px_0_8px_rgba(0,0,0,0.03)] lg:block">
+        {railNav}
       </aside>
 
-      {/* Mobile top bar + drawer */}
-      <div className="fixed inset-x-0 top-0 z-40 flex items-center justify-between border-b border-line bg-white px-4 py-2.5 lg:hidden">
-        <Link href="/dashboard/create">
-          <Logo size={22} />
-        </Link>
-        <button
-          type="button"
-          aria-label="Open menu"
-          className="btn-subtle !px-2.5"
-          onClick={() => setDrawerOpen(true)}
-        >
-          <Icon name="list" size={18} />
-        </button>
-      </div>
+      {/* Content-area bar: starts beside the sidebar (behind it, not over it) — workspace + account only */}
+      <header className="fixed left-0 right-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-white px-4 lg:left-[210px]">
+        <div className="flex items-center gap-3 lg:hidden">
+          <button
+            type="button"
+            aria-label="Open menu"
+            className="btn-subtle !px-2.5"
+            onClick={() => setDrawerOpen(true)}
+          >
+            <Icon name="list" size={18} />
+          </button>
+          <Link href="/" className="shrink-0">
+            <Logo size={20} />
+          </Link>
+        </div>
+        <WorkspaceSwitcher workspaces={workspaces} currentId={currentWorkspaceId} />
+        <div className="ml-auto">
+          <UserFooter name={displayName} planLabel={planLabel} isStaff={isStaff} />
+        </div>
+      </header>
+
+      {/* Mobile drawer: same nav content as the desktop sidebar */}
       {drawerOpen && (
         <div className="fixed inset-0 z-50 lg:hidden">
           <div className="absolute inset-0 bg-black/30" onClick={() => setDrawerOpen(false)} />
@@ -397,7 +397,7 @@ export function Sidebar({
             >
               <Icon name="x" size={18} />
             </button>
-            {nav}
+            {railNav}
           </aside>
         </div>
       )}

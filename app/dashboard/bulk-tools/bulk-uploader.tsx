@@ -10,7 +10,7 @@ import { AccountAvatar } from "@/components/platform-icon";
 import { Pill } from "@/components/ui";
 import { CAPTION_MAX, platform as platformOf } from "@/lib/platforms";
 
-type Account = { id: number; platform: string; username: string };
+type Account = { id: number; platform: string; username: string; avatar_url: string | null };
 type Row = {
   mediaId: string;
   name: string;
@@ -114,6 +114,10 @@ export function BulkUploader({
           body: file,
         });
         if (!put.ok) throw new Error("Upload failed");
+        if (data.complete_url) {
+          const complete = await fetch(data.complete_url, { method: "POST" });
+          if (!complete.ok) throw new Error("Upload completion failed");
+        }
         setRows((r) => [
           ...r,
           {
@@ -203,7 +207,7 @@ export function BulkUploader({
         {toasts.map((t, i) => (
           <p
             key={i}
-            className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-[#0c2e1a] shadow-lg fade-up"
+            className="rounded-xl bg-primary px-4 py-2 text-sm font-semibold text-primary-contrast shadow-lg fade-up"
           >
             {t}
           </p>
@@ -248,6 +252,7 @@ export function BulkUploader({
                 <AccountAvatar
                   username={a.username}
                   platformId={a.platform}
+                  avatarUrl={a.avatar_url}
                   size={44}
                   selected={selected.has(a.id)}
                 />
@@ -427,7 +432,7 @@ export function BulkUploader({
               ))}
             </select>
             <button
-              className="btn mt-3 w-full bg-blue-600 text-white hover:bg-blue-700"
+              className="btn mt-3 w-full bg-primary text-primary-contrast hover:bg-primary-hover"
               disabled={rows.length === 0}
               onClick={applyBulkSchedule}
             >
@@ -452,6 +457,7 @@ export function BulkUploader({
                         key={a.id}
                         username={a.username}
                         platformId={a.platform}
+                        avatarUrl={a.avatar_url}
                         size={28}
                       />
                     ))}

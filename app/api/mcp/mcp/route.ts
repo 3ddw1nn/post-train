@@ -17,7 +17,7 @@ import { listMedia, deleteMedia } from "@/lib/media";
 import { listAnalytics, syncAnalytics } from "@/lib/analytics";
 import { getSubscription } from "@/lib/billing";
 import { analyticsAccess } from "@/lib/entitlements";
-import { getDb } from "@/lib/db";
+import { listRecords } from "@/lib/db";
 
 type Json = Record<string, unknown>;
 
@@ -104,66 +104,62 @@ const TOOLS: { name: string; description: string; inputSchema: Json }[] = [
 ];
 
 async function callTool(ctx: ApiContext, name: string, args: Json): Promise<unknown> {
-  const findPost = (id: string) => {
-    const post = getPostRow(String(id));
+  const findPost = async (id: string) => {
+    const post = await getPostRow(String(id));
     if (!post || post.workspace_id !== ctx.workspace.id) {
       throw new DomainError(404, "Post not found.");
     }
     return post;
-  };
+    };
   switch (name) {
     case "list_social_accounts":
-      return accountsForWorkspace(ctx.workspace.id).map((a) => ({
+      return (await accountsForWorkspace(ctx.workspace.id)).map((a) => ({
         id: a.id,
         platform: a.platform,
         username: a.username,
       }));
     case "create_post":
-      return serializePost(
+      return await serializePost(
         await createPost(ctx.user, [ctx.workspace], args as never)
       );
     case "list_posts": {
-      const { data, count } = listPosts([ctx.workspace.id], {
+      const { data, count } = await listPosts([ctx.workspace.id], {
         status: args.status as string | undefined,
         platform: args.platform as string | undefined,
         limit: (args.limit as number) ?? 50,
         offset: (args.offset as number) ?? 0,
       });
-      return { data: data.map(serializePost), count };
+      return { data: await Promise.all(data.map(serializePost)), count };
     }
     case "get_post":
-      return serializePost(findPost(args.post_id as string));
+      return await serializePost(await findPost(args.post_id as string));
     case "update_post": {
       const { post_id, ...rest } = args;
-      return serializePost(updatePost(findPost(post_id as string), rest as never));
+      return await serializePost(await updatePost(await findPost(post_id as string), rest as never));
     }
     case "delete_post":
-      deletePost(findPost(args.post_id as string));
+      await deletePost(await findPost(args.post_id as string));
       return { ok: true };
     case "list_analytics":
     case "sync_analytics": {
-      if (!analyticsAccess(getSubscription(ctx.user.id))) {
+      if (!analyticsAccess(await getSubscription(ctx.user.id))) {
         throw new DomainError(403, "Analytics requires a Creator, Growth or Pro plan.");
       }
       if (name === "sync_analytics") {
-        return { triggered: syncAnalytics(ctx.workspace.id, args.platform as string | undefined) };
+        return { triggered: await syncAnalytics(ctx.workspace.id, args.platform as string | undefined) };
       }
-      const { data, count } = listAnalytics(ctx.workspace.id, {
+      const { data, count } = await listAnalytics(ctx.workspace.id, {
         platform: args.platform as string | undefined,
         timeframe: args.timeframe as never,
       });
       return { data: data.map(({ workspace_id: _w, ...r }) => r), count };
     }
-    case "list_post_results": {
-      const post = findPost(args.post_id as string);
-      return getDb()
-        .prepare("SELECT * FROM post_results WHERE post_id = ?")
-        .all(post.id);
-    }
+    case "list_post_results":
+      return await listRecords("post_results", { post_id: (await findPost(args.post_id as string)).id });
     case "list_media":
-      return listMedia(ctx.workspace.id, 100, 0);
+      return await listMedia(ctx.workspace.id, 100, 0);
     case "delete_media":
-      if (!deleteMedia(ctx.workspace.id, String(args.media_id))) {
+      if (!(await deleteMedia(ctx.workspace.id, String(args.media_id)))) {
         throw new DomainError(404, "Media not found.");
       }
       return { ok: true };
@@ -202,7 +198,7 @@ export async function POST(req: Request) {
   // Everything else requires a valid API key
   let ctx: ApiContext;
   try {
-    ctx = authenticateApiKey(req);
+    ctx = await authenticateApiKey(req);
   } catch (e) {
     return rpcError(id, -32001, e instanceof Error ? e.message : "Unauthorized");
   }

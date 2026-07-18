@@ -58,7 +58,7 @@ const FAQ: [string, string][] = [
   ],
   [
     "How do I get help?",
-    "Email support@posttrain.example or use the chat bubble — a human replies fast.",
+    "Email ehleedev@gmail.com or use the chat bubble — a human replies fast.",
   ],
 ];
 
@@ -146,41 +146,34 @@ export default function LandingPage() {
       {/* ── Feature blocks ───────────────────────────────── */}
       <section id="features" className="mx-auto flex max-w-6xl flex-col gap-20 px-6 py-20">
         <FeatureBlock
-          eyebrow="CROSS-POSTING"
+          icon="send"
+          eyebrow="Cross-posting"
           title="Stop re-uploading the same clip five times"
           copy="Select every account you own — multiple per platform — and ship the same post everywhere at once. Captions can differ per platform or per account when you need them to."
           media={<PlatformIconRow ids={ALL_IDS} size={26} />}
         />
         <FeatureBlock
           flip
-          eyebrow="SCHEDULING"
+          icon="clock"
+          eyebrow="Scheduling"
           title="A queue that keeps you consistent"
           copy="Set your weekly posting slots once and every new post grabs the next free one. Exact-time scheduling and ±10-minute randomization included."
           media={<QueueMock />}
         />
         <FeatureBlock
-          eyebrow="CONTENT MANAGEMENT"
+          icon="calendar"
+          eyebrow="Content management"
           title="Calendar, drafts and history in one place"
           copy="Month and week views of everything scheduled and shipped, with per-platform results and share links for every post."
           media={<CalendarMock />}
         />
         <FeatureBlock
           flip
-          eyebrow="CONTENT STUDIO"
+          icon="video"
+          eyebrow="Content studio"
           title="Turn raw clips into formats that travel"
           copy="Grid videos, fade-ins, AI-assisted UGC — start from a template, drop your media in, and send it straight to the composer."
-          media={
-            <div className="grid grid-cols-2 gap-2">
-              {["grid", "video", "sparkles", "zap"].map((n) => (
-                <span
-                  key={n}
-                  className="flex h-20 items-center justify-center rounded-xl bg-primary-soft text-primary-deep"
-                >
-                  <Icon name={n} size={26} />
-                </span>
-              ))}
-            </div>
-          }
+          media={<StudioMock />}
         />
       </section>
 
@@ -345,12 +338,14 @@ export default function LandingPage() {
 }
 
 function FeatureBlock({
+  icon,
   eyebrow,
   title,
   copy,
   media,
   flip,
 }: {
+  icon: string;
   eyebrow: string;
   title: string;
   copy: string;
@@ -360,8 +355,13 @@ function FeatureBlock({
   return (
     <div className={`grid items-center gap-10 md:grid-cols-2 ${flip ? "md:[&>*:first-child]:order-2" : ""}`}>
       <div>
-        <p className="text-xs font-bold uppercase tracking-widest text-primary-deep">{eyebrow}</p>
-        <h2 className="mt-2 text-2xl font-extrabold lg:text-3xl">{title}</h2>
+        <div className="flex items-center gap-2">
+          <span className="flex h-7 w-7 items-center justify-center rounded-lg border border-line bg-page text-primary-deep">
+            <Icon name={icon} size={14} strokeWidth={1.8} />
+          </span>
+          <p className="text-sm font-semibold text-muted">{eyebrow}</p>
+        </div>
+        <h2 className="mt-3 text-2xl font-extrabold lg:text-3xl">{title}</h2>
         <p className="mt-3 leading-relaxed text-muted">{copy}</p>
         <div className="mt-5 flex gap-3">
           <Link href="/create-account" className="btn-primary">
@@ -388,7 +388,7 @@ function QueueMock() {
               <span
                 key={i}
                 className={`flex h-5 w-5 items-center justify-center rounded-full text-[10px] font-bold ${
-                  i < 5 ? "bg-primary text-[#0c2e1a]" : "bg-page text-muted"
+                  i < 5 ? "bg-primary text-primary-contrast" : "bg-page text-muted"
                 }`}
               >
                 {d}
@@ -398,6 +398,29 @@ function QueueMock() {
         </div>
       ))}
       <p className="mt-2 text-xs text-muted">Next free slot: tomorrow 11:00 AM</p>
+    </div>
+  );
+}
+
+function StudioMock() {
+  return (
+    <div className="flex w-full max-w-xs items-center gap-3">
+      <div className="flex h-16 w-12 shrink-0 flex-col items-center justify-center gap-1.5 rounded-lg border border-line bg-page text-muted">
+        <Icon name="video" size={16} />
+        <span className="text-[9px] font-semibold">Raw clip</span>
+      </div>
+      <Icon name="chevronRight" size={14} className="shrink-0 text-muted" />
+      <div className="flex flex-1 items-end justify-center gap-2">
+        <div className="flex h-14 w-14 items-center justify-center rounded-lg bg-primary-soft text-primary-deep">
+          <Icon name="grid" size={16} />
+        </div>
+        <div className="flex h-20 w-10 items-center justify-center rounded-lg bg-primary text-primary-contrast">
+          <Icon name="zap" size={16} />
+        </div>
+        <div className="flex h-9 w-16 items-center justify-center rounded-lg bg-primary-soft text-primary-deep">
+          <Icon name="video" size={16} />
+        </div>
+      </div>
     </div>
   );
 }
@@ -412,7 +435,7 @@ function CalendarMock() {
             [3, 8, 10, 15, 17].includes(i)
               ? "bg-primary-soft text-primary-deep"
               : i === 9
-                ? "bg-primary text-[#0c2e1a]"
+                ? "bg-primary text-primary-contrast"
                 : "bg-page text-muted/60"
           }`}
         >

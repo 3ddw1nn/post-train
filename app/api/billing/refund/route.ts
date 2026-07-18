@@ -1,13 +1,12 @@
 import { requireUser } from "@/lib/auth";
-import { getSubscription } from "@/lib/billing";
-import { getDb, now } from "@/lib/db";
+import { getSubscription, refundLatestCharge } from "@/lib/billing";
 import { queueEmail } from "@/lib/emails";
 
-// Refund-on-request within 7 days of a charge (spec FAQ). Simulated: revokes
-// the subscription immediately and logs a confirmation email.
+// Refund-on-request within 7 days of a charge (spec FAQ). Refunds the latest
+// Stripe invoice's charge and cancels the subscription immediately.
 export async function POST() {
   const user = await requireUser();
-  const sub = getSubscription(user.id);
+  const sub = await getSubscription(user.id);
   if (!sub || sub.status === "canceled") {
     return Response.json(
       { error: { message: "No active subscription to refund." } },
@@ -21,11 +20,14 @@ export async function POST() {
       { status: 400 }
     );
   }
-  getDb()
-    .prepare(
-      "UPDATE subscriptions SET status = 'canceled', cancel_at_period_end = 1, updated_at = ? WHERE user_id = ?"
-    )
-    .run(now(), user.id);
-  queueEmail(user.id, "refund", "Your refund is on the way", "We've processed your refund. Sorry to see you go!");
+  try {
+    await refundLatestCharge(user.id);
+  } catch (e) {
+    return Response.json(
+      { error: { message: e instanceof Error ? e.message : "Refund failed." } },
+      { status: 400 }
+    );
+  }
+  await queueEmail(user.id, "refund", "Your refund is on the way", "We've processed your refund. Sorry to see you go!");
   return Response.json({ ok: true });
 }

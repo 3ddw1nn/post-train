@@ -31,9 +31,9 @@ export async function GET(req: Request) {
     picture?: string;
   };
 
-  let user = findUserByEmail(profile.email);
+  let user = await findUserByEmail(profile.email);
   if (!user) {
-    user = createUser({
+    user = await createUser({
       email: profile.email,
       displayName: profile.name,
       avatarUrl: profile.picture,

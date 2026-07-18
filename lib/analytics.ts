@@ -3,9 +3,10 @@
 // (real impl pulls platform metric APIs per spec 10 §3); everything downstream —
 // storage shape, timeframe filters, API responses — is the real contract.
 import { createHash, randomBytes } from "node:crypto";
-import { getDb, now, uid } from "./db";
+import { convexMutation, convexQuery, listRecords, uid } from "./db";
 import { ANALYTICS_PLATFORMS } from "./platforms";
 import { mediaFileUrl } from "./media";
+import { api } from "@/convex/_generated/api";
 
 export type AnalyticsRecord = {
   id: string;
@@ -38,98 +39,91 @@ function seededMetrics(seed: string, hoursLive: number) {
   };
 }
 
-export function syncAnalytics(
+export async function syncAnalytics(
   workspaceId: string,
   platformFilter?: string
-): { platform: string; runId: string }[] {
-  const db = getDb();
+): Promise<{ platform: string; runId: string }[]> {
   const platforms = platformFilter
     ? ANALYTICS_PLATFORMS.filter((p) => p === platformFilter)
     : ANALYTICS_PLATFORMS;
   const triggered: { platform: string; runId: string }[] = [];
+  const posts = await listRecords<{ id: string; caption: string; posted_at: string | null; workspace_id: string }>(
+    "posts",
+    { workspace_id: workspaceId }
+  );
+  const results = await listRecords<{
+    id: string;
+    post_id: string;
+    platform: string;
+    platform_post_id: string | null;
+    share_url: string | null;
+    success: number;
+  }>("post_results");
+  const postMedia = await listRecords<{ post_id: string; media_id: string; sort_order: number }>("post_media");
+  const media = await listRecords<{ id: string; kind: string; duration_s: number | null }>("media");
   for (const plat of platforms) {
-    const results = db
-      .prepare(
-        `SELECT r.*, p.caption, p.posted_at, p.workspace_id,
-           (SELECT media_id FROM post_media pm WHERE pm.post_id = p.id ORDER BY sort_order LIMIT 1) AS first_media,
-           (SELECT duration_s FROM media m JOIN post_media pm2 ON pm2.media_id = m.id
-              WHERE pm2.post_id = p.id AND m.kind = 'video' LIMIT 1) AS video_duration
-         FROM post_results r JOIN posts p ON p.id = r.post_id
-         WHERE p.workspace_id = ? AND r.platform = ? AND r.success = 1`
-      )
-      .all(workspaceId, plat) as {
-      id: string;
-      platform: string;
-      platform_post_id: string | null;
-      share_url: string | null;
-      caption: string;
-      posted_at: string | null;
-      first_media: string | null;
-      video_duration: number | null;
-    }[];
-    for (const r of results) {
+    const rows = results
+      .filter((r) => r.platform === plat && r.success === 1)
+      .map((r) => {
+        const post = posts.find((p) => p.id === r.post_id);
+        if (!post) return null;
+        const links = postMedia.filter((pm) => pm.post_id === post.id).sort((a, b) => a.sort_order - b.sort_order);
+        const first_media = links[0]?.media_id ?? null;
+        const video = links.map((l) => media.find((m) => m.id === l.media_id)).find((m) => m?.kind === "video");
+        return { ...r, caption: post.caption, posted_at: post.posted_at, first_media, video_duration: video?.duration_s ?? null };
+      })
+      .filter(Boolean) as {
+        id: string;
+        platform: string;
+        platform_post_id: string | null;
+        share_url: string | null;
+        caption: string;
+        posted_at: string | null;
+        first_media: string | null;
+        video_duration: number | null;
+      }[];
+    for (const r of rows) {
       const hoursLive = r.posted_at
         ? (Date.now() - new Date(r.posted_at).getTime()) / 3600_000
         : 1;
       const m = seededMetrics(r.id, hoursLive);
-      db.prepare(
-        `INSERT INTO analytics_records (id, post_result_id, workspace_id, platform, platform_post_id,
-           view_count, like_count, comment_count, share_count, cover_image_url, share_url,
-           video_description, duration, platform_created_at, last_synced_at, match_confidence)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'exact')
-         ON CONFLICT(post_result_id) DO UPDATE SET
-           view_count = excluded.view_count, like_count = excluded.like_count,
-           comment_count = excluded.comment_count, share_count = excluded.share_count,
-           last_synced_at = excluded.last_synced_at`
-      ).run(
-        uid(),
-        r.id,
-        workspaceId,
-        plat,
-        r.platform_post_id,
-        m.views,
-        m.likes,
-        m.comments,
-        m.shares,
-        r.first_media ? mediaFileUrl(r.first_media) : null,
-        r.share_url,
-        r.caption.slice(0, 200) || null,
-        r.video_duration ? Math.round(r.video_duration) : null,
-        r.posted_at,
-        now()
-      );
+      await convexMutation(api.analytics.upsertRecord, {
+        id: uid(),
+        post_result_id: r.id,
+        workspace_id: workspaceId,
+        platform: plat,
+        platform_post_id: r.platform_post_id,
+        view_count: m.views,
+        like_count: m.likes,
+        comment_count: m.comments,
+        share_count: m.shares,
+        cover_image_url: r.first_media ? mediaFileUrl(r.first_media) : null,
+        share_url: r.share_url,
+        video_description: r.caption.slice(0, 200) || null,
+        duration: r.video_duration ? Math.round(r.video_duration) : null,
+        platform_created_at: r.posted_at,
+        match_confidence: "exact",
+      });
     }
     triggered.push({ platform: plat, runId: `run_${randomBytes(8).toString("hex")}` });
   }
   return triggered;
 }
 
-export function listAnalytics(
+export async function listAnalytics(
   workspaceId: string,
   opts: { platform?: string; timeframe?: "7d" | "30d" | "90d" | "all"; limit?: number; offset?: number } = {}
-): { data: AnalyticsRecord[]; count: number } {
-  const db = getDb();
-  const where: string[] = ["workspace_id = ?"];
-  const params: (string | number)[] = [workspaceId];
-  if (opts.platform) {
-    where.push("platform = ?");
-    params.push(opts.platform);
-  }
+): Promise<{ data: AnalyticsRecord[]; count: number }> {
+  let since: string | undefined;
   if (opts.timeframe && opts.timeframe !== "all") {
     const days = { "7d": 7, "30d": 30, "90d": 90 }[opts.timeframe];
-    where.push("platform_created_at >= ?");
-    params.push(new Date(Date.now() - days * 86400_000).toISOString());
+    since = new Date(Date.now() - days * 86400_000).toISOString();
   }
-  const whereSql = where.join(" AND ");
-  const count = (
-    db.prepare(`SELECT COUNT(*) c FROM analytics_records WHERE ${whereSql}`).get(...params) as {
-      c: number;
-    }
-  ).c;
-  const data = db
-    .prepare(
-      `SELECT * FROM analytics_records WHERE ${whereSql} ORDER BY view_count DESC LIMIT ? OFFSET ?`
-    )
-    .all(...params, opts.limit ?? 50, opts.offset ?? 0) as AnalyticsRecord[];
-  return { data, count };
+  return await convexQuery<{ data: AnalyticsRecord[]; count: number }>(api.analytics.listAnalytics, {
+    workspace_id: workspaceId,
+    ...(opts.platform ? { platform: opts.platform } : {}),
+    ...(since ? { since } : {}),
+    limit: opts.limit ?? 50,
+    offset: opts.offset ?? 0,
+  });
 }

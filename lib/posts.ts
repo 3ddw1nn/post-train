@@ -1,5 +1,5 @@
 // Post domain logic shared by the dashboard, the public API v1, and the MCP tools.
-import { getDb, now, uid } from "./db";
+import { convexMutation, convexQuery, now, patchRecord, uid } from "./db";
 import type { User } from "./auth";
 import { getSubscription } from "./billing";
 import { entitled, freePostsRemaining, canCreatePosts } from "./entitlements";
@@ -7,6 +7,7 @@ import { platform as platformOf, CAPTION_MAX, type PostType } from "./platforms"
 import { nextQueueSlot, applyJitter, QueueError } from "./queue";
 import { importFromUrl } from "./media";
 import type { Workspace } from "./workspaces";
+import { api } from "@/convex/_generated/api";
 
 export class DomainError extends Error {
   constructor(public status: number, message: string, public code?: string) {
@@ -40,6 +41,7 @@ export type SocialAccountRow = {
   username: string;
   display_name: string | null;
   avatar_url: string | null;
+  platform_account_id?: string | null;
   status: "active" | "needs_reauth" | "disconnected";
   connected_at: string;
 };
@@ -67,20 +69,14 @@ function normalizeAccountConfigs(
   return input.account_configurations ?? [];
 }
 
-export function accountsByIds(ids: number[]): SocialAccountRow[] {
+export async function accountsByIds(ids: number[]): Promise<SocialAccountRow[]> {
   if (ids.length === 0) return [];
-  const qs = ids.map(() => "?").join(",");
-  return getDb()
-    .prepare(`SELECT * FROM social_accounts WHERE id IN (${qs})`)
-    .all(...ids) as SocialAccountRow[];
+  return await convexQuery<SocialAccountRow[]>(api.accounts.getMany, { ids });
 }
 
-export function mediaKinds(mediaIds: string[]): { id: string; kind: string }[] {
+export async function mediaKinds(mediaIds: string[]): Promise<{ id: string; kind: string }[]> {
   if (mediaIds.length === 0) return [];
-  const qs = mediaIds.map(() => "?").join(",");
-  return getDb()
-    .prepare(`SELECT id, kind FROM media WHERE id IN (${qs}) AND upload_status = 'uploaded'`)
-    .all(...mediaIds) as { id: string; kind: string }[];
+  return await convexQuery<{ id: string; kind: string }[]>(api.media.getUploadedKinds, { ids: mediaIds });
 }
 
 function inferType(kinds: string[]): PostType {
@@ -98,7 +94,6 @@ export async function createPost(
   allowedWorkspaces: Workspace[],
   input: CreatePostInput
 ): Promise<PostRow> {
-  const db = getDb();
   const caption = input.caption ?? "";
   if (caption.length > CAPTION_MAX) {
     throw new DomainError(400, `Caption exceeds ${CAPTION_MAX} characters.`);
@@ -110,7 +105,7 @@ export async function createPost(
     throw new DomainError(400, "use_queue and scheduled_at are mutually exclusive.");
   }
 
-  const accounts = accountsByIds(input.social_accounts);
+  const accounts = await accountsByIds(input.social_accounts);
   if (accounts.length !== input.social_accounts.length) {
     throw new DomainError(400, "One or more social accounts do not exist.");
   }
@@ -129,7 +124,7 @@ export async function createPost(
     const row = await importFromUrl(workspace.id, url);
     mediaIds.push(row.id);
   }
-  const kinds = mediaKinds(mediaIds);
+  const kinds = await mediaKinds(mediaIds);
   if (kinds.length !== mediaIds.length) {
     throw new DomainError(400, "One or more media items are missing or not uploaded.");
   }
@@ -160,7 +155,7 @@ export async function createPost(
         typeof input.use_queue === "object" ? input.use_queue.timezone : undefined;
       queueTz = explicitTz || user.timezone || "UTC";
       try {
-        const slot = nextQueueSlot(workspace.id, queueTz);
+        const slot = await nextQueueSlot(workspace.id, queueTz);
         scheduledAt = applyJitter(slot, !!workspace.randomize_queue_time).toISOString();
       } catch (e) {
         if (e instanceof QueueError) throw new DomainError(400, e.message, e.code);
@@ -181,7 +176,7 @@ export async function createPost(
 
   // Free-tier metering: each destination consumes 1 of the 5 free posts (spec FAQ),
   // charged when a post is actually scheduled (not for drafts).
-  const sub = getSubscription(user.id);
+  const sub = await getSubscription(user.id);
   let creditsUsed = 0;
   if (!isDraft) {
     if (!canCreatePosts(user, sub)) {
@@ -196,72 +191,48 @@ export async function createPost(
         );
       }
       creditsUsed = accounts.length;
-      db.prepare("UPDATE users SET free_posts_used = free_posts_used + ? WHERE id = ?").run(
-        creditsUsed,
-        user.id
-      );
+      await patchRecord("users", user.id, { free_posts_used: user.free_posts_used + creditsUsed });
     }
   }
 
   const id = uid();
   const ts = now();
   const accountConfigs = normalizeAccountConfigs(input.account_configurations);
-  db.prepare(
-    `INSERT INTO posts (id, workspace_id, created_by, type, caption, status, is_draft, scheduled_at,
-      used_queue, queue_timezone, platform_configurations, account_configurations, free_credits_used, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  ).run(
+  return await convexMutation<PostRow>(api.posts.createPost, {
     id,
-    workspace.id,
-    user.id,
+    workspace_id: workspace.id,
+    created_by: user.id,
     type,
     caption,
-    isDraft ? "draft" : "scheduled",
-    isDraft ? 1 : 0,
-    scheduledAt,
-    usedQueue,
-    queueTz,
-    input.platform_configurations ? JSON.stringify(input.platform_configurations) : null,
-    accountConfigs.length ? JSON.stringify(accountConfigs) : null,
-    creditsUsed,
-    ts,
-    ts
-  );
-  const insertMedia = db.prepare(
-    "INSERT INTO post_media (post_id, media_id, sort_order) VALUES (?, ?, ?)"
-  );
-  mediaIds.forEach((m, i) => insertMedia.run(id, m, i));
-  const insertDest = db.prepare(
-    "INSERT INTO post_destinations (post_id, social_account_id, caption_override) VALUES (?, ?, ?)"
-  );
-  for (const account of accounts) {
-    const override = accountConfigs.find((c) => c.account_id === account.id)?.caption ?? null;
-    insertDest.run(id, account.id, override);
-  }
-  return getPostRow(id)!;
+    status: isDraft ? "draft" : "scheduled",
+    is_draft: isDraft ? 1 : 0,
+    scheduled_at: scheduledAt,
+    used_queue: usedQueue,
+    queue_timezone: queueTz,
+    platform_configurations: input.platform_configurations ? JSON.stringify(input.platform_configurations) : null,
+    account_configurations: accountConfigs.length ? JSON.stringify(accountConfigs) : null,
+    free_credits_used: creditsUsed,
+    media_ids: mediaIds,
+    destinations: accounts.map((account) => ({
+      social_account_id: account.id,
+      caption_override: accountConfigs.find((c) => c.account_id === account.id)?.caption ?? null,
+    })),
+  });
 }
 
-export function getPostRow(id: string): PostRow | null {
-  return (getDb().prepare("SELECT * FROM posts WHERE id = ?").get(id) ?? null) as PostRow | null;
+export async function getPostRow(id: string): Promise<PostRow | null> {
+  return await convexQuery<PostRow | null>(api.posts.getPost, { id });
 }
 
-export function postMediaIds(postId: string): string[] {
-  return (
-    getDb()
-      .prepare("SELECT media_id FROM post_media WHERE post_id = ? ORDER BY sort_order")
-      .all(postId) as { media_id: string }[]
-  ).map((r) => r.media_id);
+export async function postMediaIds(postId: string): Promise<string[]> {
+  return await convexQuery<string[]>(api.posts.getMediaIds, { post_id: postId });
 }
 
-export function postAccountIds(postId: string): number[] {
-  return (
-    getDb()
-      .prepare("SELECT social_account_id FROM post_destinations WHERE post_id = ?")
-      .all(postId) as { social_account_id: number }[]
-  ).map((r) => r.social_account_id);
+export async function postAccountIds(postId: string): Promise<number[]> {
+  return await convexQuery<number[]>(api.posts.getAccountIds, { post_id: postId });
 }
 
-export function serializePost(post: PostRow) {
+export async function serializePost(post: PostRow) {
   return {
     id: post.id,
     type: post.type,
@@ -270,8 +241,8 @@ export function serializePost(post: PostRow) {
     is_draft: !!post.is_draft,
     scheduled_at: post.scheduled_at,
     posted_at: post.posted_at,
-    social_accounts: postAccountIds(post.id),
-    media: postMediaIds(post.id),
+    social_accounts: await postAccountIds(post.id),
+    media: await postMediaIds(post.id),
     platform_configurations: post.platform_configurations
       ? JSON.parse(post.platform_configurations)
       : null,
@@ -283,78 +254,42 @@ export function serializePost(post: PostRow) {
   };
 }
 
-export function listPosts(
+export async function listPosts(
   workspaceIds: string[],
   opts: { status?: string; platform?: string; limit?: number; offset?: number } = {}
-): { data: PostRow[]; count: number } {
+): Promise<{ data: PostRow[]; count: number }> {
   if (workspaceIds.length === 0) return { data: [], count: 0 };
-  const db = getDb();
-  const where: string[] = [`p.workspace_id IN (${workspaceIds.map(() => "?").join(",")})`];
-  const params: (string | number)[] = [...workspaceIds];
-  if (opts.status) {
-    // API alias: published == posted
-    const status = opts.status === "published" ? "posted" : opts.status;
-    if (status === "draft") {
-      where.push("p.is_draft = 1");
-    } else {
-      where.push("p.status = ? AND p.is_draft = 0");
-      params.push(status);
-    }
-  }
-  if (opts.platform) {
-    where.push(
-      `EXISTS (SELECT 1 FROM post_destinations d JOIN social_accounts a ON a.id = d.social_account_id
-        WHERE d.post_id = p.id AND a.platform = ?)`
-    );
-    params.push(opts.platform);
-  }
-  const whereSql = where.join(" AND ");
-  const count = (
-    db.prepare(`SELECT COUNT(*) c FROM posts p WHERE ${whereSql}`).get(...params) as { c: number }
-  ).c;
-  const data = db
-    .prepare(
-      `SELECT p.* FROM posts p WHERE ${whereSql}
-       ORDER BY COALESCE(p.scheduled_at, p.created_at) DESC LIMIT ? OFFSET ?`
-    )
-    .all(...params, opts.limit ?? 50, opts.offset ?? 0) as PostRow[];
-  return { data, count };
+  return await convexQuery<{ data: PostRow[]; count: number }>(api.posts.listPosts, {
+    workspace_ids: workspaceIds,
+    ...(opts.status ? { status: opts.status } : {}),
+    ...(opts.platform ? { platform: opts.platform } : {}),
+    limit: opts.limit ?? 50,
+    offset: opts.offset ?? 0,
+  });
 }
 
-export function postsInRange(
+export async function postsInRange(
   workspaceId: string,
   fromIso: string,
   toIso: string,
   platformId?: string
-): PostRow[] {
-  const where: string[] = [
-    "workspace_id = ?",
-    "is_draft = 0",
-    "COALESCE(scheduled_at, posted_at) >= ?",
-    "COALESCE(scheduled_at, posted_at) < ?",
-  ];
-  const params: (string | number)[] = [workspaceId, fromIso, toIso];
-  if (platformId) {
-    where.push(
-      `EXISTS (SELECT 1 FROM post_destinations d JOIN social_accounts a ON a.id = d.social_account_id
-        WHERE d.post_id = posts.id AND a.platform = ?)`
-    );
-    params.push(platformId);
-  }
-  return getDb()
-    .prepare(`SELECT * FROM posts WHERE ${where.join(" AND ")} ORDER BY scheduled_at`)
-    .all(...params) as PostRow[];
+): Promise<PostRow[]> {
+  return await convexQuery<PostRow[]>(api.posts.postsInRange, {
+    workspace_id: workspaceId,
+    from: fromIso,
+    to: toIso,
+    ...(platformId ? { platform: platformId } : {}),
+  });
 }
 
 export type UpdatePostInput = Partial<
   Pick<CreatePostInput, "caption" | "media" | "social_accounts" | "platform_configurations" | "account_configurations">
 > & { scheduled_at?: string | null; is_draft?: boolean };
 
-export function updatePost(post: PostRow, input: UpdatePostInput): PostRow {
+export async function updatePost(post: PostRow, input: UpdatePostInput): Promise<PostRow> {
   if (!["draft", "scheduled"].includes(post.status)) {
     throw new DomainError(400, "Only draft or scheduled posts can be updated.");
   }
-  const db = getDb();
   const caption = input.caption ?? post.caption;
   if (caption.length > CAPTION_MAX) {
     throw new DomainError(400, `Caption exceeds ${CAPTION_MAX} characters.`);
@@ -376,104 +311,94 @@ export function updatePost(post: PostRow, input: UpdatePostInput): PostRow {
   if (!scheduledAt) isDraft = true; // scheduling without a time keeps it a draft (spec drafts copy)
 
   if (input.social_accounts) {
-    const accounts = accountsByIds(input.social_accounts);
+    const accounts = await accountsByIds(input.social_accounts);
     if (accounts.length !== input.social_accounts.length || accounts.some((a) => a.workspace_id !== post.workspace_id)) {
       throw new DomainError(400, "Social accounts must exist in the post's workspace.");
     }
     const accountConfigs = normalizeAccountConfigs(input.account_configurations).length
       ? normalizeAccountConfigs(input.account_configurations)
       : (post.account_configurations ? (JSON.parse(post.account_configurations) as AccountConfig[]) : []);
-    db.prepare("DELETE FROM post_destinations WHERE post_id = ?").run(post.id);
-    const insertDest = db.prepare(
-      "INSERT INTO post_destinations (post_id, social_account_id, caption_override) VALUES (?, ?, ?)"
-    );
-    for (const account of accounts) {
-      const override = accountConfigs.find((c) => c.account_id === account.id)?.caption ?? null;
-      insertDest.run(post.id, account.id, override);
-    }
   }
+  const nextDestinations = input.social_accounts
+    ? (await accountsByIds(input.social_accounts)).map((account) => {
+        const accountConfigs = normalizeAccountConfigs(input.account_configurations).length
+          ? normalizeAccountConfigs(input.account_configurations)
+          : (post.account_configurations ? (JSON.parse(post.account_configurations) as AccountConfig[]) : []);
+        return {
+          social_account_id: account.id,
+          caption_override: accountConfigs.find((c) => c.account_id === account.id)?.caption ?? null,
+        };
+      })
+    : undefined;
   if (input.media) {
-    const kinds = mediaKinds(input.media);
+    const kinds = await mediaKinds(input.media);
     if (kinds.length !== input.media.length) {
       throw new DomainError(400, "One or more media items are missing or not uploaded.");
     }
-    db.prepare("DELETE FROM post_media WHERE post_id = ?").run(post.id);
-    const insertMedia = db.prepare(
-      "INSERT INTO post_media (post_id, media_id, sort_order) VALUES (?, ?, ?)"
-    );
-    input.media.forEach((m, i) => insertMedia.run(post.id, m, i));
   }
 
   // ponytail: edits are not re-metered against the free quota; only the initial
   // scheduling charge applies. Upgrade path: recompute credits on destination change.
-  db.prepare(
-    `UPDATE posts SET caption = ?, is_draft = ?, status = ?, scheduled_at = ?,
-      platform_configurations = COALESCE(?, platform_configurations),
-      account_configurations = COALESCE(?, account_configurations),
-      updated_at = ? WHERE id = ?`
-  ).run(
-    caption,
-    isDraft ? 1 : 0,
-    isDraft ? "draft" : "scheduled",
-    scheduledAt,
-    input.platform_configurations !== undefined
-      ? JSON.stringify(input.platform_configurations)
-      : null,
-    input.account_configurations !== undefined
-      ? JSON.stringify(normalizeAccountConfigs(input.account_configurations))
-      : null,
-    now(),
-    post.id
-  );
-  return getPostRow(post.id)!;
+  return await convexMutation<PostRow>(api.posts.patchPost, {
+    id: post.id,
+    patch: {
+      caption,
+      is_draft: isDraft ? 1 : 0,
+      status: isDraft ? "draft" : "scheduled",
+      scheduled_at: scheduledAt,
+      ...(input.platform_configurations !== undefined
+        ? { platform_configurations: JSON.stringify(input.platform_configurations) }
+        : {}),
+      ...(input.account_configurations !== undefined
+        ? { account_configurations: JSON.stringify(normalizeAccountConfigs(input.account_configurations)) }
+        : {}),
+    },
+    ...(input.media ? { media_ids: input.media } : {}),
+    ...(nextDestinations ? { destinations: nextDestinations } : {}),
+  });
 }
 
-export function deletePost(post: PostRow): void {
+export async function deletePost(post: PostRow): Promise<void> {
   if (!["draft", "scheduled"].includes(post.status)) {
     throw new DomainError(400, "Published posts cannot be deleted.");
   }
-  const db = getDb();
   if (post.free_credits_used > 0) {
-    db.prepare(
-      "UPDATE users SET free_posts_used = MAX(0, free_posts_used - ?) WHERE id = ?"
-    ).run(post.free_credits_used, post.created_by);
+    const user = await convexQuery<User | null>(api.auth.getUserById, { id: post.created_by });
+    if (user) {
+      await patchRecord("users", user.id, {
+        free_posts_used: Math.max(0, user.free_posts_used - post.free_credits_used),
+      });
+    }
   }
-  db.prepare("DELETE FROM post_destinations WHERE post_id = ?").run(post.id);
-  db.prepare("DELETE FROM post_media WHERE post_id = ?").run(post.id);
-  db.prepare("DELETE FROM post_results WHERE post_id = ?").run(post.id);
-  db.prepare("DELETE FROM posts WHERE id = ?").run(post.id);
+  await convexMutation(api.posts.deletePost, { id: post.id });
 }
 
 /** Duplicate any post into a new Draft (spec: duplicating creates a draft). */
-export function duplicatePost(post: PostRow, userId: string): PostRow {
-  const db = getDb();
+export async function duplicatePost(post: PostRow, userId: string): Promise<PostRow> {
   const id = uid();
-  const ts = now();
-  db.prepare(
-    `INSERT INTO posts (id, workspace_id, created_by, type, caption, status, is_draft, scheduled_at,
-      used_queue, queue_timezone, platform_configurations, account_configurations, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, 'draft', 1, NULL, 0, NULL, ?, ?, ?, ?)`
-  ).run(
+  const mediaIds = await postMediaIds(post.id);
+  const destIds = await postAccountIds(post.id);
+  const accountConfigs = post.account_configurations
+    ? (JSON.parse(post.account_configurations) as AccountConfig[])
+    : [];
+  return await convexMutation<PostRow>(api.posts.createPost, {
     id,
-    post.workspace_id,
-    userId,
-    post.type,
-    post.caption,
-    post.platform_configurations,
-    post.account_configurations,
-    ts,
-    ts
-  );
-  const insertMedia = db.prepare(
-    "INSERT INTO post_media (post_id, media_id, sort_order) VALUES (?, ?, ?)"
-  );
-  postMediaIds(post.id).forEach((m, i) => insertMedia.run(id, m, i));
-  const insertDest = db.prepare(
-    "INSERT INTO post_destinations (post_id, social_account_id, caption_override) VALUES (?, ?, ?)"
-  );
-  const dests = db
-    .prepare("SELECT social_account_id, caption_override FROM post_destinations WHERE post_id = ?")
-    .all(post.id) as { social_account_id: number; caption_override: string | null }[];
-  for (const d of dests) insertDest.run(id, d.social_account_id, d.caption_override);
-  return getPostRow(id)!;
+    workspace_id: post.workspace_id,
+    created_by: userId,
+    type: post.type,
+    caption: post.caption,
+    status: "draft",
+    is_draft: 1,
+    scheduled_at: null,
+    used_queue: 0,
+    queue_timezone: null,
+    platform_configurations: post.platform_configurations,
+    account_configurations: post.account_configurations,
+    free_credits_used: 0,
+    media_ids: mediaIds,
+    destinations: destIds.map((accountId) => ({
+      social_account_id: accountId,
+      caption_override: accountConfigs.find((c) => c.account_id === accountId)?.caption ?? null,
+    })),
+  });
 }

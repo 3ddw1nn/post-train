@@ -1,9 +1,9 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { createHmac, randomBytes, scryptSync, timingSafeEqual } from "node:crypto";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
-import path from "node:path";
-import { getDb, now, uid, DATA_DIR } from "./db";
+import { now, uid, convexMutation, convexQuery } from "./db";
+import { secretKey } from "./secretbox";
+import { api } from "@/convex/_generated/api";
 
 export type User = {
   id: string;
@@ -25,23 +25,15 @@ export type User = {
   upsell_dismissed: number;
   first_subscribed_at: string | null;
   session_epoch: number;
+  is_staff?: number;
   created_at: string;
 };
 
 const SESSION_COOKIE = "pt_session";
 const SESSION_DAYS = 30;
 
-function secret(): Buffer {
-  const file = path.join(DATA_DIR, "secret");
-  if (!existsSync(file)) {
-    mkdirSync(DATA_DIR, { recursive: true });
-    writeFileSync(file, randomBytes(32).toString("hex"), { mode: 0o600 });
-  }
-  return Buffer.from(readFileSync(file, "utf8").trim(), "hex");
-}
-
 export function sign(data: string): string {
-  return createHmac("sha256", secret()).update(data).digest("base64url");
+  return createHmac("sha256", secretKey()).update(data).digest("base64url");
 }
 
 export function hashPassword(password: string): string {
@@ -92,9 +84,7 @@ export async function getSessionUser(): Promise<User | null> {
   const jar = await cookies();
   const parsed = parseSessionToken(jar.get(SESSION_COOKIE)?.value);
   if (!parsed) return null;
-  const user = getDb()
-    .prepare("SELECT * FROM users WHERE id = ?")
-    .get(parsed.userId) as User | undefined;
+  const user = await convexQuery<User | null>(api.auth.getUserById, { id: parsed.userId });
   if (!user) return null;
   if (user.session_epoch !== parsed.epoch) return null; // "Sign out all devices" bumps the epoch
   return user;
@@ -107,6 +97,13 @@ export async function requireUser(): Promise<User> {
   return user;
 }
 
+/** Route guard: founder/staff-only areas — everyone else is bounced to the dashboard. */
+export async function requireStaffUser(): Promise<User> {
+  const user = await requireUser();
+  if (!user.is_staff) redirect("/dashboard");
+  return user;
+}
+
 /** Route guard: dashboard hard gate — un-onboarded users are sent to the wizard. */
 export async function requireOnboardedUser(): Promise<User> {
   const user = await requireUser();
@@ -114,46 +111,29 @@ export async function requireOnboardedUser(): Promise<User> {
   return user;
 }
 
-export function createUser(opts: {
+export async function createUser(opts: {
   email: string;
   password?: string;
   displayName?: string;
   timezone?: string;
   avatarUrl?: string;
-}): User {
-  const db = getDb();
+}): Promise<User> {
   const id = uid();
-  const ts = now();
-  db.prepare(
-    `INSERT INTO users (id, email, password_hash, display_name, avatar_url, timezone, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?)`
-  ).run(
-    id,
-    opts.email.toLowerCase().trim(),
-    opts.password ? hashPassword(opts.password) : null,
-    opts.displayName ?? opts.email.split("@")[0],
-    opts.avatarUrl ?? null,
-    opts.timezone || "UTC",
-    ts
-  );
-  // Default workspace "Main" with the observed default queue slots (11:00 & 16:00, Mon–Fri)
   const wsId = uid();
-  db.prepare(
-    "INSERT INTO workspaces (id, owner_id, name, webhook_secret, created_at) VALUES (?, ?, 'Main', ?, ?)"
-  ).run(wsId, id, randomBytes(24).toString("hex"), ts);
-  db.prepare(
-    "INSERT INTO workspace_members (workspace_id, user_id, role, created_at) VALUES (?, ?, 'owner', ?)"
-  ).run(wsId, id, ts);
-  const slot = getDb().prepare(
-    "INSERT INTO queue_slots (workspace_id, time_local, days, created_at) VALUES (?, ?, '1111100', ?)"
-  );
-  slot.run(wsId, "11:00", ts);
-  slot.run(wsId, "16:00", ts);
-  return getDb().prepare("SELECT * FROM users WHERE id = ?").get(id) as User;
+  return await convexMutation<User>(api.users.createUser, {
+    id,
+    email: opts.email.toLowerCase().trim(),
+    password_hash: opts.password ? hashPassword(opts.password) : null,
+    display_name: opts.displayName ?? opts.email.split("@")[0],
+    avatar_url: opts.avatarUrl ?? null,
+    timezone: opts.timezone || "UTC",
+    workspace_id: wsId,
+    webhook_secret: randomBytes(24).toString("hex"),
+  });
 }
 
-export function findUserByEmail(email: string): User | null {
-  return (getDb()
-    .prepare("SELECT * FROM users WHERE email = ?")
-    .get(email.toLowerCase().trim()) ?? null) as User | null;
+export async function findUserByEmail(email: string): Promise<User | null> {
+  return await convexQuery<User | null>(api.auth.findUserByEmail, {
+    email: email.toLowerCase().trim(),
+  });
 }

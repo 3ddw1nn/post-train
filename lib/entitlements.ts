@@ -41,6 +41,10 @@ export const apiAccess = (sub: Subscription | null) => entitled(sub) && !!sub!.a
 
 export const studioAccess = (sub: Subscription | null) => entitled(sub);
 
+// ponytail: flat per-workspace monthly cap on AI UGC generations. Upgrade
+// path: per-plan caps + purchasable credit packs via the billing addon route.
+export const STUDIO_AI_MONTHLY_CAP = 30;
+
 export function planLabel(sub: Subscription | null): string {
   const plan = planOf(sub);
   return plan === "free"

@@ -1,8 +1,8 @@
 import type { Metadata } from "next";
-import { Figtree } from "next/font/google";
+import { Hanken_Grotesk } from "next/font/google";
 import "./globals.css";
 
-const figtree = Figtree({ subsets: ["latin"], variable: "--font-figtree" });
+const hanken = Hanken_Grotesk({ subsets: ["latin"], variable: "--font-hanken" });
 
 export const metadata: Metadata = {
   title: {
@@ -15,7 +15,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en" className={figtree.variable}>
+    <html lang="en" className={hanken.variable}>
       <body>{children}</body>
     </html>
   );

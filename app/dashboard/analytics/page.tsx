@@ -20,7 +20,7 @@ export default async function AnalyticsPage({
   searchParams: Promise<{ tab?: string; timeframe?: string; platform?: string }>;
 }) {
   const user = await requireOnboardedUser();
-  const sub = getSubscription(user.id);
+  const sub = await getSubscription(user.id);
   const params = await searchParams;
   const tab = params.tab === "posts" ? "posts" : "overview";
 
@@ -44,7 +44,7 @@ export default async function AnalyticsPage({
   const timeframe = (["7d", "30d", "90d", "all"].includes(params.timeframe ?? "")
     ? params.timeframe
     : "30d") as "7d" | "30d" | "90d" | "all";
-  const { data } = listAnalytics(ws.id, {
+  const { data } = await listAnalytics(ws.id, {
     timeframe,
     platform: params.platform || undefined,
     limit: 100,
@@ -73,7 +73,7 @@ export default async function AnalyticsPage({
                 key={t}
                 href={`/dashboard/analytics?tab=${tab}&timeframe=${t}`}
                 className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${
-                  timeframe === t ? "bg-primary text-[#0c2e1a]" : "text-muted hover:text-ink"
+                  timeframe === t ? "bg-primary text-primary-contrast" : "text-muted hover:text-ink"
                 }`}
               >
                 {t}

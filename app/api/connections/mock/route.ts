@@ -3,8 +3,10 @@ import { currentWorkspace } from "@/lib/workspaces";
 import { getSubscription } from "@/lib/billing";
 import { maxAccounts } from "@/lib/entitlements";
 import { platform as platformOf } from "@/lib/platforms";
-import { getDb, now } from "@/lib/db";
+import { convexMutation } from "@/lib/db";
 import { randomBytes } from "node:crypto";
+import { accountsForWorkspace } from "@/lib/accounts";
+import { api } from "@/convex/_generated/api";
 
 // Completes the simulated OAuth flow: creates (or refreshes) a social account.
 export async function POST(req: Request) {
@@ -16,32 +18,27 @@ export async function POST(req: Request) {
   if (!p || !username) {
     return Response.json({ error: { message: "Invalid platform or username." } }, { status: 400 });
   }
-  const db = getDb();
-
+  if (p.id === "bluesky") {
+    // Bluesky has a real integration — never create credential-less rows for it.
+    return Response.json(
+      { error: { message: "Use the Bluesky sign-in form to connect this platform." } },
+      { status: 400 }
+    );
+  }
   if (body?.reconnect) {
     const id = Number(body.reconnect);
-    const row = db
-      .prepare("SELECT id FROM social_accounts WHERE id = ? AND workspace_id = ?")
-      .get(id, ws.id);
+    const row = (await accountsForWorkspace(ws.id)).find((a) => a.id === id);
     if (!row) {
       return Response.json({ error: { message: "Account not found." } }, { status: 404 });
     }
-    db.prepare(
-      "UPDATE social_accounts SET status = 'active', username = ? WHERE id = ?"
-    ).run(username, id);
+    await convexMutation(api.accounts.patchAccount, { id, patch: { status: "active", username } });
     return Response.json({ ok: true });
   }
 
   // Plan cap check at connect time (15 / 50 / ∞, small free cap)
-  const sub = getSubscription(user.id);
+  const sub = await getSubscription(user.id);
   const cap = maxAccounts(sub);
-  const count = (
-    db
-      .prepare(
-        "SELECT COUNT(*) c FROM social_accounts WHERE workspace_id = ? AND status != 'disconnected'"
-      )
-      .get(ws.id) as { c: number }
-  ).c;
+  const count = (await accountsForWorkspace(ws.id)).length;
   if (count >= cap) {
     return Response.json(
       {
@@ -54,9 +51,12 @@ export async function POST(req: Request) {
     );
   }
 
-  db.prepare(
-    `INSERT INTO social_accounts (workspace_id, platform, username, display_name, platform_account_id, status, connected_at)
-     VALUES (?, ?, ?, ?, ?, 'active', ?)`
-  ).run(ws.id, p.id, username, username, randomBytes(8).toString("hex"), now());
+  await convexMutation(api.accounts.upsertMockAccount, {
+    workspace_id: ws.id,
+    platform: p.id,
+    username,
+    display_name: username,
+    avatar_url: null,
+  });
   return Response.json({ ok: true });
 }

@@ -24,42 +24,60 @@ export default async function CreateHub({
   const user = await requireOnboardedUser();
   const { date } = await searchParams;
   const dateQ = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? `?date=${date}` : "";
-  const sub = getSubscription(user.id);
+  const sub = await getSubscription(user.id);
   if (!canCreatePosts(user, sub)) return <PaywallCard />;
 
   return (
-    <div className="fade-up">
-      <div className="flex items-center justify-between">
-        <h1 className="text-2xl font-bold">Create a new post</h1>
+    <div className="fade-up mx-auto max-w-xl">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">Create a new post</h1>
+          <p className="mt-1 text-sm text-muted">Pick a format, then choose where it ships.</p>
+        </div>
         {!entitled(sub) && (
-          <span className="pill bg-warning-bg text-warning-ink">
+          <span className="pill mt-1 shrink-0 bg-warning-bg text-warning-ink">
             {freePostsRemaining(user)} free post{freePostsRemaining(user) === 1 ? "" : "s"} left
           </span>
         )}
       </div>
-      <div className="mt-6 grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+
+      <div className="card mt-6 divide-y divide-line overflow-hidden">
         {TYPES.map((t) => (
           <Link
             key={t.type}
             href={`/dashboard/create/${t.type}${dateQ}`}
-            className="group flex flex-col items-center gap-3 rounded-2xl border-2 border-dashed border-line bg-white p-8 text-center transition-colors hover:border-primary"
+            className="group flex items-center gap-4 px-4 py-4 transition-colors hover:bg-primary-soft"
           >
-            <span className="text-muted transition-colors group-hover:text-primary-deep">
-              <Icon name={t.icon} size={34} />
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg border border-line bg-page text-ink transition-colors duration-150 group-hover:border-primary group-hover:bg-primary group-hover:text-primary-contrast">
+              <Icon name={t.icon} size={22} strokeWidth={1.8} />
             </span>
-            <span className="font-bold">{t.title}</span>
-            <span className="text-xs text-muted">{t.desc}</span>
-            <PlatformIconRow ids={platformsForType(t.type).map((p) => p.id)} size={14} />
+            <span className="min-w-0 flex-1">
+              <span className="flex flex-wrap items-baseline gap-x-2">
+                <span className="font-bold">{t.title}</span>
+                <span className="text-xs text-muted">{t.desc}</span>
+              </span>
+              <span className="mt-1.5 block">
+                <PlatformIconRow ids={platformsForType(t.type).map((p) => p.id)} size={14} />
+              </span>
+            </span>
+            <Icon
+              name="chevronRight"
+              size={16}
+              className="shrink-0 text-muted transition-transform duration-150 group-hover:translate-x-0.5 group-hover:text-primary-deep"
+            />
           </Link>
         ))}
       </div>
-      <p className="mt-6 text-sm text-muted">
-        Missing an account?{" "}
-        <Link href="/dashboard/connections" className="font-semibold text-primary-deep">
-          You can connect more accounts here
-        </Link>
-        .
-      </p>
+
+      <div className="mt-4 flex items-center gap-1.5 text-sm text-muted">
+        <Icon name="info" size={14} className="shrink-0" />
+        <span>
+          Missing an account?{" "}
+          <Link href="/dashboard/connections" className="font-semibold text-primary-deep hover:underline">
+            Connect more here
+          </Link>
+        </span>
+      </div>
     </div>
   );
 }

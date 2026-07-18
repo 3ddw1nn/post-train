@@ -13,8 +13,8 @@ export default async function DashboardLayout({
 }) {
   // Hard gate: every /dashboard/* route redirects un-onboarded users to the wizard
   const user = await requireOnboardedUser();
-  const sub = getSubscription(user.id);
-  const workspaces = workspacesForUser(user.id);
+  const sub = await getSubscription(user.id);
+  const workspaces = await workspacesForUser(user.id);
   const ws = await currentWorkspace(user);
 
   const upsellUntil = user.first_subscribed_at
@@ -33,12 +33,13 @@ export default async function DashboardLayout({
         planLabel={planLabel(sub)}
         workspaces={workspaces.map((w) => ({ id: w.id, name: w.name }))}
         currentWorkspaceId={ws.id}
+        isStaff={!!user.is_staff}
       />
-      <div className="pt-[52px] lg:pl-[210px] lg:pt-0">
+      <div className="pt-14 lg:pl-[210px]">
         {showUpsell && <PromoBanner until={upsellUntil!.toISOString()} />}
         <main className="mx-auto max-w-6xl p-4 md:p-6">{children}</main>
       </div>
-      <ChatLauncher />
+      <ChatLauncher variant="app" />
     </div>
   );
 }

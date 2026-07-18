@@ -1,12 +1,11 @@
 import { clearSessionCookie, requireUser } from "@/lib/auth";
-import { getDb } from "@/lib/db";
+import { convexMutation } from "@/lib/db";
+import { api } from "@/convex/_generated/api";
 
 export async function POST() {
   const user = await requireUser();
   // Bumping the epoch invalidates every issued session token
-  getDb()
-    .prepare("UPDATE users SET session_epoch = session_epoch + 1 WHERE id = ?")
-    .run(user.id);
+  await convexMutation(api.users.incrementSessionEpoch, { id: user.id });
   await clearSessionCookie();
   return Response.json({ ok: true, redirect: "/signin" });
 }

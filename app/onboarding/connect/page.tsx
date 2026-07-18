@@ -2,16 +2,22 @@ import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { currentWorkspace } from "@/lib/workspaces";
 import { accountsForWorkspace } from "@/lib/accounts";
+import { CONNECT_ERRORS } from "@/lib/platforms";
 import { Icon } from "@/components/icons";
 import { ConnectedAccountCard } from "@/components/connected-account-card";
 import { FooterBar } from "../footer-bar";
 
 export const metadata = { title: "Connect your accounts" };
 
-export default async function OnboardingConnect() {
+export default async function OnboardingConnect({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
   const user = await requireUser();
   const ws = await currentWorkspace(user);
-  const accounts = accountsForWorkspace(ws.id);
+  const accounts = await accountsForWorkspace(ws.id);
+  const { error } = await searchParams;
 
   return (
     <div className="fade-up mx-auto max-w-2xl">
@@ -19,6 +25,11 @@ export default async function OnboardingConnect() {
       <p className="mt-1 text-sm text-muted">
         Link the social accounts you post to. You can always add more later.
       </p>
+      {error && (
+        <p className="mt-3 rounded-xl bg-red-50 px-4 py-2.5 text-sm font-medium text-red-700">
+          {CONNECT_ERRORS[error] ?? "Something went wrong connecting that account — try again."}
+        </p>
+      )}
       <Link
         href="/onboarding/connect/add"
         className="mt-6 flex w-full items-center justify-center gap-2 rounded-2xl border-2 border-dashed border-line bg-white/60 px-5 py-6 font-semibold text-muted transition-colors hover:border-primary hover:text-primary-deep"

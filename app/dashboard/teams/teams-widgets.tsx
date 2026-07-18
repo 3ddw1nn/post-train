@@ -3,6 +3,39 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
+import { ActionButton } from "@/components/interactive";
+
+export function MemberActions({
+  userId,
+  teamMemberId,
+  role,
+}: {
+  userId: string;
+  teamMemberId: number;
+  role: string;
+}) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <ActionButton
+        endpoint="/api/app/teams/members"
+        method="PATCH"
+        body={{ user_id: userId, role: role === "admin" ? "member" : "admin" }}
+        className="btn-subtle !px-2 !py-1 text-xs"
+      >
+        {role === "admin" ? "Make member" : "Make admin"}
+      </ActionButton>
+      <ActionButton
+        endpoint="/api/app/teams/members"
+        method="DELETE"
+        body={{ user_id: userId, team_member_id: teamMemberId }}
+        className="btn-subtle !px-2 !py-1 text-xs text-danger"
+        confirmText="Remove this person from the workspace? They'll lose access immediately."
+      >
+        Remove
+      </ActionButton>
+    </div>
+  );
+}
 
 export function RefreshButton() {
   const router = useRouter();

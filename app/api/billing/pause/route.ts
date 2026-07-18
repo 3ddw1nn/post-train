@@ -3,6 +3,6 @@ import { pauseSubscription } from "@/lib/billing";
 
 export async function POST() {
   const user = await requireUser();
-  pauseSubscription(user.id);
+  await pauseSubscription(user.id);
   return Response.json({ ok: true });
 }

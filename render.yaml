@@ -1,0 +1,19 @@
+# Render Blueprint for Post Train's free tier.
+# https://render.com/docs/blueprint-spec — `New > Blueprint` in the Render
+# dashboard, point it at this repo, and it reads this file.
+#
+# Free web services sleep after 15 min with no inbound traffic and have no
+# persistent disk — see the "Deploy on Render (free)" section in README.md
+# for the external pinger + R2 setup this depends on.
+services:
+  - type: web
+    name: post-train
+    runtime: docker
+    plan: free
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /
+    envVars:
+      - key: PORT
+        value: 3000
+      # Set the rest (NEXT_PUBLIC_CONVEX_URL, R2_*, STRIPE_*, CRON_SECRET,
+      # etc.) as secrets in the Render dashboard — not committed here.

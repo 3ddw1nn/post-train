@@ -1,5 +1,5 @@
 import { AccountAvatar } from "./platform-icon";
-import { platform } from "@/lib/platforms";
+import { platform, connectHref, type PlatformId } from "@/lib/platforms";
 import type { SocialAccountRow } from "@/lib/posts";
 import { ActionButton, Dropdown } from "./interactive";
 import { Icon } from "./icons";
@@ -14,7 +14,12 @@ export function ConnectedAccountCard({
   const p = platform(account.platform);
   return (
     <div className="card flex items-center gap-3 px-4 py-3">
-      <AccountAvatar username={account.username} platformId={account.platform} size={40} />
+      <AccountAvatar
+        username={account.username}
+        platformId={account.platform}
+        avatarUrl={account.avatar_url}
+        size={40}
+      />
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-semibold">{p?.name}</p>
         <p className="truncate text-sm text-muted">@{account.username}</p>
@@ -35,7 +40,7 @@ export function ConnectedAccountCard({
         }
       >
         <a
-          href={`/oauth/mock/${account.platform}?reconnect=${account.id}&return=${encodeURIComponent(returnTo)}`}
+          href={connectHref(account.platform as PlatformId, { returnTo, reconnect: account.id })}
           className="flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-page"
         >
           <Icon name="refresh" size={14} /> Reconnect

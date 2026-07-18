@@ -10,14 +10,17 @@ import { Icon } from "./icons";
 import { AccountAvatar } from "./platform-icon";
 import { InfoTip } from "./ui";
 import { platform as platformOf, FOUR_IMAGE_PLATFORMS, CAPTION_MAX, type PostType } from "@/lib/platforms";
+import { MediaLibraryModal, MediaThumb, uploadOneFile, type ComposerMedia } from "./media";
+
+export type { ComposerMedia };
 
 export type ComposerAccount = {
   id: number;
   platform: string;
   username: string;
   status: string;
+  avatar_url: string | null;
 };
-export type ComposerMedia = { id: string; name: string; mime_type: string; kind: string };
 export type ComposerPost = {
   id: string;
   caption: string;
@@ -149,36 +152,8 @@ export function Composer({
     for (const file of list) {
       setUploading((u) => u + 1);
       try {
-        const res = await fetch("/api/app/media/upload-url", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            mime_type: file.type || "application/octet-stream",
-            size_bytes: file.size,
-            name: file.name,
-          }),
-        });
-        const data = await res.json();
-        if (!res.ok) throw new Error(data?.error?.message ?? "Upload failed");
-        const put = await fetch(data.upload_url, {
-          method: "PUT",
-          headers: { "Content-Type": file.type || "application/octet-stream" },
-          body: file,
-        });
-        if (!put.ok) throw new Error("Upload failed");
-        setMedia((m) => [
-          ...m,
-          {
-            id: data.media_id,
-            name: file.name,
-            mime_type: file.type,
-            kind: file.type.startsWith("video/")
-              ? "video"
-              : file.type === "application/pdf"
-                ? "pdf"
-                : "image",
-          },
-        ]);
+        const uploaded = await uploadOneFile(file);
+        setMedia((m) => [...m, uploaded]);
         if (prefFilenameCaption && !caption) {
           setCaption(file.name.replace(/\.[^.]+$/, ""));
         }
@@ -327,6 +302,7 @@ export function Composer({
               <AccountAvatar
                 username={a.username}
                 platformId={a.platform}
+                avatarUrl={a.avatar_url}
                 size={44}
                 selected={selected.has(a.id)}
               />
@@ -556,7 +532,12 @@ export function Composer({
                 .filter((a) => selected.has(a.id))
                 .map((a) => (
                   <div key={a.id} className="flex items-start gap-3">
-                    <AccountAvatar username={a.username} platformId={a.platform} size={32} />
+                    <AccountAvatar
+                      username={a.username}
+                      platformId={a.platform}
+                      avatarUrl={a.avatar_url}
+                      size={32}
+                    />
                     <textarea
                       className="input h-16 resize-y"
                       placeholder={`Override for @${a.username}`}
@@ -963,99 +944,6 @@ function PlatformConfigPanel({
           </div>
         </>
       )}
-    </div>
-  );
-}
-
-function MediaThumb({
-  media,
-  size,
-  full,
-  onClick,
-}: {
-  media: ComposerMedia;
-  size: number;
-  full?: boolean;
-  onClick?: () => void;
-}) {
-  const url = `/api/media-file/${media.id}`;
-  const cls = full
-    ? "h-64 w-full rounded-xl object-contain bg-page"
-    : "rounded-lg object-cover cursor-pointer";
-  if (media.kind === "video") {
-    return (
-      <video
-        src={url}
-        className={cls}
-        style={full ? undefined : { width: size, height: size }}
-        onClick={onClick}
-        controls={full}
-        muted
-      />
-    );
-  }
-  if (media.kind === "pdf") {
-    return (
-      <span
-        className={`flex items-center justify-center bg-page text-muted ${cls}`}
-        style={full ? { height: 256 } : { width: size, height: size }}
-        onClick={onClick}
-      >
-        <Icon name="file" size={full ? 40 : 22} />
-      </span>
-    );
-  }
-  return (
-    // eslint-disable-next-line @next/next/no-img-element
-    <img
-      src={url}
-      alt={media.name}
-      className={cls}
-      style={full ? undefined : { width: size, height: size }}
-      onClick={onClick}
-    />
-  );
-}
-
-function MediaLibraryModal({
-  onClose,
-  onPick,
-}: {
-  onClose: () => void;
-  onPick: (m: ComposerMedia) => void;
-}) {
-  const [items, setItems] = useState<ComposerMedia[] | null>(null);
-  useEffect(() => {
-    fetch("/api/app/media")
-      .then((r) => r.json())
-      .then((d) => setItems(d.data ?? []));
-  }, []);
-  return (
-    <div
-      className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 p-4"
-      onClick={onClose}
-    >
-      <div
-        className="card max-h-[70vh] w-full max-w-lg overflow-y-auto p-5"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <p className="font-bold">Media library</p>
-        {items === null ? (
-          <p className="py-10 text-center text-sm text-muted">Loading…</p>
-        ) : items.length === 0 ? (
-          <p className="py-10 text-center text-sm text-muted">
-            Nothing here yet — media you upload gets reusable across posts.
-          </p>
-        ) : (
-          <div className="mt-3 grid grid-cols-4 gap-2">
-            {items.map((m) => (
-              <button key={m.id} type="button" onClick={() => onPick(m)} title={m.name}>
-                <MediaThumb media={m} size={100} />
-              </button>
-            ))}
-          </div>
-        )}
-      </div>
     </div>
   );
 }

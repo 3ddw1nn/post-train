@@ -1,12 +1,13 @@
 // Public API v1 auth: Bearer pt_live_… keys, workspace-scoped, gated on the
 // API add-on + an active subscription (spec 09).
 import { createHash } from "node:crypto";
-import { getDb, now } from "./db";
+import { convexMutation, convexQuery, now } from "./db";
 import type { User } from "./auth";
 import { getSubscription } from "./billing";
 import { apiAccess } from "./entitlements";
 import type { Workspace } from "./workspaces";
 import { DomainError } from "./posts";
+import { api } from "@/convex/_generated/api";
 
 export const API_KEY_PREFIX = "pt_live_";
 
@@ -19,16 +20,15 @@ export type ApiContext = { user: User; workspace: Workspace; keyId: string };
 const buckets = new Map<string, { windowStart: number; count: number }>();
 const RATE_LIMIT = 60;
 
-export function authenticateApiKey(req: Request): ApiContext {
+export async function authenticateApiKey(req: Request): Promise<ApiContext> {
   const auth = req.headers.get("authorization") ?? "";
   const match = auth.match(/^Bearer\s+(.+)$/i);
   if (!match || !match[1].startsWith(API_KEY_PREFIX)) {
     throw new DomainError(401, "Missing or invalid API key.");
   }
-  const db = getDb();
-  const key = db
-    .prepare("SELECT * FROM api_keys WHERE key_hash = ? AND revoked_at IS NULL")
-    .get(hashKey(match[1])) as { id: string; workspace_id: string } | undefined;
+  const key = await convexQuery<{ id: string; workspace_id: string } | null>(api.apiKeys.getByHash, {
+    key_hash: hashKey(match[1]),
+  });
   if (!key) throw new DomainError(401, "Missing or invalid API key.");
 
   const bucket = buckets.get(key.id);
@@ -39,17 +39,18 @@ export function authenticateApiKey(req: Request): ApiContext {
     buckets.set(key.id, { windowStart, count: 1 });
   }
 
-  const workspace = db
-    .prepare("SELECT * FROM workspaces WHERE id = ?")
-    .get(key.workspace_id) as Workspace;
-  const user = db
-    .prepare("SELECT * FROM users WHERE id = ?")
-    .get(workspace.owner_id) as User;
-  const sub = getSubscription(user.id);
+  const workspace = await convexQuery<Workspace | null>(api.records.getByLegacyId, {
+    table: "workspaces",
+    id: key.workspace_id,
+  });
+  if (!workspace) throw new DomainError(401, "Missing or invalid API key.");
+  const user = await convexQuery<User | null>(api.auth.getUserById, { id: workspace.owner_id });
+  if (!user) throw new DomainError(401, "Missing or invalid API key.");
+  const sub = await getSubscription(user.id);
   if (!apiAccess(sub)) {
     throw new DomainError(403, "API add-on inactive or subscription not active.");
   }
-  db.prepare("UPDATE api_keys SET last_used_at = ? WHERE id = ?").run(now(), key.id);
+  await convexMutation(api.apiKeys.patchApiKey, { id: key.id, patch: { last_used_at: now() } });
   return { user, workspace, keyId: key.id };
 }
 

@@ -1,12 +1,12 @@
 "use client";
 
 import { useState } from "react";
-import { PLATFORMS, platform as platformOf } from "@/lib/platforms";
+import { PLATFORMS, platform as platformOf, connectHref, CONNECT_ERRORS, type PlatformId } from "@/lib/platforms";
 import { PlatformIcon, AccountAvatar } from "@/components/platform-icon";
 import { Icon } from "@/components/icons";
 import { ActionButton } from "@/components/interactive";
 
-type Account = { id: number; platform: string; username: string; status: string };
+type Account = { id: number; platform: string; username: string; status: string; avatar_url: string | null };
 
 export function ConnectionsPanel({
   accounts,
@@ -27,9 +27,9 @@ export function ConnectionsPanel({
   return (
     <div className="fade-up">
       <h1 className="text-2xl font-bold">Connections</h1>
-      {error === "oauth_cancelled" && (
+      {error && (
         <p className="mt-3 rounded-xl bg-red-50 px-4 py-2.5 text-sm font-medium text-red-700">
-          Connection cancelled — no account was linked.
+          {CONNECT_ERRORS[error] ?? "Something went wrong connecting that account — try again."}
         </p>
       )}
       <div className="card mt-5 p-5">
@@ -80,7 +80,7 @@ export function ConnectionsPanel({
               <div key={p.id} className="flex flex-wrap items-center gap-3 py-3">
                 <PlatformIcon id={p.id} size={22} />
                 <a
-                  href={`/oauth/mock/${p.id}?return=${encodeURIComponent("/dashboard/connections")}`}
+                  href={connectHref(p.id, { returnTo: "/dashboard/connections" })}
                   className="btn-dark !py-1.5 text-xs"
                 >
                   Connect {p.name}
@@ -95,7 +95,12 @@ export function ConnectionsPanel({
                           : "border-line bg-white"
                       }`}
                     >
-                      <AccountAvatar username={a.username} platformId={a.platform} size={22} />
+                      <AccountAvatar
+                        username={a.username}
+                        platformId={a.platform}
+                        avatarUrl={a.avatar_url}
+                        size={22}
+                      />
                       @{a.username}
                       {showIds && (
                         <code className="rounded bg-page px-1 text-[10px] text-muted">
@@ -128,7 +133,7 @@ export function ConnectionsPanel({
               {stale.map((a) => (
                 <a
                   key={a.id}
-                  href={`/oauth/mock/${a.platform}?reconnect=${a.id}&return=${encodeURIComponent("/dashboard/connections")}`}
+                  href={connectHref(a.platform as PlatformId, { returnTo: "/dashboard/connections", reconnect: a.id })}
                   className="btn-warning !py-1.5 text-xs"
                 >
                   <Icon name="refresh" size={13} /> Refresh {platformOf(a.platform)?.name} (@
@@ -142,7 +147,7 @@ export function ConnectionsPanel({
         <p className="mt-5 text-xs text-muted">
           Trouble linking something?{" "}
           <a
-            href="mailto:support@posttrain.example"
+            href="mailto:ehleedev@gmail.com"
             className="font-semibold text-primary-deep hover:underline"
           >
             Get help connecting your accounts

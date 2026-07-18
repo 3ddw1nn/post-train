@@ -73,10 +73,11 @@ Base URL: {your-host}/api/v1`}
         <Endpoint
           method="POST"
           path="/v1/media/create-upload-url"
-          desc="Two-step upload: request a signed URL, then PUT the raw bytes to it."
+          desc="Three-step upload: request a signed URL, PUT the raw bytes to it, then POST the completion URL."
           body={`{ "mime_type": "video/mp4", "size_bytes": 1048576, "name": "video.mp4" }`}
-          response={`201 → { "media_id": "mid_abc123", "upload_url": "https://…signed…" }
-Then: PUT {upload_url}   (Content-Type: video/mp4, raw bytes)`}
+          response={`201 → { "media_id": "mid_abc123", "upload_url": "https://…signed…", "complete_url": "https://…" }
+Then: PUT {upload_url}   (Content-Type: video/mp4, raw bytes)
+Then: POST {complete_url}`}
         />
         <Endpoint
           method="GET"

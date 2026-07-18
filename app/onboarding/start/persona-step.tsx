@@ -35,13 +35,13 @@ export function PersonaStep({ initial }: { initial: string | null }) {
               onClick={() => setSelected(p.id)}
               className={`flex items-center justify-between rounded-2xl border px-5 py-4 text-left transition-colors ${
                 active
-                  ? "border-primary bg-primary text-[#0c2e1a]"
+                  ? "border-primary bg-primary text-primary-contrast"
                   : "border-line bg-white hover:border-primary/60"
               }`}
             >
               <span>
                 <span className="block font-bold">{p.title}</span>
-                <span className={`block text-sm ${active ? "text-[#0c2e1a]/80" : "text-muted"}`}>
+                <span className={`block text-sm ${active ? "text-primary-contrast/80" : "text-muted"}`}>
                   {p.desc}
                 </span>
               </span>

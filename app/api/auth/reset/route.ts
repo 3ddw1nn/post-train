@@ -1,5 +1,6 @@
 import { hashPassword } from "@/lib/auth";
-import { getDb } from "@/lib/db";
+import { convexMutation, convexQuery, patchRecord } from "@/lib/db";
+import { api } from "@/convex/_generated/api";
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
@@ -11,20 +12,17 @@ export async function POST(req: Request) {
       { status: 400 }
     );
   }
-  const db = getDb();
-  const row = db
-    .prepare("SELECT * FROM password_resets WHERE token = ?")
-    .get(token) as { user_id: string; expires_at: string } | undefined;
+  const row = await convexQuery<{ user_id: string; expires_at: string } | null>(
+    api.auth.getPasswordReset,
+    { token }
+  );
   if (!row || new Date(row.expires_at) < new Date()) {
     return Response.json(
       { error: { message: "This reset link is invalid or expired." } },
       { status: 400 }
     );
   }
-  db.prepare("UPDATE users SET password_hash = ? WHERE id = ?").run(
-    hashPassword(password),
-    row.user_id
-  );
-  db.prepare("DELETE FROM password_resets WHERE token = ?").run(token);
+  await patchRecord("users", row.user_id, { password_hash: hashPassword(password) });
+  await convexMutation(api.auth.deletePasswordReset, { token });
   return Response.json({ ok: true });
 }

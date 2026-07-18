@@ -11,16 +11,16 @@ export const metadata = { title: "Bulk Video Scheduling" };
 
 export default async function BulkVideosPage() {
   const user = await requireOnboardedUser();
-  const sub = getSubscription(user.id);
+  const sub = await getSubscription(user.id);
   if (!entitled(sub)) return <PaywallCard />; // bulk scheduling is a paid feature
   const ws = await currentWorkspace(user);
-  const accounts = accountsForWorkspace(ws.id).filter((a) =>
+  const accounts = (await accountsForWorkspace(ws.id)).filter((a) =>
     platformOf(a.platform)?.supports.includes("video")
   );
   return (
     <BulkUploader
       kind="video"
-      accounts={accounts.map((a) => ({ id: a.id, platform: a.platform, username: a.username }))}
+      accounts={accounts.map((a) => ({ id: a.id, platform: a.platform, username: a.username, avatar_url: a.avatar_url }))}
       prefFilenameCaption={!!user.pref_filename_caption}
     />
   );

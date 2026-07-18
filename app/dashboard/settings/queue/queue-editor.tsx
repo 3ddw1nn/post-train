@@ -98,7 +98,7 @@ export function QueueEditor({
                           aria-label={`${DAYS[i]} at ${slot.time}`}
                           className={`inline-flex h-6 w-6 items-center justify-center rounded-full border transition-colors ${
                             on
-                              ? "border-primary bg-primary text-[#0c2e1a]"
+                              ? "border-primary bg-primary text-primary-contrast"
                               : "border-line bg-white text-transparent hover:border-primary/50"
                           }`}
                           onClick={() => {

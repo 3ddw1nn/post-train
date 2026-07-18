@@ -1,8 +1,8 @@
 import { requireUser } from "@/lib/auth";
-import { getDb } from "@/lib/db";
+import { patchRecord } from "@/lib/db";
 
 export async function POST() {
   const user = await requireUser();
-  getDb().prepare("UPDATE users SET upsell_dismissed = 1 WHERE id = ?").run(user.id);
+  await patchRecord("users", user.id, { upsell_dismissed: 1 });
   return Response.json({ ok: true });
 }

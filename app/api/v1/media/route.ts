@@ -3,11 +3,11 @@ import { listMedia } from "@/lib/media";
 
 export async function GET(req: Request) {
   try {
-    const ctx = authenticateApiKey(req);
+    const ctx = await authenticateApiKey(req);
     const url = new URL(req.url);
     const limit = Math.min(Number(url.searchParams.get("limit") ?? 50) || 50, 100);
     const offset = Number(url.searchParams.get("offset") ?? 0) || 0;
-    const { data, count } = listMedia(ctx.workspace.id, limit, offset);
+    const { data, count } = await listMedia(ctx.workspace.id, limit, offset);
     return Response.json({
       data: data.map((m) => ({
         id: m.id,

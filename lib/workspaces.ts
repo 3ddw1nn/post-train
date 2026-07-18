@@ -1,7 +1,8 @@
 import { cookies } from "next/headers";
-import { getDb, now, uid } from "./db";
+import { convexMutation, convexQuery, uid } from "./db";
 import type { User } from "./auth";
 import { randomBytes } from "node:crypto";
+import { api } from "@/convex/_generated/api";
 
 export type Workspace = {
   id: string;
@@ -15,18 +16,12 @@ export type Workspace = {
 
 const WS_COOKIE = "pt_ws";
 
-export function workspacesForUser(userId: string): Workspace[] {
-  return getDb()
-    .prepare(
-      `SELECT w.* FROM workspaces w
-       JOIN workspace_members m ON m.workspace_id = w.id
-       WHERE m.user_id = ? ORDER BY w.created_at`
-    )
-    .all(userId) as Workspace[];
+export async function workspacesForUser(userId: string): Promise<Workspace[]> {
+  return await convexQuery<Workspace[]>(api.workspaces.listForUser, { user_id: userId });
 }
 
 export async function currentWorkspace(user: User): Promise<Workspace> {
-  const all = workspacesForUser(user.id);
+  const all = await workspacesForUser(user.id);
   const jar = await cookies();
   const wanted = jar.get(WS_COOKIE)?.value;
   return all.find((w) => w.id === wanted) ?? all[0];
@@ -36,26 +31,19 @@ export async function setCurrentWorkspace(id: string) {
   (await cookies()).set(WS_COOKIE, id, { path: "/", sameSite: "lax", maxAge: 365 * 86400 });
 }
 
-export function createWorkspace(ownerId: string, name: string): Workspace {
-  const db = getDb();
+export async function createWorkspace(ownerId: string, name: string): Promise<Workspace> {
   const id = uid();
-  const ts = now();
-  db.prepare(
-    "INSERT INTO workspaces (id, owner_id, name, webhook_secret, created_at) VALUES (?, ?, ?, ?, ?)"
-  ).run(id, ownerId, name, randomBytes(24).toString("hex"), ts);
-  db.prepare(
-    "INSERT INTO workspace_members (workspace_id, user_id, role, created_at) VALUES (?, ?, 'owner', ?)"
-  ).run(id, ownerId, ts);
-  const slot = db.prepare(
-    "INSERT INTO queue_slots (workspace_id, time_local, days, created_at) VALUES (?, ?, '1111100', ?)"
-  );
-  slot.run(id, "11:00", ts);
-  slot.run(id, "16:00", ts);
-  return db.prepare("SELECT * FROM workspaces WHERE id = ?").get(id) as Workspace;
+  return await convexMutation<Workspace>(api.workspaces.createWorkspace, {
+    id,
+    owner_id: ownerId,
+    name,
+    webhook_secret: randomBytes(24).toString("hex"),
+  });
 }
 
-export function isWorkspaceMember(workspaceId: string, userId: string): boolean {
-  return !!getDb()
-    .prepare("SELECT 1 FROM workspace_members WHERE workspace_id = ? AND user_id = ?")
-    .get(workspaceId, userId);
+export async function isWorkspaceMember(workspaceId: string, userId: string): Promise<boolean> {
+  return await convexQuery<boolean>(api.workspaces.isMember, {
+    workspace_id: workspaceId,
+    user_id: userId,
+  });
 }

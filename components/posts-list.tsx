@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { getDb } from "@/lib/db";
+import { listRecords } from "@/lib/db";
 import type { User } from "@/lib/auth";
 import { listPosts, type PostRow } from "@/lib/posts";
 import { formatInTz } from "@/lib/tz";
@@ -24,6 +24,7 @@ type DestRow = {
   social_account_id: number;
   username: string;
   platform: string;
+  avatar_url: string | null;
 };
 type ResultRow = {
   platform: string;
@@ -33,7 +34,7 @@ type ResultRow = {
   username: string;
 };
 
-export function PostsListPage({
+export async function PostsListPage({
   user,
   workspaceId,
   filter,
@@ -42,7 +43,7 @@ export function PostsListPage({
   workspaceId: string;
   filter: "all" | "scheduled" | "posted" | "draft";
 }) {
-  const { data } = listPosts([workspaceId], {
+  const { data } = await listPosts([workspaceId], {
     status: filter === "all" ? undefined : filter,
     limit: 100,
   });
@@ -58,30 +59,47 @@ export function PostsListPage({
     );
   }
 
-  const db = getDb();
-  const destStmt = db.prepare(
-    `SELECT d.social_account_id, a.username, a.platform FROM post_destinations d
-     JOIN social_accounts a ON a.id = d.social_account_id WHERE d.post_id = ?`
-  );
-  const resultStmt = db.prepare(
-    `SELECT r.platform, r.success, r.share_url, r.error_message, a.username
-     FROM post_results r JOIN social_accounts a ON a.id = r.social_account_id
-     WHERE r.post_id = ?`
-  );
-  const thumbStmt = db.prepare(
-    `SELECT m.id, m.kind FROM post_media pm JOIN media m ON m.id = pm.media_id
-     WHERE pm.post_id = ? ORDER BY pm.sort_order LIMIT 1`
-  );
+  const [destRows, accounts, resultRows, mediaLinks, mediaRows] = await Promise.all([
+    listRecords<{ post_id: string; social_account_id: number }>("post_destinations"),
+    listRecords<{ id: number; username: string; platform: string; avatar_url: string | null }>("social_accounts"),
+    listRecords<ResultRow & { post_id: string; social_account_id: number }>("post_results"),
+    listRecords<{ post_id: string; media_id: string; sort_order: number }>("post_media"),
+    listRecords<{ id: string; kind: string }>("media"),
+  ]);
 
   return (
     <div className="flex flex-col gap-3">
       {data.map((post) => {
-        const dests = destStmt.all(post.id) as DestRow[];
+        const dests = destRows
+          .filter((d) => d.post_id === post.id)
+          .map((d) => {
+            const account = accounts.find((a) => a.id === d.social_account_id);
+            return account
+              ? {
+                  social_account_id: d.social_account_id,
+                  username: account.username,
+                  platform: account.platform,
+                  avatar_url: account.avatar_url,
+                }
+              : null;
+          })
+          .filter(Boolean) as DestRow[];
         const results =
           post.status === "posted" || post.status === "failed"
-            ? (resultStmt.all(post.id) as ResultRow[])
+            ? resultRows
+                .filter((r) => r.post_id === post.id)
+                .map((r) => ({
+                  platform: r.platform,
+                  success: r.success,
+                  share_url: r.share_url,
+                  error_message: r.error_message,
+                  username: accounts.find((a) => a.id === r.social_account_id)?.username ?? "",
+                }))
             : [];
-        const thumb = thumbStmt.get(post.id) as { id: string; kind: string } | undefined;
+        const firstLink = mediaLinks
+          .filter((m) => m.post_id === post.id)
+          .sort((a, b) => a.sort_order - b.sort_order)[0];
+        const thumb = firstLink ? mediaRows.find((m) => m.id === firstLink.media_id) : undefined;
         return (
           <PostRowCard
             key={post.id}
@@ -152,7 +170,12 @@ function PostRowCard({
           <div className="mt-1.5 flex items-center gap-2">
             {dests.slice(0, 6).map((d) => (
               <span key={d.social_account_id} title={`@${d.username} · ${platformOf(d.platform)?.name}`}>
-                <AccountAvatar username={d.username} platformId={d.platform} size={24} />
+                <AccountAvatar
+                  username={d.username}
+                  platformId={d.platform}
+                  avatarUrl={d.avatar_url}
+                  size={24}
+                />
               </span>
             ))}
             {dests.length > 6 && (

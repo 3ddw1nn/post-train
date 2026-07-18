@@ -4,7 +4,7 @@ import { getSubscription } from "@/lib/billing";
 import { canCreatePosts, entitled, freePostsRemaining } from "@/lib/entitlements";
 import { currentWorkspace, workspacesForUser } from "@/lib/workspaces";
 import { accountsForWorkspace } from "@/lib/accounts";
-import { getDb } from "@/lib/db";
+import { listRecords, recordById } from "@/lib/db";
 import { getPostRow, postAccountIds, postMediaIds } from "@/lib/posts";
 import type { PostType } from "@/lib/platforms";
 import { PaywallCard } from "@/components/paywall-card";
@@ -17,13 +17,12 @@ export default async function ComposerPage({
   searchParams,
 }: {
   params: Promise<{ slug: string }>;
-  searchParams: Promise<{ date?: string }>;
+  searchParams: Promise<{ date?: string; media?: string }>;
 }) {
   const user = await requireOnboardedUser();
   const { slug } = await params;
-  const { date } = await searchParams;
-  const sub = getSubscription(user.id);
-  const db = getDb();
+  const { date, media: mediaParam } = await searchParams;
+  const sub = await getSubscription(user.id);
 
   let mode: "create" | "edit" = "create";
   let type: PostType;
@@ -33,8 +32,8 @@ export default async function ComposerPage({
     if (!canCreatePosts(user, sub)) return <PaywallCard />;
   } else {
     // Edit mode: /dashboard/create/{postUUID} (spec 03 D2)
-    const candidate = getPostRow(slug);
-    const wsIds = new Set(workspacesForUser(user.id).map((w) => w.id));
+    const candidate = await getPostRow(slug);
+    const wsIds = new Set((await workspacesForUser(user.id)).map((w) => w.id));
     if (!candidate || !wsIds.has(candidate.workspace_id)) notFound();
     post = candidate;
     type = candidate.type;
@@ -42,27 +41,34 @@ export default async function ComposerPage({
   }
 
   const ws = post
-    ? workspacesForUser(user.id).find((w) => w.id === post.workspace_id)!
+    ? (await workspacesForUser(user.id)).find((w) => w.id === post.workspace_id)!
     : await currentWorkspace(user);
-  const accounts = accountsForWorkspace(ws.id);
+  const accounts = await accountsForWorkspace(ws.id);
 
-  const pastCaptions = (
-    db
-      .prepare(
-        `SELECT DISTINCT caption FROM posts WHERE workspace_id = ? AND caption != ''
-         ORDER BY created_at DESC LIMIT 8`
-      )
-      .all(ws.id) as { caption: string }[]
-  ).map((r) => r.caption);
+  const pastCaptions = [
+    ...new Set(
+      (await listRecords<{ caption: string; created_at: string }>("posts", { workspace_id: ws.id }))
+        .filter((p) => p.caption)
+        .sort((a, b) => b.created_at.localeCompare(a.created_at))
+        .map((p) => p.caption)
+    ),
+  ].slice(0, 8);
 
   let initialMedia: ComposerMedia[] = [];
+  if (!post && mediaParam) {
+    // Prefill from e.g. a finished Content Studio render (?media=<id>).
+    const row = await recordById<ComposerMedia & { workspace_id: string; upload_status: string }>(
+      "media",
+      mediaParam
+    );
+    if (row && row.workspace_id === ws.id && row.upload_status === "uploaded") {
+      initialMedia = [row];
+    }
+  }
   if (post) {
-    const ids = postMediaIds(post.id);
+    const ids = await postMediaIds(post.id);
     if (ids.length) {
-      const qs = ids.map(() => "?").join(",");
-      const rows = db
-        .prepare(`SELECT id, name, mime_type, kind FROM media WHERE id IN (${qs})`)
-        .all(...ids) as ComposerMedia[];
+      const rows = (await listRecords<ComposerMedia>("media")).filter((m) => ids.includes(m.id));
       initialMedia = ids
         .map((id) => rows.find((r) => r.id === id))
         .filter(Boolean) as ComposerMedia[];
@@ -78,6 +84,7 @@ export default async function ComposerPage({
         platform: a.platform,
         username: a.username,
         status: a.status,
+        avatar_url: a.avatar_url,
       }))}
       pastCaptions={pastCaptions}
       pref24h={!!user.pref_24h_time}
@@ -93,7 +100,7 @@ export default async function ComposerPage({
               status: post.status,
               is_draft: !!post.is_draft,
               scheduled_at: post.scheduled_at,
-              social_accounts: postAccountIds(post.id),
+              social_accounts: await postAccountIds(post.id),
               platform_configurations: post.platform_configurations
                 ? JSON.parse(post.platform_configurations)
                 : {},

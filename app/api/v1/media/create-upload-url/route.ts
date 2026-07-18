@@ -4,12 +4,12 @@ import { DomainError } from "@/lib/posts";
 
 export async function POST(req: Request) {
   try {
-    const ctx = authenticateApiKey(req);
+    const ctx = await authenticateApiKey(req);
     const body = await req.json().catch(() => null);
     if (!body?.mime_type || !body?.name) {
       throw new DomainError(400, "mime_type and name are required.");
     }
-    const result = createUploadUrl(
+    const result = await createUploadUrl(
       ctx.workspace.id,
       {
         mime_type: String(body.mime_type),

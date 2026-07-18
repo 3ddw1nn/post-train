@@ -1,5 +1,5 @@
 import { requireOnboardedUser } from "@/lib/auth";
-import { getDb } from "@/lib/db";
+import { listRecords } from "@/lib/db";
 import { Toggle } from "@/components/interactive";
 import { UserAvatar } from "@/components/avatar-menu";
 import { Icon } from "@/components/icons";
@@ -47,9 +47,9 @@ function ToggleRow({
 
 export default async function SettingsPage() {
   const user = await requireOnboardedUser();
-  const apps = getDb()
-    .prepare("SELECT app_name, created_at FROM connected_apps WHERE user_id = ?")
-    .all(user.id) as { app_name: string; created_at: string }[];
+  const apps = await listRecords<{ app_name: string; created_at: string }>("connected_apps", {
+    user_id: user.id,
+  });
 
   return (
     <div className="flex flex-col gap-4">

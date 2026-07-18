@@ -6,12 +6,12 @@ import { DomainError } from "@/lib/posts";
 
 export async function POST(req: Request) {
   try {
-    const ctx = authenticateApiKey(req);
-    if (!analyticsAccess(getSubscription(ctx.user.id))) {
+    const ctx = await authenticateApiKey(req);
+    if (!analyticsAccess(await getSubscription(ctx.user.id))) {
       throw new DomainError(403, "Analytics requires a Creator, Growth or Pro plan.");
     }
     const platform = new URL(req.url).searchParams.get("platform") ?? undefined;
-    const triggered = syncAnalytics(ctx.workspace.id, platform);
+    const triggered = await syncAnalytics(ctx.workspace.id, platform);
     return Response.json({ triggered }, { status: 202 });
   } catch (e) {
     return jsonError(e);
