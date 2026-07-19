@@ -22,7 +22,7 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
   - [x] Rewrote lib/tiktok-publish.ts to call the real v2 inbox/draft endpoint (previous code called retired v1-style endpoints that would 404 — same class of bug as the OAuth fix)
   - [x] Removed caption/cover-timestamp/AIGC fields from the composer's TikTok config panel — none apply in inbox/draft mode (TikTok ignores them; the creator sets caption/cover themselves in-app)
   - [x] Composer now shows an info note explaining videos land as a draft in the TikTok inbox
-  - [ ] **Direct-post (video.publish scope) — deferred.** Needs: request new scope, build privacy-level/duet/stitch/comment UI, pass TikTok's stricter content-posting audit (2-4 weeks). Revisit once draft mode is validated in production.
+  - **Decision (2026-07-19): not pursuing direct-post.** Draft-to-inbox is the intended behavior going forward, not a stopgap — safer to review/publish from the TikTok app ourselves than to chase the `video.publish` scope, the extra UI (privacy selector, duet/stitch/comment controls), and the stricter audit it requires. Revisit only if that changes.
 - **Why:** Expands platform coverage before launch; each platform brings new users
 
 ### 1b. 🚧 Blocked Platforms / Waiting on External Dependencies
