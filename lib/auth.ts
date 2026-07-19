@@ -104,10 +104,10 @@ export async function requireStaffUser(): Promise<User> {
   return user;
 }
 
-/** Route guard: dashboard hard gate — un-onboarded users are sent to the wizard. */
+/** Route guard: dashboard hard gate — un-onboarded users are sent to the wizard. Staff bypass. */
 export async function requireOnboardedUser(): Promise<User> {
   const user = await requireUser();
-  if (!user.onboarded_at) redirect("/onboarding/connect");
+  if (!user.onboarded_at && !user.is_staff) redirect("/onboarding/connect");
   return user;
 }
 
