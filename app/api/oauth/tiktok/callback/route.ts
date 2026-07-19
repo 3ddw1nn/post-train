@@ -62,6 +62,7 @@ export async function GET(req: Request) {
     });
     return Response.redirect(`${url.origin}${returnTo}`);
   } catch (e) {
+    console.error("TikTok OAuth callback failed:", e);
     const code2 = isTikTokError(e) ? e.code : "platform_error";
     return Response.redirect(`${url.origin}${returnTo}?error=tiktok_${code2}`);
   }
