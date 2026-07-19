@@ -8,7 +8,11 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
 
 ### 1. Additional OAuth Platforms (HIGH PRIORITY)
 - [x] YouTube OAuth + publishing (via Google OAuth, resumable upload API)
-- [x] Pinterest OAuth + publishing (Pins API v5, text+image pins)
+- [~] Pinterest OAuth + publishing (Pins API v5, text+image pins) — **WAITING FOR TRIAL APPROVAL**
+  - [x] App created, App ID: 1591939
+  - [ ] Receive Pinterest trial approval email (24-48 hours)
+  - [ ] Get App Secret from Pinterest dashboard
+  - [ ] Add `PINTEREST_CLIENT_SECRET` to .env.local, Vercel, Render
 - [ ] TikTok OAuth + publishing (app review + Content Posting API)
 - [ ] Instagram OAuth + publishing (Meta app review + Graph API)
 - [ ] Facebook publishing (reuse Meta app from Instagram)
