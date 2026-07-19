@@ -73,24 +73,29 @@ export async function exchangeCodeForToken(
   }
 
   const json = (await res.json()) as {
-    access_token: string;
+    access_token?: string;
     refresh_token?: string;
-    expires_in: number;
+    expires_in?: number;
     scope?: string;
     token_type?: string;
     open_id?: string;
+    error?: string;
+    error_description?: string;
   };
-  console.log("TikTok raw token response keys/scope:", {
-    keys: Object.keys(json),
-    scope: json.scope,
-    token_type: json.token_type,
-    open_id: json.open_id,
-  });
+
+  // TikTok's v2 token endpoint returns HTTP 200 even on failure — the error
+  // lives in the body, not the status code.
+  if (!json.access_token) {
+    throw new TikTokError(
+      `TikTok token exchange failed: ${json.error ?? "unknown"} — ${json.error_description ?? JSON.stringify(json)}`,
+      "platform_error"
+    );
+  }
 
   return {
     access_token: json.access_token,
     refresh_token: json.refresh_token,
-    expires_at: Date.now() + json.expires_in * 1000,
+    expires_at: Date.now() + (json.expires_in ?? 0) * 1000,
   };
 }
 

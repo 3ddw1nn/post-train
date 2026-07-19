@@ -35,12 +35,6 @@ export async function GET(req: Request) {
 
   try {
     const creds = await exchangeCodeForToken(code, url.origin);
-    console.log("TikTok token exchange result:", {
-      hasAccessToken: !!creds.access_token,
-      accessTokenLength: creds.access_token?.length,
-      hasRefreshToken: !!creds.refresh_token,
-      expiresAt: creds.expires_at,
-    });
     const profile = await fetchTikTokProfile(creds.access_token);
 
     const ws = await currentWorkspace(user);
