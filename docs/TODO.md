@@ -17,18 +17,18 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
       - Client Secret: `YgezWUwkxCH4rqS7QoNHwbKbRBqF8GnL`
       - Saved to .env.local
     - **Basic Info:**
-      - [x] App Name: Post Train
-      - [x] App Icon: logo-mark-1024.png (resized)
-      - [x] Category: Social Networking
-      - [x] Description: "Social media scheduler. Schedule and publish content across TikTok and other platforms from one dashboard."
-      - [x] Terms of Service URL: https://post-train.vercel.app/tos
-      - [x] Privacy Policy URL: https://post-train.vercel.app/privacy-policy
-      - [x] Platforms: Web
+      - [ ] App Name: Post Train
+      - [ ] App Icon: logo-mark-1024.png (resized)
+      - [ ] Category: Social Networking
+      - [ ] Description: "Social media scheduler. Schedule and publish content across TikTok and other platforms from one dashboard."
+      - [ ] Terms of Service URL: https://post-train.vercel.app/tos
+      - [ ] Privacy Policy URL: https://post-train.vercel.app/privacy-policy
+      - [ ] Platforms: Web
     - **Products & Scopes:**
-      - [x] Products: Login Kit + Content Posting API
-      - [x] Scopes: `video.upload`, `user.info.basic`
+      - [ ] Products: Login Kit + Content Posting API
+      - [ ] Scopes: `video.upload`, `user.info.basic`
     - **App Review:**
-      - [x] Explanation text written:
+      - [ ] Explanation text written:
         ```
         Post Train is a social media scheduler that integrates with TikTok's Content Posting API. Users connect their TikTok account via OAuth, then compose and schedule video content to publish directly to TikTok from our dashboard.
         
