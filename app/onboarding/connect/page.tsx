@@ -45,7 +45,7 @@ export default async function OnboardingConnect({
         backHref="/onboarding/start"
         next={
           <Link href="/onboarding/plans" className="btn-primary px-8">
-            Next
+            {accounts.length > 0 ? "Next" : "Skip for now"}
           </Link>
         }
       />
