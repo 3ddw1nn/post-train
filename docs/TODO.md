@@ -4,28 +4,71 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
 
 ---
 
-## 🔴 Blocking Development (Do These Next)
+## 🔴 Actionable High Priority (Do These Next)
 
-### 1. Additional OAuth Platforms (HIGH PRIORITY) — actionable now
-- [x] YouTube OAuth + publishing (via Google OAuth, resumable upload API)
-- [x] TikTok OAuth + publishing — sandbox working end-to-end
-  - [x] OAuth flow implemented (lib/tiktok.ts)
-  - [x] Content Posting API integrated (lib/tiktok-publish.ts)
-  - [x] Sandbox Client Key: `sbaw5b6zwxk0pxxjdl` / Secret: `OXAZgbWEiEC67Ic1fLdLZxRpTmto7REu` (in .env.local + Vercel env)
-  - [x] Verified working on post-train.vercel.app (fixed v1→v2 endpoint migration + corrected client secret OCR typo `I` vs `l`)
-  - Production credentials (unused until submission): Client Key `awd23ukbqt8z67b6` / Secret `YgezWUwkxCH4rqS7QoNHwbKbRBqF8GnL`
-  - Production submission itself is blocked on a domain — see 🚧 Blocked section below
-- [x] TikTok: Fixed publish flow to match TikTok's real Content Posting API
-  - **Finding:** There's no `post_mode` toggle for TikTok videos — draft vs. direct are two separate endpoints requiring two different OAuth scopes:
-    - `/v2/post/publish/inbox/video/init/` (draft, to inbox) — needs `video.upload` scope — **this is what we have**
-    - `/v2/post/publish/video/init/` (direct to profile) — needs `video.publish` scope, which requires a separate, stricter TikTok content-posting audit (privacy-level selector, duet/stitch/comment UI, creator info shown before posting — none of which we've built)
-  - [x] Rewrote lib/tiktok-publish.ts to call the real v2 inbox/draft endpoint (previous code called retired v1-style endpoints that would 404 — same class of bug as the OAuth fix)
-  - [x] Removed caption/cover-timestamp/AIGC fields from the composer's TikTok config panel — none apply in inbox/draft mode (TikTok ignores them; the creator sets caption/cover themselves in-app)
-  - [x] Composer now shows an info note explaining videos land as a draft in the TikTok inbox
-  - **Decision (2026-07-19): draft-to-inbox ships for launch; direct-post is a post-launch upgrade.** Draft mode already works end-to-end and needs nothing further from TikTok. Direct-post (`video.publish` scope) requires building a consent screen (username/photo shown pre-post, public/friends/private picker, duet/stitch/comment toggles) and passing TikTok's separate content-posting audit (2-4 weeks, submission-based review — TikTok watches a demo video + reads an explanation, doesn't log into the live app). Not worth delaying launch for. Revisit in the Lower Priority backlog after launch — see §11.
-- **Why:** Expands platform coverage before launch; each platform brings new users
+### 1. Rebrand every page — differentiate UI from the Post Bridge template
+Post Train started from the Post Bridge template; the goal is a UI that reads as its own product on every screen, not just the composer.
 
-### 1b. 🚧 Blocked Platforms / Waiting on External Dependencies
+- [x] Create post page (composer) — done
+
+**Dashboard — core**
+- [ ] Posts list (dashboard/posts)
+- [ ] Draft posts (dashboard/posts/draft)
+- [ ] Scheduled posts (dashboard/posts/scheduled)
+- [ ] Posted (dashboard/posts/posted)
+- [ ] Calendar view (dashboard/posts/calendar)
+- [ ] Connections (dashboard/connections)
+- [ ] Analytics (dashboard/analytics)
+
+**Dashboard — secondary**
+- [ ] Content Studio hub (dashboard/content-studio)
+- [ ] Content Studio wizard (dashboard/content-studio/[template])
+- [ ] Bulk tools hub (dashboard/bulk-tools)
+- [ ] Bulk creation (dashboard/bulk-tools/creation)
+- [ ] Bulk images (dashboard/bulk-tools/images)
+- [ ] Bulk videos (dashboard/bulk-tools/videos)
+- [ ] Settings (dashboard/settings)
+- [ ] Billing settings (dashboard/settings/billing)
+- [ ] Plans settings (dashboard/settings/plans)
+- [ ] Queue settings (dashboard/settings/queue)
+- [ ] Teams (dashboard/teams)
+- [ ] API keys (dashboard/api-keys)
+
+**Onboarding & auth**
+- [ ] Sign in (signin)
+- [ ] Create account (create-account)
+- [ ] Reset password (reset-password)
+- [ ] Onboarding start (onboarding/start)
+- [ ] Onboarding connect (onboarding/connect)
+- [ ] Onboarding connect/add (onboarding/connect/add)
+- [ ] Onboarding plans (onboarding/plans)
+- [ ] Checkout (checkout)
+
+**Marketing / public**
+- [ ] Homepage ((marketing)/page.tsx)
+- [ ] Platform landing pages ((marketing)/[platform] — /twitter-x, /instagram, etc.)
+- [ ] Pricing (pricing)
+- [ ] Affiliates (affiliates)
+- [ ] Agents (agents)
+- [ ] Blog index (blog)
+- [ ] Blog post (blog/[slug])
+- [ ] API docs (docs/api)
+- [ ] Growth guide (growth-guide)
+- [ ] MCP page (mcp)
+- [ ] Privacy policy (privacy-policy)
+- [ ] Terms of Service (tos)
+- [ ] Tools index (tools)
+- [ ] Tool page (tools/[tool])
+
+**Staff / internal** (lower urgency — not user-facing)
+- [ ] Staff home (staff)
+- [ ] Staff leads (staff/leads)
+
+- **Why:** A UI that still visibly reads as the source template undercuts trust and brand identity before launch.
+
+---
+
+## 🚧 Blocked / Waiting on External Dependencies
 Nothing to build here yet — revisit when the blocker clears.
 
 - **TikTok production submission** — blocked on acquiring a custom domain (currently on post-train.vercel.app)
@@ -68,58 +111,30 @@ Nothing to build here yet — revisit when the blocker clears.
   - [ ] Get App Secret from Pinterest dashboard
   - [ ] Add `PINTEREST_CLIENT_SECRET` to .env.local, Vercel, Render
 
-### 2. Real Analytics (MEDIUM PRIORITY)
-- [ ] TikTok: Wire OAuth scope + `videos.list` endpoint for metrics
-- [ ] YouTube: Analytics API (requires Google Cloud project)
-- [ ] Instagram: Graph API insights endpoint
-- [ ] Replace `seededMetrics()` mock with per-platform fetchers in `syncAnalytics`
-- **Why:** Post-publish visibility; users expect to see how their content performs
-
 ---
 
-## 🚨 Pre-Production Mandatory (Required Before Launch)
+## 🚀 Post-Launch (deliberately deferred, not forgotten)
 
-**These must be completed and tested before shipping to production.**
+### TikTok direct-post (video.publish scope)
+Draft-to-inbox (current, live behavior) already works and needs nothing further — this is a pure upgrade, not a fix.
 
-### 3. Domain + DNS (PRODUCTION.md #1)
-- [ ] Buy domain (post-train.com, posttrain.app, etc.)
-- [ ] Point DNS to Vercel
-- [ ] Update `NEXT_PUBLIC_APP_URL` on Vercel
-- [ ] Update all OAuth redirect URIs in external dashboards (Google, LinkedIn, Twitter)
-- [ ] Update Stripe webhook endpoint
+- **One connection, not two.** TikTok scopes are individually grantable within a single OAuth request — `video.upload` + `video.publish` are requested together in the same "Connect TikTok" flow, one account row, no duplicate connect button.
+- **Prebuilt ahead of time (2026-07-19), inert until activated:**
+  - [x] `fetchTikTokCreatorInfo()` in lib/tiktok-publish.ts — queries `/v2/post/publish/creator_info/query/` for username/avatar + this creator's allowed privacy levels
+  - [x] `publishToTikTokDirect()` in lib/tiktok-publish.ts — implements the real `/v2/post/publish/video/init/` endpoint
+  - [x] Neither function is wired into lib/publish.ts yet — zero risk to the working draft flow
+  - [x] Composer UI: disabled "Post directly to profile — Coming soon" toggle + "Draft" badge on the TikTok account chip
+- **Remaining work to activate:**
+  - [ ] Add `video.publish` product/scope to the TikTok Developer Portal app (production + sandbox)
+  - [ ] Add `video.publish` to `SCOPES` in lib/tiktok.ts once the portal side is confirmed
+  - [ ] Build the pre-post consent screen: TikTok username/photo, public/friends-only/private picker (matching that creator's `privacyLevelOptions`), duet/stitch/comment toggles
+  - [ ] Wire `publishToTikTokDirect()` into lib/publish.ts, gated behind the composer toggle
+  - [ ] Enable the composer toggle once the consent screen exists
+  - [ ] Record a demo video showing the consent screen + direct-post flow, submit for TikTok's content-posting audit (2-4 weeks)
+  - [ ] Until approved, `video.publish` posts are forced private (`SELF_ONLY`)
+- **Why post-launch:** No launch-blocking dependency relies on this; draft mode covers the core use case today
 
-### 4. Stripe → Production (PRODUCTION.md #2)
-- [ ] Create production Stripe account or flip to live mode
-- [ ] Recreate products + 8 prices
-- [ ] Update secret keys on Vercel
-- [ ] Register webhook endpoint
-- [ ] Test full checkout flow with real card
-
-### 5. Convex → Production (PRODUCTION.md #5)
-- [ ] Run `npx convex deploy` to go live
-- [ ] Update deployment URL on Vercel + Render
-- [ ] Re-set support-chat AI keys
-
-### 6. Email domain (PRODUCTION.md #6)
-- [ ] Move from `ehleedev@gmail.com` to `noreply@yourdomain.com`
-- [ ] Add SPF/DKIM/DMARC records
-- [ ] Update `EMAIL_FROM` on Vercel + Render
-
----
-
-## 🟡 Lower Priority (Nice to Have)
-
-### 8. Content Studio with real providers (optional for MVP)
-- [ ] Creatify: Sign up for paid API plan, set `CREATIFY_API_ID`/`CREATIFY_API_KEY` on Vercel + Render
-- [ ] fal.ai: Create account, get `FAL_KEY`, set on both deployments
-- [ ] Generate one real video (any template) and verify it lands in media library
-- [ ] "Create post" from finished job → publish to a connected account
-
-### 9. Twitter/X credits (optional — pause is in place)
-- [ ] Buy API credits in X Developer Portal
-- [ ] Verify tweet publishing works
-
-### 11. Google Business Profile OAuth + publishing (pushed far back)
+### Google Business Profile OAuth + publishing
 - Not just an OAuth integration — the API only exists to manage a real, public Google Maps/Search business listing. Requires creating and verifying an actual GBP listing (name, address, category), then waiting 60+ days verified before even applying for API access.
 - [ ] Create the Google Business Profile listing at google.com/business
 - [ ] Complete verification (postcard/phone/email/video) — starts the 60-day clock
@@ -128,31 +143,62 @@ Nothing to build here yet — revisit when the blocker clears.
 - [ ] After approval: enable Business Profile APIs in Google Cloud Console (same project as YouTube OAuth), implement lib/google-business.ts + publishing
 - Note: Post Train already uses Google OAuth for YouTube — same Google Cloud project can likely add the Business Profile API scope
 
-### 12. TikTok direct-post (video.publish scope) — post-launch upgrade
-- Draft-to-inbox (current behavior) already works and needs nothing further; this is a pure upgrade, not a fix
-- **One connection, not two.** TikTok scopes are individually grantable within a single OAuth request — `video.upload` + `video.publish` are requested together in the same "Connect TikTok" flow, one account row, no duplicate connect button.
-- **Prebuilt ahead of time (2026-07-19), inert until activated:**
-  - [x] `fetchTikTokCreatorInfo()` in lib/tiktok-publish.ts — queries `/v2/post/publish/creator_info/query/` for username/avatar + this creator's allowed privacy levels (needed for the consent screen)
-  - [x] `publishToTikTokDirect()` in lib/tiktok-publish.ts — implements the real `/v2/post/publish/video/init/` endpoint (post_info with privacy_level/disable_duet/disable_stitch/disable_comment + chunked source_info, matching the working draft-upload pattern)
-  - [x] Neither function is called anywhere yet — not wired into lib/publish.ts's publish switch, so zero risk to the working draft flow
-  - [x] Composer UI: disabled "Post directly to profile — Coming soon" toggle in the TikTok config panel (components/composer.tsx), so the feature is visible but inert
-  - **Deliberately not touched:** lib/tiktok.ts's `SCOPES` constant still only requests `video.upload` — expanding it to include `video.publish` requires first adding that product/scope to the TikTok Developer Portal app (both production and sandbox), and doing it without that portal-side change risks breaking the OAuth flow we just spent significant effort getting working
-- **Remaining work to activate:**
-  - [ ] Add `video.publish` product/scope to the TikTok Developer Portal app (production + sandbox)
-  - [ ] Add `video.publish` to `SCOPES` in lib/tiktok.ts once the portal side is confirmed
-  - [ ] Build the pre-post consent screen: show connected TikTok username/photo (via `fetchTikTokCreatorInfo`), a public/friends-only/private picker (must match that creator's `privacyLevelOptions`), and duet/stitch/comment toggles
-  - [ ] Wire `publishToTikTokDirect()` into lib/publish.ts, gated behind the (currently disabled) composer toggle
-  - [ ] Enable the "Post directly to profile" toggle in components/composer.tsx once the consent screen exists
-  - [ ] Record a new demo video showing the consent screen + direct-post flow
-  - [ ] Submit for TikTok's content-posting audit (2-4 weeks, submission-based — TikTok reviews the demo video + written explanation, does not log into the live app)
-  - [ ] Until approved, posts using `video.publish` are forced private (`SELF_ONLY`) — safe to test, not safe to advertise as working
-- **Why post-launch:** No launch-blocking dependency relies on this; draft mode covers the core use case today
+### Real Analytics
+- [ ] TikTok: Wire OAuth scope + `videos.list` endpoint for metrics
+- [ ] YouTube: Analytics API (requires Google Cloud project)
+- [ ] Instagram: Graph API insights endpoint
+- [ ] Replace `seededMetrics()` mock with per-platform fetchers in `syncAnalytics`
+- **Why post-launch:** Depends on platforms (Instagram) that are themselves blocked; not launch-critical
+
+---
+
+## 🚨 Pre-Production Mandatory (Required Before Launch)
+
+**These must be completed and tested before shipping to production.**
+
+### 2. Domain + DNS (PRODUCTION.md #1)
+- [ ] Buy domain (post-train.com, posttrain.app, etc.)
+- [ ] Point DNS to Vercel
+- [ ] Update `NEXT_PUBLIC_APP_URL` on Vercel
+- [ ] Update all OAuth redirect URIs in external dashboards (Google, LinkedIn, Twitter)
+- [ ] Update Stripe webhook endpoint
+
+### 3. Stripe → Production (PRODUCTION.md #2)
+- [ ] Create production Stripe account or flip to live mode
+- [ ] Recreate products + 8 prices
+- [ ] Update secret keys on Vercel
+- [ ] Register webhook endpoint
+- [ ] Test full checkout flow with real card
+
+### 4. Convex → Production (PRODUCTION.md #5)
+- [ ] Run `npx convex deploy` to go live
+- [ ] Update deployment URL on Vercel + Render
+- [ ] Re-set support-chat AI keys
+
+### 5. Email domain (PRODUCTION.md #6)
+- [ ] Move from `ehleedev@gmail.com` to `noreply@yourdomain.com`
+- [ ] Add SPF/DKIM/DMARC records
+- [ ] Update `EMAIL_FROM` on Vercel + Render
+
+---
+
+## 🟡 Lower Priority (Nice to Have)
+
+### 6. Content Studio with real providers (optional for MVP)
+- [ ] Creatify: Sign up for paid API plan, set `CREATIFY_API_ID`/`CREATIFY_API_KEY` on Vercel + Render
+- [ ] fal.ai: Create account, get `FAL_KEY`, set on both deployments
+- [ ] Generate one real video (any template) and verify it lands in media library
+- [ ] "Create post" from finished job → publish to a connected account
+
+### 7. Twitter/X credits (optional — pause is in place)
+- [ ] Buy API credits in X Developer Portal
+- [ ] Verify tweet publishing works
 
 ---
 
 ## 🟢 Testing (Optional, Do Later)
 
-### 10. End-to-end smoke test (testing only, not blocking)
+### 8. End-to-end smoke test (testing only, not blocking)
 - [x] Sign up on Vercel (post-train.vercel.app)
 - [x] Connect a social account (Mastodon or Bluesky recommended — easiest, no external config)
 - [ ] Schedule a post for 5 minutes from now

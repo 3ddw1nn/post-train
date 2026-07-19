@@ -22,6 +22,8 @@ These features and infrastructure pieces are shipped and tested end-to-end.
 - **Mastodon** — Dynamic app registration, real OAuth, real post publishing (tested; routing bug fixed)
 - **Bluesky** — App-password auth, real post publishing (tested, up to 4 images)
 - **Google Account** — OAuth + profile sign-in (verified working)
+- **YouTube** — Google OAuth, resumable upload API, real post publishing (tested end-to-end)
+- **TikTok** — OAuth 2.0 (v2 endpoints), Content Posting API draft-to-inbox upload (sandbox verified end-to-end on post-train.vercel.app; production submission pending a custom domain). Direct-to-profile publishing deliberately deferred post-launch — see TODO.md.
 
 ## Media & Storage
 
