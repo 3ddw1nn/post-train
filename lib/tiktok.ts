@@ -76,7 +76,16 @@ export async function exchangeCodeForToken(
     access_token: string;
     refresh_token?: string;
     expires_in: number;
+    scope?: string;
+    token_type?: string;
+    open_id?: string;
   };
+  console.log("TikTok raw token response keys/scope:", {
+    keys: Object.keys(json),
+    scope: json.scope,
+    token_type: json.token_type,
+    open_id: json.open_id,
+  });
 
   return {
     access_token: json.access_token,
