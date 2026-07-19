@@ -6,67 +6,71 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
 
 ## 🔴 Blocking (Do These Next)
 
-### 1. End-to-end smoke test
-- [ ] Sign up on Vercel (post-train.vercel.app)
-- [ ] Connect a social account (Mastodon or Bluesky recommended — easiest, no external config)
-- [ ] Schedule a post for 5 minutes from now
-- [ ] Watch the Render worker logs; confirm the post publishes when the tick fires
-- [ ] Verify the post appears on the platform
-- **Outcome**: Proves the hybrid deployment (Vercel + Render + Convex + R2) works end-to-end
+### 1. Additional OAuth Platforms (HIGH PRIORITY)
+- [ ] YouTube OAuth + publishing (Google Cloud, `youtube.upload` scope)
+- [ ] TikTok OAuth + publishing (app review + Content Posting API)
+- [ ] Instagram OAuth + publishing (Meta app review + Graph API)
+- [ ] Facebook publishing (reuse Meta app from Instagram)
+- [ ] Threads publishing (Meta Graph API, same app)
+- [ ] Pinterest Pins API
+- **Why:** Expands platform coverage before launch; each platform brings new users
 
-### 2. Content Studio with real providers (optional for MVP)
-- [ ] Creatify: Sign up for paid API plan, set `CREATIFY_API_ID`/`CREATIFY_API_KEY` on Vercel + Render
-- [ ] fal.ai: Create account, get `FAL_KEY`, set on both deployments
-- [ ] Generate one real video (any template) and verify it lands in media library
-- [ ] "Create post" from finished job → publish to a connected account
+### 2. Real Analytics (MEDIUM PRIORITY)
+- [ ] TikTok: Wire OAuth scope + `videos.list` endpoint for metrics
+- [ ] YouTube: Analytics API (requires Google Cloud project)
+- [ ] Instagram: Graph API insights endpoint
+- [ ] Replace `seededMetrics()` mock with per-platform fetchers in `syncAnalytics`
+- **Why:** Post-publish visibility; users expect to see how their content performs
 
----
-
-## 🟡 High Priority (Do Before Launch)
-
-### 3. Domain + DNS (PRODUCTION.md #1)
+### 4. Domain + DNS (PRODUCTION.md #1)
 - [ ] Buy domain (post-train.com, posttrain.app, etc.)
 - [ ] Point DNS to Vercel
 - [ ] Update `NEXT_PUBLIC_APP_URL` on Vercel
 - [ ] Update all OAuth redirect URIs in external dashboards (Google, LinkedIn, Twitter)
 - [ ] Update Stripe webhook endpoint
 
-### 4. Stripe → Production (PRODUCTION.md #2)
+### 5. Stripe → Production (PRODUCTION.md #2)
 - [ ] Create production Stripe account or flip to live mode
 - [ ] Recreate products + 8 prices
 - [ ] Update secret keys on Vercel
 - [ ] Register webhook endpoint
 - [ ] Test full checkout flow with real card
 
-### 5. Convex → Production (PRODUCTION.md #5)
+### 6. Convex → Production (PRODUCTION.md #5)
 - [ ] Run `npx convex deploy` to go live
 - [ ] Update deployment URL on Vercel + Render
 - [ ] Re-set support-chat AI keys
 
-### 6. Email domain (PRODUCTION.md #6)
+### 7. Email domain (PRODUCTION.md #6)
 - [ ] Move from `ehleedev@gmail.com` to `noreply@yourdomain.com`
 - [ ] Add SPF/DKIM/DMARC records
 - [ ] Update `EMAIL_FROM` on Vercel + Render
 
 ---
 
-## 🟢 Lower Priority (Ship Without If Needed)
+## 🟡 Lower Priority (Nice to Have)
 
-### 7. Twitter/X credits (optional — pause is in place)
+### 8. Content Studio with real providers (optional for MVP)
+- [ ] Creatify: Sign up for paid API plan, set `CREATIFY_API_ID`/`CREATIFY_API_KEY` on Vercel + Render
+- [ ] fal.ai: Create account, get `FAL_KEY`, set on both deployments
+- [ ] Generate one real video (any template) and verify it lands in media library
+- [ ] "Create post" from finished job → publish to a connected account
+
+### 9. Twitter/X credits (optional — pause is in place)
 - [ ] Buy API credits in X Developer Portal
 - [ ] Verify tweet publishing works
 
-### 8. Analytics (deferred)
-- [ ] TikTok video metrics API
-- [ ] YouTube Analytics API
-- [ ] Instagram Graph insights
+---
 
-### 9. Additional OAuth platforms (not for MVP)
-- [ ] YouTube
-- [ ] TikTok
-- [ ] Instagram + Facebook
-- [ ] Threads
-- [ ] Pinterest
+## 🟢 Testing (Optional, Do Later)
+
+### 10. End-to-end smoke test (testing only, not blocking)
+- [x] Sign up on Vercel (post-train.vercel.app)
+- [x] Connect a social account (Mastodon or Bluesky recommended — easiest, no external config)
+- [ ] Schedule a post for 5 minutes from now
+- [ ] Watch the Render worker logs; confirm the post publishes when the tick fires
+- [ ] Verify the post appears on the platform
+- **Why:** Validates the full stack works; done after OAuth platforms are ready
 
 ---
 
