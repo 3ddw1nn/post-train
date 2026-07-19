@@ -11,13 +11,16 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
 - [x] TikTok OAuth + publishing (code done, app review pending)
   - [x] OAuth flow implemented (lib/tiktok.ts)
   - [x] Content Posting API integrated (lib/tiktok-publish.ts)
-  - [🔴 HIGH PRIORITY] Add direct publish toggle (vs. draft mode)
-    - [ ] Update lib/tiktok-publish.ts to support `post_mode: "PUBLISH_NOW"` 
-    - [ ] Add mode parameter to publishToTikTok() function
-    - [ ] Pass publish mode from lib/publish.ts
-    - [ ] Add toggle in Composer UI: "Review as draft" / "Publish directly"
-    - [ ] Store user preference (account or per-post)
-    - **Why:** Core scheduler feature — users expect direct publishing at scheduled time, not drafts
+  - [🔴 HIGH PRIORITY] Add publish mode toggle (DRAFT vs. DIRECT POST)
+    - **What:** Users choose how their TikTok content publishes:
+      - **Option A (Draft):** Video uploads to TikTok drafts → user reviews & manually publishes from TikTok app
+      - **Option B (Direct):** Video publishes straight to user's feed at scheduled time (no review needed)
+    - [ ] Update lib/tiktok-publish.ts to support both `post_mode: "DRAFT"` and `post_mode: "PUBLISH_NOW"`
+    - [ ] Add mode parameter to publishToTikTok(creds, video, caption, mode) function
+    - [ ] Update lib/publish.ts to pass the mode when calling publishToTikTok()
+    - [ ] Add toggle in Composer UI: "Publish as draft" radio / "Publish directly" radio (default: draft)
+    - [ ] Store user's choice per post (or as account default)
+    - **Why:** Core scheduler value — users want both options depending on content type
   - [x] TikTok Developer Portal app created
     - **Credentials:**
       - Client Key: `awd23ukbqt8z67b6`
