@@ -4,7 +4,7 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
 
 ---
 
-## 🔴 Blocking (Do These Next)
+## 🔴 Blocking Development (Do These Next)
 
 ### 1. Additional OAuth Platforms (HIGH PRIORITY)
 - [ ] YouTube OAuth + publishing (Google Cloud, `youtube.upload` scope)
@@ -22,26 +22,32 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
 - [ ] Replace `seededMetrics()` mock with per-platform fetchers in `syncAnalytics`
 - **Why:** Post-publish visibility; users expect to see how their content performs
 
-### 4. Domain + DNS (PRODUCTION.md #1)
+---
+
+## 🚨 Pre-Production Mandatory (Required Before Launch)
+
+**These must be completed and tested before shipping to production.**
+
+### 3. Domain + DNS (PRODUCTION.md #1)
 - [ ] Buy domain (post-train.com, posttrain.app, etc.)
 - [ ] Point DNS to Vercel
 - [ ] Update `NEXT_PUBLIC_APP_URL` on Vercel
 - [ ] Update all OAuth redirect URIs in external dashboards (Google, LinkedIn, Twitter)
 - [ ] Update Stripe webhook endpoint
 
-### 5. Stripe → Production (PRODUCTION.md #2)
+### 4. Stripe → Production (PRODUCTION.md #2)
 - [ ] Create production Stripe account or flip to live mode
 - [ ] Recreate products + 8 prices
 - [ ] Update secret keys on Vercel
 - [ ] Register webhook endpoint
 - [ ] Test full checkout flow with real card
 
-### 6. Convex → Production (PRODUCTION.md #5)
+### 5. Convex → Production (PRODUCTION.md #5)
 - [ ] Run `npx convex deploy` to go live
 - [ ] Update deployment URL on Vercel + Render
 - [ ] Re-set support-chat AI keys
 
-### 7. Email domain (PRODUCTION.md #6)
+### 6. Email domain (PRODUCTION.md #6)
 - [ ] Move from `ehleedev@gmail.com` to `noreply@yourdomain.com`
 - [ ] Add SPF/DKIM/DMARC records
 - [ ] Update `EMAIL_FROM` on Vercel + Render
