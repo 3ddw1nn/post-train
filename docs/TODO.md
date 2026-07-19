@@ -11,6 +11,13 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
 - [x] TikTok OAuth + publishing (code done, app review pending)
   - [x] OAuth flow implemented (lib/tiktok.ts)
   - [x] Content Posting API integrated (lib/tiktok-publish.ts)
+  - [🔴 HIGH PRIORITY] Add direct publish toggle (vs. draft mode)
+    - [ ] Update lib/tiktok-publish.ts to support `post_mode: "PUBLISH_NOW"` 
+    - [ ] Add mode parameter to publishToTikTok() function
+    - [ ] Pass publish mode from lib/publish.ts
+    - [ ] Add toggle in Composer UI: "Review as draft" / "Publish directly"
+    - [ ] Store user preference (account or per-post)
+    - **Why:** Core scheduler feature — users expect direct publishing at scheduled time, not drafts
   - [x] TikTok Developer Portal app created
     - **Credentials:**
       - Client Key: `awd23ukbqt8z67b6`
