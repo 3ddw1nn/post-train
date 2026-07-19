@@ -15,6 +15,7 @@ import { isBlueskyError, publishToBluesky, type BlueskyCredentials } from "./blu
 import { isTwitterError, publishToTwitter, type TwitterCredentials } from "./twitter";
 import { isMastodonError, publishToMastodon, type MastodonCredentials } from "./mastodon";
 import { isLinkedInError, publishToLinkedIn, type LinkedInCredentials } from "./linkedin";
+import { isYouTubeError, publishToYouTube, type YouTubeCredentials } from "./youtube-publish";
 import { encryptJson } from "./secretbox";
 import { readMediaBytes } from "./media";
 import { api } from "@/convex/_generated/api";
@@ -181,6 +182,68 @@ async function publishToPlatform(
     }
   }
 
+  if (account.platform === "youtube") {
+    if (!account.credentials) {
+      await convexMutation(api.accounts.patchAccount, {
+        id: account.id,
+        patch: { status: "needs_reauth" },
+      });
+      return {
+        success: false,
+        error_code: "auth_expired",
+        error_message: "YouTube credentials missing — reconnect this account.",
+      };
+    }
+
+    // YouTube requires at least one video
+    if (media.length === 0) {
+      return {
+        success: false,
+        error_code: "platform_error",
+        error_message: "YouTube requires at least one video to post.",
+      };
+    }
+
+    try {
+      const creds = decryptJson<YouTubeCredentials>(account.credentials);
+      // Use the first video in the media array
+      const videoMedia = media.find((m) => m.kind === "video");
+      if (!videoMedia) {
+        return {
+          success: false,
+          error_code: "platform_error",
+          error_message: "No video found in post media.",
+        };
+      }
+      const { refreshedCreds, ...result } = await publishToYouTube(
+        creds,
+        videoMedia.bytes,
+        post.caption || "Post Train Video",
+        post.caption || ""
+      );
+      if (refreshedCreds) {
+        await convexMutation(api.accounts.patchAccount, {
+          id: account.id,
+          patch: { credentials: encryptJson(refreshedCreds) },
+        });
+      }
+      return { success: true, ...result };
+    } catch (e) {
+      const code = isYouTubeError(e) ? e.code : "platform_error";
+      if (code === "auth_expired") {
+        await convexMutation(api.accounts.patchAccount, {
+          id: account.id,
+          patch: { status: "needs_reauth" },
+        });
+      }
+      return {
+        success: false,
+        error_code: code,
+        error_message: e instanceof Error ? e.message : "YouTube publish failed.",
+      };
+    }
+  }
+
   // Simulated for platforms without a real adapter yet.
   const platformPostId = randomBytes(9).toString("hex");
   const p = platformOf(account.platform);
@@ -201,7 +264,7 @@ export async function publishPost(post: PostRow): Promise<void> {
     api.publish.destinationsForPost,
     { post_id: post.id }
   );
-  const needsMedia = destinations.some((d) => d.platform === "bluesky");
+  const needsMedia = destinations.some((d) => d.platform === "bluesky" || d.platform === "youtube");
   const media = needsMedia ? await loadPostMedia(post.id) : [];
 
   const results: {
