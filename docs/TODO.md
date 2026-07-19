@@ -8,13 +8,13 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
 
 ### 1. Additional OAuth Platforms (HIGH PRIORITY)
 - [x] YouTube OAuth + publishing (via Google OAuth, resumable upload API)
-- [ ] Pinterest Pins API (REST API, no app review)
+- [x] Pinterest OAuth + publishing (Pins API v5, text+image pins)
 - [ ] TikTok OAuth + publishing (app review + Content Posting API)
 - [ ] Instagram OAuth + publishing (Meta app review + Graph API)
 - [ ] Facebook publishing (reuse Meta app from Instagram)
 - [ ] Threads publishing (Meta Graph API, same app)
 - **Why:** Expands platform coverage before launch; each platform brings new users
-- **Next:** Pinterest (easiest — no OAuth, just REST API)
+- **Next:** TikTok (requires app review — ~2-5 days)
 
 ### 2. Real Analytics (MEDIUM PRIORITY)
 - [ ] TikTok: Wire OAuth scope + `videos.list` endpoint for metrics
