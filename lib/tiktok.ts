@@ -4,8 +4,9 @@
 import { randomBytes } from "node:crypto";
 import { sign } from "./auth";
 
-const AUTHORIZE_URL = "https://www.tiktok.com/v1/oauth/authorize";
-const TOKEN_URL = "https://open.tiktokapis.com/v1/oauth/token";
+// TikTok deprecated the v1 OAuth endpoints in Sept 2023 — v2 is required now.
+const AUTHORIZE_URL = "https://www.tiktok.com/v2/auth/authorize/";
+const TOKEN_URL = "https://open.tiktokapis.com/v2/oauth/token/";
 const SCOPES = "video.upload,user.info.basic";
 
 export type TikTokCredentials = {
@@ -91,9 +92,12 @@ export async function fetchTikTokProfile(
   username: string;
   avatar: string | null;
 }> {
-  const res = await fetch("https://open.tiktokapis.com/v1/user/info/", {
-    headers: { Authorization: `Bearer ${accessToken}` },
-  });
+  // user.info.basic scope only returns open_id/union_id/avatar_url/display_name —
+  // there's no real @handle without the separate user.info.profile scope.
+  const res = await fetch(
+    "https://open.tiktokapis.com/v2/user/info/?fields=open_id,avatar_url,display_name",
+    { headers: { Authorization: `Bearer ${accessToken}` } }
+  );
 
   if (!res.ok) {
     throw new TikTokError(
@@ -105,9 +109,9 @@ export async function fetchTikTokProfile(
   const json = (await res.json()) as {
     data?: {
       user?: {
-        id: string;
-        username: string;
-        avatar_large?: string;
+        open_id: string;
+        display_name: string;
+        avatar_url?: string;
       };
     };
   };
@@ -117,9 +121,9 @@ export async function fetchTikTokProfile(
   }
 
   return {
-    id: json.data.user.id,
-    username: json.data.user.username,
-    avatar: json.data.user.avatar_large ?? null,
+    id: json.data.user.open_id,
+    username: json.data.user.display_name,
+    avatar: json.data.user.avatar_url ?? null,
   };
 }
 
