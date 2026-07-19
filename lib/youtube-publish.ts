@@ -137,7 +137,7 @@ export async function publishToYouTube(
       "Content-Type": "video/mp4",
       "Content-Length": String(videoBytes.length),
     },
-    body: videoBytes,
+    body: new Uint8Array(videoBytes),
   });
 
   if (!uploadRes.ok) {
