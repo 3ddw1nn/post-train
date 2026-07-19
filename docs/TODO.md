@@ -25,13 +25,18 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
     - **Production Credentials:**
       - Client Key: `awd23ukbqt8z67b6`
       - Client Secret: `YgezWUwkxCH4rqS7QoNHwbKbRBqF8GnL`
-    - [x] **Sandbox Setup (for local testing)**
-      - [x] Sandbox app created
-      - [x] Sandbox Client Key: `sbaw5b6zwxk0pxxjdl` (in .env.local)
-      - [x] Sandbox Client Secret: `OXAZgbWEiEC67lc1fLdLZxRpTmto7REu` (in .env.local)
-      - [x] Redirect URI: `http://localhost:3000/api/oauth/tiktok/callback`
-      - [x] Test account authorized
-      - [ ] **Test locally:** `npm run dev` → connect TikTok → publish video → verify draft on TikTok
+    - [x] **Sandbox Setup (for testing before production)**
+      - [x] Sandbox app created on TikTok Developer Portal
+      - [x] Sandbox Client Key: `sbaw5b6zwxk0pxxjdl` (in .env.local + Vercel env)
+      - [x] Sandbox Client Secret: `OXAZgbWEiEC67lc1fLdLZxRpTmto7REu` (in .env.local + Vercel env)
+      - [x] Redirect URI configured: `http://localhost:3000/api/oauth/tiktok/callback` (local) + `https://post-train.vercel.app/api/oauth/tiktok/callback` (production)
+      - [x] Test account authorized in sandbox
+      - [ ] Test OAuth flow on post-train.vercel.app (once Vercel redeploy completes)
+    - [ ] **Implement publish mode toggle** (DRAFT vs. DIRECT POST) — see HIGH PRIORITY section above
+    - [ ] **Production submission** — Once real domain acquired:
+      - [ ] Update redirect URI in TikTok dashboard to real domain
+      - [ ] Update TIKTOK_CLIENT_ID & TIKTOK_CLIENT_SECRET with production credentials
+      - [ ] Record demo video + submit for app review (2-5 days)
     - **Basic Info:**
       - [ ] App Name: Post Train
       - [ ] App Icon: logo-mark-1024.png (resized)
