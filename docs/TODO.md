@@ -8,7 +8,11 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
 
 ### 1. Additional OAuth Platforms (HIGH PRIORITY)
 - [x] YouTube OAuth + publishing (via Google OAuth, resumable upload API)
-- [ ] TikTok OAuth + publishing (app review + Content Posting API)
+- [x] TikTok OAuth + publishing (app review pending, Content Posting API integrated)
+  - [x] OAuth flow implemented (lib/tiktok.ts)
+  - [x] Content Posting API integrated (lib/tiktok-publish.ts)
+  - [ ] Submit app to TikTok for review (2-5 days approval)
+  - [ ] Add `TIKTOK_CLIENT_ID` and `TIKTOK_CLIENT_SECRET` to .env.local, Vercel, Render
 - [ ] Instagram OAuth + publishing (Meta app review + Graph API)
 - [ ] Facebook publishing (reuse Meta app from Instagram)
 - [ ] Threads publishing (Meta Graph API, same app)
@@ -18,7 +22,7 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
   - [ ] Get App Secret from Pinterest dashboard
   - [ ] Add `PINTEREST_CLIENT_SECRET` to .env.local, Vercel, Render
 - **Why:** Expands platform coverage before launch; each platform brings new users
-- **Next:** TikTok (requires app review — ~2-5 days)
+- **Next:** Submit TikTok for review; while waiting, start Instagram
 
 ### 2. Real Analytics (MEDIUM PRIORITY)
 - [ ] TikTok: Wire OAuth scope + `videos.list` endpoint for metrics
