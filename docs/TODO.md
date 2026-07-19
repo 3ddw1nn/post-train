@@ -130,11 +130,19 @@ Nothing to build here yet — revisit when the blocker clears.
 
 ### 12. TikTok direct-post (video.publish scope) — post-launch upgrade
 - Draft-to-inbox (current behavior) already works and needs nothing further; this is a pure upgrade, not a fix
-- **What it takes:**
-  - [ ] Request `video.publish` scope in the OAuth flow (lib/tiktok.ts) alongside existing `video.upload`
-  - [ ] Build a pre-post consent screen: show the connected TikTok username/photo, a public/friends-only/private picker (options must match `privacy_level_options` from `/v2/post/publish/creator_info/query/`), and duet/stitch/comment toggles
-  - [ ] Implement `/v2/post/publish/video/init/` (direct-post endpoint) in lib/tiktok-publish.ts, alongside the existing inbox/draft path
-  - [ ] Add a per-post or per-account toggle so users choose draft vs. direct
+- **One connection, not two.** TikTok scopes are individually grantable within a single OAuth request — `video.upload` + `video.publish` are requested together in the same "Connect TikTok" flow, one account row, no duplicate connect button.
+- **Prebuilt ahead of time (2026-07-19), inert until activated:**
+  - [x] `fetchTikTokCreatorInfo()` in lib/tiktok-publish.ts — queries `/v2/post/publish/creator_info/query/` for username/avatar + this creator's allowed privacy levels (needed for the consent screen)
+  - [x] `publishToTikTokDirect()` in lib/tiktok-publish.ts — implements the real `/v2/post/publish/video/init/` endpoint (post_info with privacy_level/disable_duet/disable_stitch/disable_comment + chunked source_info, matching the working draft-upload pattern)
+  - [x] Neither function is called anywhere yet — not wired into lib/publish.ts's publish switch, so zero risk to the working draft flow
+  - [x] Composer UI: disabled "Post directly to profile — Coming soon" toggle in the TikTok config panel (components/composer.tsx), so the feature is visible but inert
+  - **Deliberately not touched:** lib/tiktok.ts's `SCOPES` constant still only requests `video.upload` — expanding it to include `video.publish` requires first adding that product/scope to the TikTok Developer Portal app (both production and sandbox), and doing it without that portal-side change risks breaking the OAuth flow we just spent significant effort getting working
+- **Remaining work to activate:**
+  - [ ] Add `video.publish` product/scope to the TikTok Developer Portal app (production + sandbox)
+  - [ ] Add `video.publish` to `SCOPES` in lib/tiktok.ts once the portal side is confirmed
+  - [ ] Build the pre-post consent screen: show connected TikTok username/photo (via `fetchTikTokCreatorInfo`), a public/friends-only/private picker (must match that creator's `privacyLevelOptions`), and duet/stitch/comment toggles
+  - [ ] Wire `publishToTikTokDirect()` into lib/publish.ts, gated behind the (currently disabled) composer toggle
+  - [ ] Enable the "Post directly to profile" toggle in components/composer.tsx once the consent screen exists
   - [ ] Record a new demo video showing the consent screen + direct-post flow
   - [ ] Submit for TikTok's content-posting audit (2-4 weeks, submission-based — TikTok reviews the demo video + written explanation, does not log into the live app)
   - [ ] Until approved, posts using `video.publish` are forced private (`SELF_ONLY`) — safe to test, not safe to advertise as working

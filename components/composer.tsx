@@ -284,29 +284,34 @@ export function Composer({
             </p>
           )}
           {filteredAccounts.map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              title={`@${a.username} · ${platformOf(a.platform)?.name}${a.status !== "active" ? " (needs re-auth)" : ""}`}
-              onClick={() =>
-                setSelected((s) => {
-                  const next = new Set(s);
-                  if (next.has(a.id)) next.delete(a.id);
-                  else next.add(a.id);
-                  return next;
-                })
-              }
-              className="shrink-0"
-              disabled={!editable}
-            >
-              <AccountAvatar
-                username={a.username}
-                platformId={a.platform}
-                avatarUrl={a.avatar_url}
-                size={44}
-                selected={selected.has(a.id)}
-              />
-            </button>
+            <div key={a.id} className="flex shrink-0 flex-col items-center gap-1">
+              <button
+                type="button"
+                title={`@${a.username} · ${platformOf(a.platform)?.name}${a.status !== "active" ? " (needs re-auth)" : ""}`}
+                onClick={() =>
+                  setSelected((s) => {
+                    const next = new Set(s);
+                    if (next.has(a.id)) next.delete(a.id);
+                    else next.add(a.id);
+                    return next;
+                  })
+                }
+                disabled={!editable}
+              >
+                <AccountAvatar
+                  username={a.username}
+                  platformId={a.platform}
+                  avatarUrl={a.avatar_url}
+                  size={44}
+                  selected={selected.has(a.id)}
+                />
+              </button>
+              {a.platform === "tiktok" && selected.has(a.id) && (
+                <span className="text-[10px] font-semibold text-muted" title="Uploads to your TikTok inbox as a draft">
+                  Draft
+                </span>
+              )}
+            </div>
           ))}
         </div>
 
@@ -802,8 +807,18 @@ function PlatformConfigPanel({
   onChange: (v: Record<string, unknown>) => void;
 }) {
   const set = (k: string, v: unknown) => onChange({ ...value, [k]: v });
-  const ToggleRow = ({ k, label, desc }: { k: string; label: string; desc?: string }) => (
-    <div className="flex items-center justify-between gap-3">
+  const ToggleRow = ({
+    k,
+    label,
+    desc,
+    disabled,
+  }: {
+    k: string;
+    label: string;
+    desc?: string;
+    disabled?: boolean;
+  }) => (
+    <div className={`flex items-center justify-between gap-3 ${disabled ? "opacity-50" : ""}`}>
       <div>
         <p className="text-sm font-semibold">{label}</p>
         {desc && <p className="text-xs text-muted">{desc}</p>}
@@ -814,7 +829,8 @@ function PlatformConfigPanel({
         aria-checked={!!value[k]}
         className="pt-toggle"
         data-on={!!value[k]}
-        onClick={() => set(k, !value[k])}
+        disabled={disabled}
+        onClick={() => !disabled && set(k, !value[k])}
       >
         <span />
       </button>
@@ -823,11 +839,18 @@ function PlatformConfigPanel({
   return (
     <div className="card mt-3 flex flex-col gap-4 p-4">
       {platformId === "tiktok" && (
-        <p className="text-sm text-muted">
-          TikTok videos upload to your TikTok inbox as a draft — open the TikTok app to add a
-          caption, cover, and privacy setting, then publish from there. Direct publishing to
-          your profile isn&apos;t available yet (it requires a separate TikTok review).
-        </p>
+        <>
+          <p className="text-sm text-muted">
+            TikTok videos upload to your TikTok inbox as a draft — open the TikTok app to add a
+            caption, cover, and privacy setting, then publish from there.
+          </p>
+          <ToggleRow
+            k="direct_post"
+            label="Post directly to profile — Coming soon"
+            desc="Requires TikTok's content-posting review; not available yet"
+            disabled
+          />
+        </>
       )}
       {platformId === "instagram" && (
         <>
