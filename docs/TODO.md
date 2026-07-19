@@ -8,11 +8,22 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
 
 ### 1. Additional OAuth Platforms (HIGH PRIORITY)
 - [x] YouTube OAuth + publishing (via Google OAuth, resumable upload API)
-- [x] TikTok OAuth + publishing (app review pending, Content Posting API integrated)
+- [x] TikTok OAuth + publishing (code done, app review pending)
   - [x] OAuth flow implemented (lib/tiktok.ts)
   - [x] Content Posting API integrated (lib/tiktok-publish.ts)
-  - [ ] Submit app to TikTok for review (2-5 days approval)
-  - [ ] Add `TIKTOK_CLIENT_ID` and `TIKTOK_CLIENT_SECRET` to .env.local, Vercel, Render
+  - [x] TikTok Developer Portal app created
+    - [x] Client Key: awd23ukbqt8z67b6
+    - [x] Client Secret: YgezWUwkxCH4rqS7QoNHwbKbRBqF8GnL
+    - [x] Credentials saved to .env.local
+    - [x] App icon (logo-mark-1024.png) created
+    - [x] Basic info filled (name, category: Social Networking, description, ToS, privacy policy)
+    - [x] Products selected: Login Kit + Content Posting API
+    - [x] Scopes selected: video.upload, user.info.basic
+    - [x] App review explanation written
+    - [ ] Demo video recorded and uploaded (shows OAuth → compose → publish flow)
+    - [ ] Submit for review — **BLOCKED: Need custom domain first** (currently on post-train.vercel.app)
+  - [ ] Once domain acquired: update app callback URI in TikTok dashboard, submit for review (2-5 days approval)
+  - [ ] Add `TIKTOK_CLIENT_ID` and `TIKTOK_CLIENT_SECRET` to Vercel, Render (already in .env.local)
 - [ ] Instagram OAuth + publishing (Meta app review + Graph API)
 - [ ] Facebook publishing (reuse Meta app from Instagram)
 - [ ] Threads publishing (Meta Graph API, same app)
