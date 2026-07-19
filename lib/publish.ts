@@ -17,6 +17,7 @@ import { isMastodonError, publishToMastodon, type MastodonCredentials } from "./
 import { isLinkedInError, publishToLinkedIn, type LinkedInCredentials } from "./linkedin";
 import { isYouTubeError, publishToYouTube, type YouTubeCredentials } from "./youtube-publish";
 import { isPinterestError, publishToPinterest, type PinterestCredentials } from "./pinterest-publish";
+import { isTikTokError, publishToTikTok, type TikTokCredentials } from "./tiktok-publish";
 import { encryptJson } from "./secretbox";
 import { readMediaBytes } from "./media";
 import { api } from "@/convex/_generated/api";
@@ -305,6 +306,57 @@ async function publishToPlatform(
     }
   }
 
+  if (account.platform === "tiktok") {
+    if (!account.credentials) {
+      await convexMutation(api.accounts.patchAccount, {
+        id: account.id,
+        patch: { status: "needs_reauth" },
+      });
+      return {
+        success: false,
+        error_code: "auth_expired",
+        error_message: "TikTok credentials missing — reconnect this account.",
+      };
+    }
+
+    // TikTok requires at least one video
+    if (media.length === 0) {
+      return {
+        success: false,
+        error_code: "platform_error",
+        error_message: "TikTok requires at least one video to post.",
+      };
+    }
+
+    try {
+      const creds = decryptJson<TikTokCredentials>(account.credentials);
+      // Use the first video in the media array
+      const videoMedia = media.find((m) => m.kind === "video");
+      if (!videoMedia) {
+        return {
+          success: false,
+          error_code: "platform_error",
+          error_message: "No video found in post media.",
+        };
+      }
+      const result = await publishToTikTok(creds, videoMedia.bytes, post.caption || "");
+      return { success: true, ...result };
+    } catch (e) {
+      const code = isTikTokError(e) ? e.code : "platform_error";
+      if (code === "auth_expired") {
+        await convexMutation(api.accounts.patchAccount, {
+          id: account.id,
+          patch: { status: "needs_reauth" },
+        });
+      }
+      return {
+        success: false,
+        error_code: code,
+        error_message: e instanceof Error ? e.message : "TikTok publish failed.",
+      };
+    }
+  }
+
   // Simulated for platforms without a real adapter yet.
   const platformPostId = randomBytes(9).toString("hex");
   const p = platformOf(account.platform);
@@ -326,7 +378,7 @@ export async function publishPost(post: PostRow): Promise<void> {
     { post_id: post.id }
   );
   const needsMedia = destinations.some(
-    (d) => d.platform === "bluesky" || d.platform === "youtube" || d.platform === "pinterest"
+    (d) => d.platform === "bluesky" || d.platform === "youtube" || d.platform === "pinterest" || d.platform === "tiktok"
   );
   const media = needsMedia ? await loadPostMedia(post.id) : [];
 

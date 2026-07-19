@@ -168,7 +168,7 @@ export const PLATFORMS: Platform[] = [
 export const platform = (id: string): Platform | undefined =>
   PLATFORMS.find((p) => p.id === id);
 
-/** Twitter/LinkedIn/Mastodon/YouTube/Pinterest use a real OAuth 2.0 redirect flow; everything else still uses the mock consent screen. */
+/** Twitter/LinkedIn/Mastodon/YouTube/Pinterest/TikTok use a real OAuth 2.0 redirect flow; everything else still uses the mock consent screen. */
 export function connectHref(id: PlatformId, opts: { returnTo: string; reconnect?: number }): string {
   const params = new URLSearchParams({ return: opts.returnTo });
   if (opts.reconnect) params.set("reconnect", String(opts.reconnect));
@@ -177,6 +177,7 @@ export function connectHref(id: PlatformId, opts: { returnTo: string; reconnect?
   if (id === "mastodon") return `/api/connections/mastodon/start?${params}`;
   if (id === "youtube") return `/api/connections/youtube/start?${params}`;
   if (id === "pinterest") return `/api/connections/pinterest/start?${params}`;
+  if (id === "tiktok") return `/api/connections/tiktok/start?${params}`;
   return `/oauth/mock/${id}?${params}`;
 }
 
@@ -212,4 +213,7 @@ export const CONNECT_ERRORS: Record<string, string> = {
   pinterest_auth_failed: "Pinterest authorization failed or was cancelled.",
   pinterest_auth_expired: "That Pinterest session expired — try connecting again.",
   pinterest_platform_error: "Pinterest couldn't complete the connection — try again in a moment.",
+  tiktok_auth_failed: "TikTok authorization failed or was cancelled.",
+  tiktok_auth_expired: "That TikTok session expired — try connecting again.",
+  tiktok_platform_error: "TikTok couldn't complete the connection — try again in a moment.",
 };
