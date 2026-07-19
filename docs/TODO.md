@@ -12,18 +12,37 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
   - [x] OAuth flow implemented (lib/tiktok.ts)
   - [x] Content Posting API integrated (lib/tiktok-publish.ts)
   - [x] TikTok Developer Portal app created
-    - [x] Client Key: awd23ukbqt8z67b6
-    - [x] Client Secret: YgezWUwkxCH4rqS7QoNHwbKbRBqF8GnL
-    - [x] Credentials saved to .env.local
-    - [x] App icon (logo-mark-1024.png) created
-    - [x] Basic info filled (name, category: Social Networking, description, ToS, privacy policy)
-    - [x] Products selected: Login Kit + Content Posting API
-    - [x] Scopes selected: video.upload, user.info.basic
-    - [x] App review explanation written
-    - [ ] Demo video recorded and uploaded (shows OAuth → compose → publish flow)
-    - [ ] Submit for review — **BLOCKED: Need custom domain first** (currently on post-train.vercel.app)
-  - [ ] Once domain acquired: update app callback URI in TikTok dashboard, submit for review (2-5 days approval)
-  - [ ] Add `TIKTOK_CLIENT_ID` and `TIKTOK_CLIENT_SECRET` to Vercel, Render (already in .env.local)
+    - **Credentials:**
+      - Client Key: `awd23ukbqt8z67b6`
+      - Client Secret: `YgezWUwkxCH4rqS7QoNHwbKbRBqF8GnL`
+      - Saved to .env.local
+    - **Basic Info:**
+      - [x] App Name: Post Train
+      - [x] App Icon: logo-mark-1024.png (resized)
+      - [x] Category: Social Networking
+      - [x] Description: "Social media scheduler. Schedule and publish content across TikTok and other platforms from one dashboard."
+      - [x] Terms of Service URL: https://post-train.vercel.app/tos
+      - [x] Privacy Policy URL: https://post-train.vercel.app/privacy-policy
+      - [x] Platforms: Web
+    - **Products & Scopes:**
+      - [x] Products: Login Kit + Content Posting API
+      - [x] Scopes: `video.upload`, `user.info.basic`
+    - **App Review:**
+      - [x] Explanation text written:
+        ```
+        Post Train is a social media scheduler that integrates with TikTok's Content Posting API. Users connect their TikTok account via OAuth, then compose and schedule video content to publish directly to TikTok from our dashboard.
+        
+        The integration uses the following scopes:
+        - video.upload: to upload and publish videos
+        - user.info.basic: to retrieve basic profile information
+        
+        The end-to-end flow: user logs in with TikTok OAuth → authorizes Post Train → selects or uploads a video → adds caption → publishes to TikTok as a draft (user can publish manually from TikTok).
+        ```
+      - [ ] Demo video: recorded and uploaded (shows OAuth → compose → publish flow, <50MB mp4/mov)
+      - [ ] Submit for review — **BLOCKED: Need custom domain first** (currently on post-train.vercel.app)
+  - [ ] Once domain acquired: update OAuth redirect URI in TikTok dashboard to `https://yourdomain.com/api/oauth/tiktok/callback`
+  - [ ] Submit for review (2-5 days approval)
+  - [ ] Add `TIKTOK_CLIENT_ID` and `TIKTOK_CLIENT_SECRET` to Vercel & Render env vars (already in .env.local)
 - [ ] Instagram OAuth + publishing (Meta app review + Graph API)
 - [ ] Facebook publishing (reuse Meta app from Instagram)
 - [ ] Threads publishing (Meta Graph API, same app)
