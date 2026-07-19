@@ -1,5 +1,12 @@
-// TikTok publishing — uploads videos via the TikTok Content Posting API.
-// Videos are posted as drafts by default (user can publish manually).
+// TikTok publishing — uploads videos to the creator's TikTok inbox as a
+// draft via the Content Posting API (video.upload scope). The creator must
+// open TikTok and manually finish posting; the API does not set a caption
+// or title in this mode.
+//
+// Direct-to-profile publishing (video.publish scope) is not implemented —
+// it requires a separate, stricter TikTok content-posting audit (privacy
+// level selector, duet/stitch/comment controls, creator info shown before
+// posting) that we haven't built the UI for yet.
 export type TikTokCredentials = {
   access_token: string;
   refresh_token?: string;
@@ -19,64 +26,61 @@ export function isTikTokError(e: unknown): e is TikTokError {
   return e instanceof TikTokError;
 }
 
+// ponytail: single-chunk upload only. TikTok requires 5-64MB chunks for
+// larger files; upgrade path is the chunked PUT loop from TikTok's media
+// transfer guide if videos routinely exceed this.
+const MAX_SINGLE_CHUNK_BYTES = 64 * 1024 * 1024;
+
 export async function publishToTikTok(
   creds: TikTokCredentials,
-  videoBytes: Buffer,
-  caption: string
+  videoBytes: Buffer
 ): Promise<{ platform_post_id: string; share_url: string }> {
-  // ponytail: TikTok's Content Posting API requires:
-  // 1. POST to /v1/post/publish/action/upload (returns upload_url)
-  // 2. PUT video bytes to upload_url
-  // 3. POST to /v1/post/publish/action/submit (initiates processing)
-  //
-  // Videos are created as drafts. Users can publish manually from TikTok's app.
-  // Publish status can be checked via /v1/post/publish/status/{video_id}
+  if (videoBytes.length > MAX_SINGLE_CHUNK_BYTES) {
+    throw new TikTokError(
+      `Video too large for TikTok draft upload (${(videoBytes.length / 1024 / 1024).toFixed(1)}MB, max 64MB supported).`,
+      "platform_error"
+    );
+  }
 
-  // Step 1: Request upload URL
   const initRes = await fetch(
-    "https://open.tiktokapis.com/v1/post/publish/action/upload",
+    "https://open.tiktokapis.com/v2/post/publish/inbox/video/init/",
     {
       method: "POST",
       headers: {
         Authorization: `Bearer ${creds.access_token}`,
-        "Content-Type": "application/json",
+        "Content-Type": "application/json; charset=UTF-8",
       },
       body: JSON.stringify({
         source_info: {
           source: "FILE_UPLOAD",
-          file_size: videoBytes.length,
+          video_size: videoBytes.length,
+          chunk_size: videoBytes.length,
+          total_chunk_count: 1,
         },
       }),
     }
   );
 
-  if (!initRes.ok) {
+  const initJson = (await initRes.json()) as {
+    data?: { publish_id: string; upload_url: string };
+    error?: { code: string; message: string };
+  };
+
+  if (!initRes.ok || !initJson.data?.upload_url) {
+    const code = initJson.error?.code === "access_token_invalid" ? "auth_expired" : "platform_error";
     throw new TikTokError(
-      `TikTok upload init failed: ${await initRes.text()}`,
-      "platform_error"
+      `TikTok upload init failed: ${initJson.error?.message ?? "unknown error"}`,
+      code
     );
   }
 
-  const initJson = (await initRes.json()) as {
-    data?: {
-      upload_url: string;
-      publish_id: string;
-    };
-  };
+  const { publish_id, upload_url } = initJson.data;
 
-  if (!initJson.data?.upload_url || !initJson.data?.publish_id) {
-    throw new TikTokError("No TikTok upload URL provided", "platform_error");
-  }
-
-  const uploadUrl = initJson.data.upload_url;
-  const publishId = initJson.data.publish_id;
-
-  // Step 2: Upload video bytes
-  const uploadRes = await fetch(uploadUrl, {
+  const uploadRes = await fetch(upload_url, {
     method: "PUT",
     headers: {
       "Content-Type": "video/mp4",
-      "Content-Length": String(videoBytes.length),
+      "Content-Range": `bytes 0-${videoBytes.length - 1}/${videoBytes.length}`,
     },
     body: new Uint8Array(videoBytes),
   });
@@ -88,52 +92,9 @@ export async function publishToTikTok(
     );
   }
 
-  // Step 3: Submit for processing (creates as draft)
-  const submitRes = await fetch(
-    "https://open.tiktokapis.com/v1/post/publish/action/submit",
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${creds.access_token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        media_type: "VIDEO",
-        publish_id: publishId,
-        caption,
-        post_mode: "DRAFT", // Saves as draft, not publicly posted
-      }),
-    }
-  );
-
-  if (!submitRes.ok) {
-    const errText = await submitRes.text();
-    if (errText.includes("rate_limit")) {
-      throw new TikTokError(
-        "TikTok rate limit exceeded",
-        "platform_error"
-      );
-    }
-    throw new TikTokError(
-      `TikTok submit failed: ${errText}`,
-      "platform_error"
-    );
-  }
-
-  const submitJson = (await submitRes.json()) as {
-    data?: {
-      video_id: string;
-    };
-  };
-
-  if (!submitJson.data?.video_id) {
-    throw new TikTokError("No TikTok video ID returned", "platform_error");
-  }
-
-  const videoId = submitJson.data.video_id;
-
   return {
-    platform_post_id: videoId,
-    share_url: `https://www.tiktok.com/@[username]/video/${videoId}`,
+    platform_post_id: publish_id,
+    // Draft uploads have no public URL until the creator manually posts from the TikTok app.
+    share_url: "",
   };
 }

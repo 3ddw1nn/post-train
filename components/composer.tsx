@@ -823,26 +823,11 @@ function PlatformConfigPanel({
   return (
     <div className="card mt-3 flex flex-col gap-4 p-4">
       {platformId === "tiktok" && (
-        <>
-          <ToggleRow
-            k="draft"
-            label="Post as draft"
-            desc="Send to your TikTok inbox instead of publishing directly"
-          />
-          <div>
-            <label className="text-xs font-bold">Cover timestamp (ms)</label>
-            <input
-              type="number"
-              className="input mt-1"
-              placeholder="3000"
-              value={(value.video_cover_timestamp_ms as number) ?? ""}
-              onChange={(e) =>
-                set("video_cover_timestamp_ms", e.target.value ? Number(e.target.value) : "")
-              }
-            />
-          </div>
-          <ToggleRow k="is_aigc" label="AI-generated content label" desc="Adds TikTok's AIGC disclosure" />
-        </>
+        <p className="text-sm text-muted">
+          TikTok videos upload to your TikTok inbox as a draft — open the TikTok app to add a
+          caption, cover, and privacy setting, then publish from there. Direct publishing to
+          your profile isn&apos;t available yet (it requires a separate TikTok review).
+        </p>
       )}
       {platformId === "instagram" && (
         <>

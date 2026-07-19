@@ -339,7 +339,7 @@ async function publishToPlatform(
           error_message: "No video found in post media.",
         };
       }
-      const result = await publishToTikTok(creds, videoMedia.bytes, post.caption || "");
+      const result = await publishToTikTok(creds, videoMedia.bytes);
       return { success: true, ...result };
     } catch (e) {
       const code = isTikTokError(e) ? e.code : "platform_error";

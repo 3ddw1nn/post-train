@@ -6,74 +6,67 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
 
 ## 🔴 Blocking Development (Do These Next)
 
-### 1. Additional OAuth Platforms (HIGH PRIORITY)
+### 1. Additional OAuth Platforms (HIGH PRIORITY) — actionable now
 - [x] YouTube OAuth + publishing (via Google OAuth, resumable upload API)
-- [x] TikTok OAuth + publishing (code done, app review pending)
+- [x] TikTok OAuth + publishing — sandbox working end-to-end
   - [x] OAuth flow implemented (lib/tiktok.ts)
   - [x] Content Posting API integrated (lib/tiktok-publish.ts)
-  - [🔴 HIGH PRIORITY] Add publish mode toggle (DRAFT vs. DIRECT POST)
-    - **What:** Users choose how their TikTok content publishes:
-      - **Option A (Draft):** Video uploads to TikTok drafts → user reviews & manually publishes from TikTok app
-      - **Option B (Direct):** Video publishes straight to user's feed at scheduled time (no review needed)
-    - [ ] Update lib/tiktok-publish.ts to support both `post_mode: "DRAFT"` and `post_mode: "PUBLISH_NOW"`
-    - [ ] Add mode parameter to publishToTikTok(creds, video, caption, mode) function
-    - [ ] Update lib/publish.ts to pass the mode when calling publishToTikTok()
-    - [ ] Add toggle in Composer UI: "Publish as draft" radio / "Publish directly" radio (default: draft)
-    - [ ] Store user's choice per post (or as account default)
-    - **Why:** Core scheduler value — users want both options depending on content type
-  - [x] TikTok Developer Portal app created
-    - **Production Credentials:**
-      - Client Key: `awd23ukbqt8z67b6`
-      - Client Secret: `YgezWUwkxCH4rqS7QoNHwbKbRBqF8GnL`
-    - [x] **Sandbox Setup (for testing before production)**
-      - [x] Sandbox app created on TikTok Developer Portal
-      - [x] Sandbox Client Key: `sbaw5b6zwxk0pxxjdl` (in .env.local + Vercel env)
-      - [x] Sandbox Client Secret: `OXAZgbWEiEC67lc1fLdLZxRpTmto7REu` (in .env.local + Vercel env)
-      - [x] Redirect URI configured: `http://localhost:3000/api/oauth/tiktok/callback` (local) + `https://post-train.vercel.app/api/oauth/tiktok/callback` (production)
-      - [x] Test account authorized in sandbox
-      - [ ] Test OAuth flow on post-train.vercel.app (once Vercel redeploy completes)
-    - [ ] **Implement publish mode toggle** (DRAFT vs. DIRECT POST) — see HIGH PRIORITY section above
-    - [ ] **Production submission** — Once real domain acquired:
-      - [ ] Update redirect URI in TikTok dashboard to real domain
-      - [ ] Update TIKTOK_CLIENT_ID & TIKTOK_CLIENT_SECRET with production credentials
-      - [ ] Record demo video + submit for app review (2-5 days)
-    - **Basic Info:**
-      - [ ] App Name: Post Train
-      - [ ] App Icon: logo-mark-1024.png (resized)
-      - [ ] Category: Social Networking
-      - [ ] Description: "Social media scheduler. Schedule and publish content across TikTok and other platforms from one dashboard."
-      - [ ] Terms of Service URL: https://post-train.vercel.app/tos
-      - [ ] Privacy Policy URL: https://post-train.vercel.app/privacy-policy
-      - [ ] Platforms: Web
-    - **Products & Scopes:**
-      - [ ] Products: Login Kit + Content Posting API
-      - [ ] Scopes: `video.upload`, `user.info.basic`
-    - **App Review:**
-      - [ ] Explanation text written:
-        ```
-        Post Train is a social media scheduler that integrates with TikTok's Content Posting API. Users connect their TikTok account via OAuth, then compose and schedule video content to publish directly to TikTok from our dashboard.
-        
-        The integration uses the following scopes:
-        - video.upload: to upload and publish videos
-        - user.info.basic: to retrieve basic profile information
-        
-        The end-to-end flow: user logs in with TikTok OAuth → authorizes Post Train → selects or uploads a video → adds caption → publishes to TikTok as a draft (user can publish manually from TikTok).
-        ```
-      - [ ] Demo video: recorded and uploaded (shows OAuth → compose → publish flow, <50MB mp4/mov)
-      - [ ] Submit for review — **BLOCKED: Need custom domain first** (currently on post-train.vercel.app)
-  - [ ] Once domain acquired: update OAuth redirect URI in TikTok dashboard to `https://yourdomain.com/api/oauth/tiktok/callback`
-  - [ ] Submit for review (2-5 days approval)
-  - [ ] Add `TIKTOK_CLIENT_ID` and `TIKTOK_CLIENT_SECRET` to Vercel & Render env vars (already in .env.local)
-- [ ] Instagram OAuth + publishing (Meta app review + Graph API)
-- [ ] Facebook publishing (reuse Meta app from Instagram)
-- [ ] Threads publishing (Meta Graph API, same app)
-- [~] Pinterest OAuth + publishing (Pins API v5, text+image pins) — **WAITING FOR TRIAL APPROVAL**
+  - [x] Sandbox Client Key: `sbaw5b6zwxk0pxxjdl` / Secret: `OXAZgbWEiEC67Ic1fLdLZxRpTmto7REu` (in .env.local + Vercel env)
+  - [x] Verified working on post-train.vercel.app (fixed v1→v2 endpoint migration + corrected client secret OCR typo `I` vs `l`)
+  - Production credentials (unused until submission): Client Key `awd23ukbqt8z67b6` / Secret `YgezWUwkxCH4rqS7QoNHwbKbRBqF8GnL`
+  - Production submission itself is blocked on a domain — see 🚧 Blocked section below
+- [x] TikTok: Fixed publish flow to match TikTok's real Content Posting API
+  - **Finding:** There's no `post_mode` toggle for TikTok videos — draft vs. direct are two separate endpoints requiring two different OAuth scopes:
+    - `/v2/post/publish/inbox/video/init/` (draft, to inbox) — needs `video.upload` scope — **this is what we have**
+    - `/v2/post/publish/video/init/` (direct to profile) — needs `video.publish` scope, which requires a separate, stricter TikTok content-posting audit (privacy-level selector, duet/stitch/comment UI, creator info shown before posting — none of which we've built)
+  - [x] Rewrote lib/tiktok-publish.ts to call the real v2 inbox/draft endpoint (previous code called retired v1-style endpoints that would 404 — same class of bug as the OAuth fix)
+  - [x] Removed caption/cover-timestamp/AIGC fields from the composer's TikTok config panel — none apply in inbox/draft mode (TikTok ignores them; the creator sets caption/cover themselves in-app)
+  - [x] Composer now shows an info note explaining videos land as a draft in the TikTok inbox
+  - [ ] **Direct-post (video.publish scope) — deferred.** Needs: request new scope, build privacy-level/duet/stitch/comment UI, pass TikTok's stricter content-posting audit (2-4 weeks). Revisit once draft mode is validated in production.
+- **Why:** Expands platform coverage before launch; each platform brings new users
+
+### 1b. 🚧 Blocked Platforms / Waiting on External Dependencies
+Nothing to build here yet — revisit when the blocker clears.
+
+- **TikTok production submission** — blocked on acquiring a custom domain (currently on post-train.vercel.app)
+  - [ ] Update redirect URI in TikTok dashboard to real domain
+  - [ ] Update TIKTOK_CLIENT_ID & TIKTOK_CLIENT_SECRET with production credentials
+  - **Basic Info:** App Name "Post Train" · App Icon logo-mark-1024.png · Category "Social Networking" · Description "Social media scheduler. Schedule and publish content across TikTok and other platforms from one dashboard." · ToS https://post-train.vercel.app/tos · Privacy https://post-train.vercel.app/privacy-policy · Platform: Web
+  - **Products & Scopes:** Login Kit + Content Posting API · `video.upload`, `user.info.basic`
+  - **App Review explanation (ready to paste):**
+    ```
+    Post Train is a social media scheduler that integrates with TikTok's Content Posting API. Users connect their TikTok account via OAuth, then compose and schedule video content to publish directly to TikTok from our dashboard.
+
+    The integration uses the following scopes:
+    - video.upload: to upload and publish videos
+    - user.info.basic: to retrieve basic profile information
+
+    The end-to-end flow: user logs in with TikTok OAuth → authorizes Post Train → selects or uploads a video → adds caption → publishes to TikTok as a draft (user can publish manually from TikTok).
+    ```
+  - [ ] Record demo video (<50MB mp4/mov, shows OAuth → compose → publish flow)
+  - [ ] Submit for app review (2-5 days approval) once domain is live
+  - [ ] Add `TIKTOK_CLIENT_ID` and `TIKTOK_CLIENT_SECRET` to Vercel & Render production env vars
+
+- **Facebook OAuth + publishing** (Meta app + Graph API) — blocked: current Facebook account pending deletion (2026-07-24)
+  - Plan: create a new Facebook account after the 24th, then create the Meta Developer app there
+  - **Why Facebook first (once unblocked):** Simpler than Instagram — just needs a Facebook Page (no Business/Creator account conversion or IG-Page linking required), fewer permissions (`pages_manage_posts`, `pages_read_engagement`). Validates the Meta app + OAuth flow before tackling Instagram's extra setup.
+  - [ ] Create Meta Developer app at developers.facebook.com
+  - [ ] Get App ID / App Secret, add to .env.local + Vercel
+  - [ ] Implement OAuth flow (lib/facebook.ts) — Facebook Login, Page access token
+  - [ ] Implement publishing (lib/facebook-publish.ts) — post to Page via Graph API
+  - [ ] Wire into lib/platforms.ts + lib/publish.ts (same pattern as YouTube/Pinterest/TikTok)
+  - [ ] Submit for Meta app review (`pages_manage_posts` is a restricted permission)
+
+- **Instagram OAuth + publishing** (reuse Meta app from Facebook) — blocked: same Meta account issue as Facebook
+  - Requires: IG Business/Creator account linked to a Facebook Page
+
+- **Threads publishing** (Meta Graph API, same app) — blocked: same Meta account issue
+
+- **Pinterest OAuth + publishing** (Pins API v5, text+image pins) — blocked: waiting for trial approval email
   - [x] App created, App ID: 1591939
   - [ ] Receive Pinterest trial approval email (24-48 hours)
   - [ ] Get App Secret from Pinterest dashboard
   - [ ] Add `PINTEREST_CLIENT_SECRET` to .env.local, Vercel, Render
-- **Why:** Expands platform coverage before launch; each platform brings new users
-- **Next:** Submit TikTok for review; while waiting, start Instagram
 
 ### 2. Real Analytics (MEDIUM PRIORITY)
 - [ ] TikTok: Wire OAuth scope + `videos.list` endpoint for metrics
@@ -125,6 +118,15 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
 ### 9. Twitter/X credits (optional — pause is in place)
 - [ ] Buy API credits in X Developer Portal
 - [ ] Verify tweet publishing works
+
+### 11. Google Business Profile OAuth + publishing (pushed far back)
+- Not just an OAuth integration — the API only exists to manage a real, public Google Maps/Search business listing. Requires creating and verifying an actual GBP listing (name, address, category), then waiting 60+ days verified before even applying for API access.
+- [ ] Create the Google Business Profile listing at google.com/business
+- [ ] Complete verification (postcard/phone/email/video) — starts the 60-day clock
+- [ ] Note verification date here once confirmed: `_____`
+- [ ] Once 60+ days verified + website attached: submit GBP API access request ("Application for Basic API Access")
+- [ ] After approval: enable Business Profile APIs in Google Cloud Console (same project as YouTube OAuth), implement lib/google-business.ts + publishing
+- Note: Post Train already uses Google OAuth for YouTube — same Google Cloud project can likely add the Business Profile API scope
 
 ---
 
