@@ -25,4 +25,8 @@ RUN mkdir -p /app/.data && chown nextjs:nodejs /app/.data
 USER nextjs
 EXPOSE 3000
 ENV PORT=3000
+# Docker auto-sets HOSTNAME to the container ID; the Next.js standalone
+# server binds to it if present instead of falling back to 0.0.0.0, making
+# the app unreachable from outside the container. Force the real default.
+ENV HOSTNAME=0.0.0.0
 CMD ["node", "server.js"]
