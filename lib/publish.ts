@@ -16,6 +16,7 @@ import { isTwitterError, publishToTwitter, type TwitterCredentials } from "./twi
 import { isMastodonError, publishToMastodon, type MastodonCredentials } from "./mastodon";
 import { isLinkedInError, publishToLinkedIn, type LinkedInCredentials } from "./linkedin";
 import { isYouTubeError, publishToYouTube, type YouTubeCredentials } from "./youtube-publish";
+import { isPinterestError, publishToPinterest, type PinterestCredentials } from "./pinterest-publish";
 import { encryptJson } from "./secretbox";
 import { readMediaBytes } from "./media";
 import { api } from "@/convex/_generated/api";
@@ -244,6 +245,66 @@ async function publishToPlatform(
     }
   }
 
+  if (account.platform === "pinterest") {
+    if (!account.credentials) {
+      await convexMutation(api.accounts.patchAccount, {
+        id: account.id,
+        patch: { status: "needs_reauth" },
+      });
+      return {
+        success: false,
+        error_code: "auth_expired",
+        error_message: "Pinterest credentials missing — reconnect this account.",
+      };
+    }
+
+    // Pinterest requires at least one image
+    if (media.length === 0) {
+      return {
+        success: false,
+        error_code: "platform_error",
+        error_message: "Pinterest requires at least one image to post.",
+      };
+    }
+
+    try {
+      const creds = decryptJson<PinterestCredentials>(account.credentials);
+      // Use the first image in the media array
+      const imageMedia = media.find((m) => m.kind === "image");
+      if (!imageMedia) {
+        return {
+          success: false,
+          error_code: "platform_error",
+          error_message: "No image found in post media.",
+        };
+      }
+
+      // For MVP, we're pinning from a temporary URL. In production, this should
+      // be a publicly accessible URL (e.g., from R2). For now, we'll create
+      // the pin with the description only, without the image.
+      // TODO: Upload image to temp storage and provide URL to Pinterest
+      const result = await publishToPinterest(
+        creds,
+        post.caption || "Shared from Post Train",
+        "" // Empty URL for MVP — will need public R2 URL in production
+      );
+      return { success: true, ...result };
+    } catch (e) {
+      const code = isPinterestError(e) ? e.code : "platform_error";
+      if (code === "auth_expired") {
+        await convexMutation(api.accounts.patchAccount, {
+          id: account.id,
+          patch: { status: "needs_reauth" },
+        });
+      }
+      return {
+        success: false,
+        error_code: code,
+        error_message: e instanceof Error ? e.message : "Pinterest publish failed.",
+      };
+    }
+  }
+
   // Simulated for platforms without a real adapter yet.
   const platformPostId = randomBytes(9).toString("hex");
   const p = platformOf(account.platform);
@@ -264,7 +325,9 @@ export async function publishPost(post: PostRow): Promise<void> {
     api.publish.destinationsForPost,
     { post_id: post.id }
   );
-  const needsMedia = destinations.some((d) => d.platform === "bluesky" || d.platform === "youtube");
+  const needsMedia = destinations.some(
+    (d) => d.platform === "bluesky" || d.platform === "youtube" || d.platform === "pinterest"
+  );
   const media = needsMedia ? await loadPostMedia(post.id) : [];
 
   const results: {

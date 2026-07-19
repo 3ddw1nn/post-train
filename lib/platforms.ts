@@ -168,7 +168,7 @@ export const PLATFORMS: Platform[] = [
 export const platform = (id: string): Platform | undefined =>
   PLATFORMS.find((p) => p.id === id);
 
-/** Twitter/LinkedIn/Mastodon/YouTube use a real OAuth 2.0 redirect flow; everything else still uses the mock consent screen. */
+/** Twitter/LinkedIn/Mastodon/YouTube/Pinterest use a real OAuth 2.0 redirect flow; everything else still uses the mock consent screen. */
 export function connectHref(id: PlatformId, opts: { returnTo: string; reconnect?: number }): string {
   const params = new URLSearchParams({ return: opts.returnTo });
   if (opts.reconnect) params.set("reconnect", String(opts.reconnect));
@@ -176,6 +176,7 @@ export function connectHref(id: PlatformId, opts: { returnTo: string; reconnect?
   if (id === "linkedin") return `/api/connections/linkedin/start?${params}`;
   if (id === "mastodon") return `/api/connections/mastodon/start?${params}`;
   if (id === "youtube") return `/api/connections/youtube/start?${params}`;
+  if (id === "pinterest") return `/api/connections/pinterest/start?${params}`;
   return `/oauth/mock/${id}?${params}`;
 }
 
@@ -208,4 +209,7 @@ export const CONNECT_ERRORS: Record<string, string> = {
   youtube_auth_failed: "YouTube authorization failed or was cancelled.",
   youtube_auth_expired: "That YouTube session expired — try connecting again.",
   youtube_platform_error: "YouTube couldn't complete the connection — try again in a moment.",
+  pinterest_auth_failed: "Pinterest authorization failed or was cancelled.",
+  pinterest_auth_expired: "That Pinterest session expired — try connecting again.",
+  pinterest_platform_error: "Pinterest couldn't complete the connection — try again in a moment.",
 };
