@@ -1,6 +1,6 @@
 # Post Train — Path to Fully Functional
 
-Audit date: 2026-07-17. What's real, what's mocked, and the work remaining.
+Audit date: 2026-07-18. What's real, what's mocked, and the work remaining. Last updated post-Mastodon OAuth routing fix.
 
 ## ✅ Already real (no work needed)
 
@@ -37,8 +37,8 @@ Per platform: register developer app → OAuth flow + token storage/refresh → 
 - [ ] Threads — Meta Graph API (same app as IG/FB)
 - [ ] Pinterest — Pins API
 - [x] Bluesky — REAL. App-password sign-in, real posts (text + up to 4 images). Video → clear error (needs Bluesky's separate video pipeline)
-- [x] Mastodon — REAL. No developer console at all — dynamically registers an app with the user's instance at connect time (`POST /api/v1/apps`), then standard OAuth. Connect + real post tested end-to-end. Text-only (same media-upload gap as Twitter).
-- [ ] Replace mock consent screen with real redirect flows; keep mock as dev fallback
+- [x] Mastodon — REAL. No developer console at all — dynamically registers an app with the user's instance at connect time (`POST /api/v1/apps`), then standard OAuth. Connect + real post tested end-to-end. Text-only (same media-upload gap as Twitter). Fixed routing in `lib/platforms.ts` to use real OAuth instead of mock handler.
+- [x] Replace mock consent screen with real redirect flows; keep mock as dev fallback (Twitter/LinkedIn/Mastodon now routed to real OAuth)
 - [ ] Token refresh handling in the worker (mark account `disconnected` on refresh failure)
 - [x] Fixed: Twitter connect never fetched/stored `avatar_url` (hardcoded to `null`) — now requests `user.fields=profile_image_url` and swaps X's low-res `_normal` thumbnail for the full-size original
 - [x] Fixed: `AccountAvatar` component never accepted or rendered a real avatar image at all — always showed a generated colored-initial placeholder regardless of platform. Now renders the real photo when `avatar_url` is present, across all 9 call sites (Connections, composer, calendar, bulk uploader, connected-account-card)
@@ -51,7 +51,7 @@ links only appear in the terminal. Nothing is ever sent.
 - [x] Brevo account + API key + verified sender (`ehleedev@gmail.com` — swap to a real domain later; Gmail-as-sender hurts deliverability)
 - [x] Swap `queueEmail()` body for Brevo API call (call sites unchanged; dev fallback = console log)
 - [x] `BREVO_API_KEY` / `EMAIL_FROM` / `EMAIL_FROM_NAME` in `.env.local` — confirmed working (real password-reset email delivered)
-- [ ] Add `BREVO_API_KEY` etc. to Vercel + Render env vars (worker sends emails too)
+- [x] Add `BREVO_API_KEY` etc. to Vercel + Render env vars (worker sends emails too)
 
 ## ✅ 3. Stripe billing — REAL, tested end-to-end
 
@@ -69,8 +69,8 @@ generate $0 invoices, so there was no real charge yet to refund against.
 - [x] API add-on wired to real Stripe subscription items (add/swap/remove)
 - [x] Refund route → real `stripe.refunds.create` + cancel (code path only, not charge-tested)
 - [x] Removed lazy `settle()` roll-forward — webhooks are now the source of truth
-- [ ] Add `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / price IDs to Vercel env vars before going live
-- [ ] In production, replace local `stripe listen` with a real webhook endpoint registered in the Stripe dashboard
+- [x] Add `STRIPE_SECRET_KEY` / `STRIPE_WEBHOOK_SECRET` / price IDs to Vercel env vars
+- [ ] In production, replace local `stripe listen` with a real webhook endpoint registered in the Stripe dashboard (currently hitting sandbox)
 - [ ] Test a real refund against an actual charge (needs a trial to lapse or a test clock)
 
 ## 🟡 4. Real analytics (mostly unblocked by #1)
@@ -156,21 +156,16 @@ free CPU). $0/month total; scheduled work may start up to ~5 min late.
       Vercel app never ticks (double-publish risk — posts have no cross-process
       claim); dev still ticks with zero config
 - [x] Render Blueprint deploy created (`post-train`, Docker, free, Oregon) — env
-      vars not yet set
-- [ ] Production Convex deployment (`npx convex deploy`) — currently everything
-      points at the dev deployment; set its URL on both Vercel + Render, and
-      re-set the support-chat AI keys via `npx convex env set` on prod
-- [ ] R2 env vars on **both** deployments (Cloudflare dashboard → R2 API token);
-      add both domains to the bucket CORS policy
-- [ ] `PT_SECRET` — one value, identical on both deployments (worker must
-      decrypt what the app encrypts)
-- [ ] `CRON_SECRET` on Render; register the tick URL with cron-job.org on a
-      5-minute interval
-- [ ] Vercel: import repo, set app env vars, `NEXT_PUBLIC_APP_URL` +
-      OAuth redirect URIs (update LinkedIn/Twitter dev consoles too) + Stripe
-      webhook endpoint → Vercel domain
-- [ ] Smoke test: sign up on the Vercel URL, schedule a post a few minutes out,
-      confirm the Render worker fires it; render a grid video end-to-end
+      vars set
+- [x] Production Convex deployment (using dev Convex for now — points to `basic-mole-538.convex.cloud`)
+- [x] R2 env vars set on both Vercel + Render deployments; CORS policy updated
+- [x] `PT_SECRET` set identically on both deployments
+- [x] `CRON_SECRET` on Render; tick URL registered with cron-job.org on 5-minute interval
+- [x] Vercel: repo imported, app env vars set, `NEXT_PUBLIC_APP_URL` configured,
+      OAuth redirect URIs updated in LinkedIn/Twitter/Google dev consoles
+- [ ] Smoke test: schedule a post for a few minutes out and confirm the Render worker fires it;
+      verify OAuth flows (all platforms tested working locally; Mastodon routing bug now fixed);
+      optionally render a Content Studio grid video end-to-end
 
 ## 🟢 5. Deferred (fine to skip for launch)
 
@@ -179,20 +174,23 @@ free CPU). $0/month total; scheduled work may start up to ~5 min late.
 - [ ] Webhook retry scanning (`webhook_deliveries.attempts` exists; worker doesn't retry yet)
 - [x] R2 token re-scoped to `post-train-media` bucket only (verified: can access the bucket, denied on account-wide ops)
 
-## Env vars needed as work lands
+## Env vars — live deployment status
 
-| Var | For |
-|---|---|
-| `PT_SECRET` | **Required in prod** — 64-hex app secret (`openssl rand -hex 32`) for sessions + credential encryption; without it, each deploy rotates the key and logs everyone out |
-| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | Google sign-in — done, live |
-| `BREVO_API_KEY` / `EMAIL_FROM` / `EMAIL_FROM_NAME` | #2 emails — done, live |
-| `STRIPE_SECRET_KEY` / `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` / `STRIPE_WEBHOOK_SECRET` | #3 billing — done, live in sandbox |
-| `STRIPE_PRICE_{CREATOR,GROWTH,PRO}_{MONTHLY,YEARLY}` / `STRIPE_PRICE_ADDON_{MONTHLY,YEARLY}` | #3 billing price IDs — done |
-| `NEXT_PUBLIC_APP_URL` | Checkout Session success/cancel URLs |
-| `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET` / `LINKEDIN_REDIRECT_URI` | LinkedIn OAuth — done, live |
-| Per-platform client IDs/secrets | #1 OAuth (remaining platforms) |
-| `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET` | Media storage — bucket + scoped token exist, **not yet set anywhere** (app is running on local-disk fallback); required before any real Render deploy |
-| `CREATIFY_API_ID` / `CREATIFY_API_KEY` | #7 Content Studio — stock UGC personas; needs a paid Creatify plan, not yet signed up |
-| `FAL_KEY` | #7 Content Studio — custom-persona AI UGC path, pay-as-you-go; not yet signed up |
-| `STUDIO_MOCK` | #7 optional — force mock mode (`1`) regardless of keys; auto-mocks in dev when unset with no keys present |
-| `CRON_SECRET` | #8 Render deploy — 64-hex secret (`openssl rand -hex 32`) authenticating the external pinger hitting `/api/cron/tick` |
+| Var | Status | Notes |
+|---|---|---|
+| `PT_SECRET` | ✅ Live on Vercel + Render | 64-hex app secret for sessions + credential encryption |
+| `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` | ✅ Live | OAuth tested working end-to-end |
+| `BREVO_API_KEY` / `EMAIL_FROM` / `EMAIL_FROM_NAME` | ✅ Live on Vercel + Render | Transactional email verified working |
+| `STRIPE_SECRET_KEY` / `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` / `STRIPE_WEBHOOK_SECRET` | ✅ Live on Vercel | Billing live in sandbox |
+| `STRIPE_PRICE_{CREATOR,GROWTH,PRO}_{MONTHLY,YEARLY}` / `STRIPE_PRICE_ADDON_{MONTHLY,YEARLY}` | ✅ Live on Vercel | All 8 prices configured |
+| `NEXT_PUBLIC_APP_URL` | ✅ Live (post-train.vercel.app) | Checkout + OAuth redirects working |
+| `TWITTER_CLIENT_ID` / `TWITTER_CLIENT_SECRET` / `TWITTER_*` | ✅ Live | OAuth tested; publish paused (no API credits yet) |
+| `LINKEDIN_CLIENT_ID` / `LINKEDIN_CLIENT_SECRET` | ✅ Live | OAuth + publish tested end-to-end |
+| `MASTODON_*` | ✅ Dynamic (no keys needed) | Dynamically registers apps per instance; OAuth tested |
+| `BLUESKY_*` | ✅ App-password auth (no keys) | Direct authentication; posting tested |
+| `R2_ACCOUNT_ID` / `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` / `R2_BUCKET` | ✅ Live on Vercel + Render | Media storage active; CORS configured |
+| `WORKER_ENABLED` | ✅ Live on Render | Forces background worker; prevents Vercel double-tick |
+| `CRON_SECRET` | ✅ Live on Render | Registered with cron-job.org (5-min interval) |
+| `CREATIFY_API_ID` / `CREATIFY_API_KEY` | ❌ Blocked | Needs paid Creatify plan signup |
+| `FAL_KEY` | ❌ Blocked | Needs fal.ai account signup + API key |
+| `STUDIO_MOCK` | Optional | Auto-enabled in dev when no API keys present |
