@@ -22,7 +22,7 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
   - [x] Rewrote lib/tiktok-publish.ts to call the real v2 inbox/draft endpoint (previous code called retired v1-style endpoints that would 404 — same class of bug as the OAuth fix)
   - [x] Removed caption/cover-timestamp/AIGC fields from the composer's TikTok config panel — none apply in inbox/draft mode (TikTok ignores them; the creator sets caption/cover themselves in-app)
   - [x] Composer now shows an info note explaining videos land as a draft in the TikTok inbox
-  - **Decision (2026-07-19): not pursuing direct-post.** Draft-to-inbox is the intended behavior going forward, not a stopgap — safer to review/publish from the TikTok app ourselves than to chase the `video.publish` scope, the extra UI (privacy selector, duet/stitch/comment controls), and the stricter audit it requires. Revisit only if that changes.
+  - **Decision (2026-07-19): draft-to-inbox ships for launch; direct-post is a post-launch upgrade.** Draft mode already works end-to-end and needs nothing further from TikTok. Direct-post (`video.publish` scope) requires building a consent screen (username/photo shown pre-post, public/friends/private picker, duet/stitch/comment toggles) and passing TikTok's separate content-posting audit (2-4 weeks, submission-based review — TikTok watches a demo video + reads an explanation, doesn't log into the live app). Not worth delaying launch for. Revisit in the Lower Priority backlog after launch — see §11.
 - **Why:** Expands platform coverage before launch; each platform brings new users
 
 ### 1b. 🚧 Blocked Platforms / Waiting on External Dependencies
@@ -127,6 +127,18 @@ Nothing to build here yet — revisit when the blocker clears.
 - [ ] Once 60+ days verified + website attached: submit GBP API access request ("Application for Basic API Access")
 - [ ] After approval: enable Business Profile APIs in Google Cloud Console (same project as YouTube OAuth), implement lib/google-business.ts + publishing
 - Note: Post Train already uses Google OAuth for YouTube — same Google Cloud project can likely add the Business Profile API scope
+
+### 12. TikTok direct-post (video.publish scope) — post-launch upgrade
+- Draft-to-inbox (current behavior) already works and needs nothing further; this is a pure upgrade, not a fix
+- **What it takes:**
+  - [ ] Request `video.publish` scope in the OAuth flow (lib/tiktok.ts) alongside existing `video.upload`
+  - [ ] Build a pre-post consent screen: show the connected TikTok username/photo, a public/friends-only/private picker (options must match `privacy_level_options` from `/v2/post/publish/creator_info/query/`), and duet/stitch/comment toggles
+  - [ ] Implement `/v2/post/publish/video/init/` (direct-post endpoint) in lib/tiktok-publish.ts, alongside the existing inbox/draft path
+  - [ ] Add a per-post or per-account toggle so users choose draft vs. direct
+  - [ ] Record a new demo video showing the consent screen + direct-post flow
+  - [ ] Submit for TikTok's content-posting audit (2-4 weeks, submission-based — TikTok reviews the demo video + written explanation, does not log into the live app)
+  - [ ] Until approved, posts using `video.publish` are forced private (`SELF_ONLY`) — safe to test, not safe to advertise as working
+- **Why post-launch:** No launch-blocking dependency relies on this; draft mode covers the core use case today
 
 ---
 
