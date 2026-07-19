@@ -22,10 +22,16 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
     - [ ] Store user's choice per post (or as account default)
     - **Why:** Core scheduler value — users want both options depending on content type
   - [x] TikTok Developer Portal app created
-    - **Credentials:**
+    - **Production Credentials:**
       - Client Key: `awd23ukbqt8z67b6`
       - Client Secret: `YgezWUwkxCH4rqS7QoNHwbKbRBqF8GnL`
-      - Saved to .env.local
+    - [x] **Sandbox Setup (for local testing)**
+      - [x] Sandbox app created
+      - [x] Sandbox Client Key: `sbaw5b6zwxk0pxxjdl` (in .env.local)
+      - [x] Sandbox Client Secret: `OXAZgbWEiEC67lc1fLdLZxRpTmto7REu` (in .env.local)
+      - [x] Redirect URI: `http://localhost:3000/api/oauth/tiktok/callback`
+      - [x] Test account authorized
+      - [ ] **Test locally:** `npm run dev` → connect TikTok → publish video → verify draft on TikTok
     - **Basic Info:**
       - [ ] App Name: Post Train
       - [ ] App Icon: logo-mark-1024.png (resized)
