@@ -48,15 +48,11 @@ export function CardListSkeleton({
   thumb?: boolean;
 }) {
   return (
-    <div className="card divide-y divide-line overflow-hidden">
+    <div className="flex flex-col gap-3">
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="p-4">
+        <div key={i} className="card p-4">
           <div className="flex items-center gap-4">
-            <div className="hidden w-16 shrink-0 sm:block">
-              <SkeletonBlock className="h-3 w-10" />
-              <SkeletonBlock className="mt-1.5 h-4 w-14" />
-            </div>
-            {thumb && <SkeletonBlock className="h-12 w-12 shrink-0" />}
+            {thumb && <SkeletonBlock className="h-14 w-14 shrink-0" />}
             <div className="min-w-0 flex-1">
               <SkeletonBlock className="h-4 w-3/4 max-w-full" />
               <div className="mt-3 flex gap-2">
@@ -65,7 +61,10 @@ export function CardListSkeleton({
                 <SkeletonBlock className="h-6 w-6 rounded-full" />
               </div>
             </div>
-            <SkeletonBlock className="h-6 w-20 shrink-0 rounded-full" />
+            <div className="hidden shrink-0 flex-col items-end gap-2 sm:flex">
+              <SkeletonBlock className="h-6 w-20 rounded-full" />
+              <SkeletonBlock className="h-3 w-24" />
+            </div>
             <SkeletonBlock className="h-9 w-9 shrink-0" />
           </div>
         </div>
@@ -262,60 +261,6 @@ export function AnalyticsSkeleton() {
               </div>
             ))}
           </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-export function CalendarSkeleton() {
-  return (
-    <div className="fade-up">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <h1 className="text-2xl font-bold">Calendar</h1>
-        <p className="text-sm text-muted">
-          Every scheduled and published post, in your local timezone.
-        </p>
-      </div>
-
-      <div className="card mt-5 overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-3 py-2.5">
-          <div className="flex items-center gap-1.5">
-            <SkeletonBlock className="h-8 w-8" />
-            <SkeletonBlock className="h-6 w-40" />
-            <SkeletonBlock className="h-8 w-8" />
-          </div>
-          <div className="flex items-center gap-2">
-            <SkeletonBlock className="h-9 w-36" />
-            <SkeletonBlock className="h-9 w-32" />
-          </div>
-        </div>
-        <div className="grid grid-cols-7 border-b border-line bg-page/50">
-          {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-            <div key={day} className="px-2 py-2 text-center text-xs font-bold text-muted">
-              {day}
-            </div>
-          ))}
-        </div>
-        <div className="grid grid-cols-7">
-          {Array.from({ length: 42 }).map((_, i) => (
-            <div
-              key={i}
-              className={`min-h-24 border-b border-r border-line p-1.5 ${
-                i < 3 || i > 34 ? "bg-page/40" : "bg-white"
-              }`}
-            >
-              <SkeletonBlock className="h-6 w-6 rounded-full" />
-              {i % 5 === 0 ? (
-                <div className="mt-2 flex flex-col gap-1">
-                  <SkeletonBlock className="h-7 w-full" />
-                  <SkeletonBlock className="h-7 w-4/5" />
-                </div>
-              ) : (
-                <SkeletonBlock className="mx-auto mt-3 h-3 w-12" />
-              )}
-            </div>
-          ))}
         </div>
       </div>
     </div>

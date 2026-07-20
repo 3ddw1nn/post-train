@@ -55,9 +55,9 @@ export default async function BillingPage() {
         {!sub || sub.status === "canceled" ? (
           <div className="flex flex-wrap items-center justify-between gap-4 p-5">
             <div>
-              <h3 className="text-xl font-bold">Free Plan</h3>
+              <h3 className="text-xl font-bold">No active subscription</h3>
               <p className="mt-1 text-sm text-muted">
-                5 free posts (each destination account counts as one), limited connections.
+                Subscribe to create, schedule, publish, and unlock premium dashboard features.
               </p>
             </div>
             <Link href="/dashboard/settings/plans" className="btn-primary">

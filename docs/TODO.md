@@ -6,6 +6,16 @@ What's blocking forward progress right now. See `FINISHED.md` for what's shipped
 
 ## 🔴 Actionable High Priority (Do These Next)
 
+### 0. Information architecture — reduce page-for-page sameness with the template
+
+Visual/layout differentiation (below) doesn't fix an app that still has the exact same *set of pages* as the template. Real fix is merging, cutting, or adding routes so the sitemap itself reads differently, not just each page's internals.
+
+- [x] Merge posts pages (2026-07-19): `/dashboard/posts`, `/dashboard/posts/scheduled`, `/dashboard/posts/posted`, `/dashboard/posts/draft` were four separate routes sharing one list component — collapsed into a single `/dashboard/posts?status=` page with in-page filter tabs (All/Scheduled/Posted/Drafts). Sidebar now shows one "Posts" item instead of four. Composer redirects and empty-state copy updated to match.
+- [ ] Add Home/Overview landing page — proposed, not started. Post-login currently drops into the Posts list like the template does; a real dashboard home (upcoming posts, quick stats, recent activity) would be a structural page the template doesn't have.
+- [ ] Add Activity/Inbox page — proposed, not started. Publish failures and reconnect prompts currently live as banners on Connections; a dedicated page would be new IA, not just new styling.
+- [ ] Fold Batch Scheduler into Studio as a mode toggle — proposed, not started, user chose not to prioritize yet.
+- **Why:** page-count/page-naming sameness is what makes an app *feel* like an unmodified template at a glance, independent of any styling pass.
+
 ### 1. Rebrand every page — differentiate UI from the Post Bridge template
 
 Post Train started from the Post Bridge template; the goal is a UI that reads as its own product on every screen, not just the composer. **This is a layout/structure pass, not a color pass** — the teal palette (PRODUCT.md tokens) stays as-is. The problem is structural sameness: same card grids, same badge/pill placement, same information architecture per section as Post Bridge. Fix by changing composition (grid → list, stacked → split, card → row) while keeping colors and design tokens untouched.
@@ -15,10 +25,7 @@ Post Train started from the Post Bridge template; the goal is a UI that reads as
 
 **Dashboard — core**
 
-- [x] Posts list (dashboard/posts) — done (2026-07-19): floating card stack → one unified panel with divided rows and a leading departure-time rail (date over time), smaller thumbs, status pill right
-- [x] Draft posts (dashboard/posts/draft) — done (2026-07-19): shares the new list; header restructured to title-left / purpose-line-right
-- [x] Scheduled posts (dashboard/posts/scheduled) — done (2026-07-19): same
-- [x] Posted (dashboard/posts/posted) — done (2026-07-19): same
+- [x] Posts list (dashboard/posts) — done (2026-07-19): floating card stack → one unified panel with divided rows and a leading departure-time rail (date over time), smaller thumbs, status pill right. Later merged (see #0) — draft/scheduled/posted are now tabs on this one page, not separate routes.
 - [x] Calendar view (dashboard/posts/calendar) — done (2026-07-19): three floating control clusters merged into one toolbar attached inside the calendar panel; tooltip-only description became a visible subtitle
 - [x] Connections (dashboard/connections) — done (2026-07-19): row layout inverted (platform identity left, account chips middle, quiet "+ Connect" right instead of dark button first); capacity meter in the page header; re-auth warnings promoted above the list; filter/Show-IDs moved into a panel toolbar
 - [x] Analytics (dashboard/analytics) — done (2026-07-19): 4-card stat grid → single report panel (stat strip with hairline dividers + attached "By platform" section); tabs and timeframe control share one toolbar rule

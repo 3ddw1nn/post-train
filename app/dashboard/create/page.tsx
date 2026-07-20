@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { requireOnboardedUser } from "@/lib/auth";
 import { getSubscription } from "@/lib/billing";
-import { canCreatePosts, entitled, freePostsRemaining } from "@/lib/entitlements";
+import { canCreatePosts } from "@/lib/entitlements";
 import { platformsForType, type PostType } from "@/lib/platforms";
 import { PlatformIconRow } from "@/components/platform-icon";
 import { Icon } from "@/components/icons";
@@ -25,7 +25,7 @@ export default async function CreateHub({
   const { date } = await searchParams;
   const dateQ = date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? `?date=${date}` : "";
   const sub = await getSubscription(user.id);
-  if (!canCreatePosts(user, sub)) return <PaywallCard />;
+  if (!canCreatePosts(sub, user)) return <PaywallCard />;
 
   return (
     <div className="fade-up mx-auto max-w-xl">
@@ -34,11 +34,6 @@ export default async function CreateHub({
           <h1 className="text-2xl font-bold">Create a new post</h1>
           <p className="mt-1 text-sm text-muted">Pick a format, then choose where it ships.</p>
         </div>
-        {!entitled(sub) && (
-          <span className="pill mt-1 shrink-0 bg-warning-bg text-warning-ink">
-            {freePostsRemaining(user)} free post{freePostsRemaining(user) === 1 ? "" : "s"} left
-          </span>
-        )}
       </div>
 
       <div className="card mt-6 divide-y divide-line overflow-hidden">

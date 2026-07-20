@@ -1,10 +1,11 @@
 import { requireOnboardedUser } from "@/lib/auth";
 import { getSubscription } from "@/lib/billing";
-import { planLabel, planOf } from "@/lib/entitlements";
+import { planLabel, planOf, entitled } from "@/lib/entitlements";
 import { currentWorkspace, workspacesForUser } from "@/lib/workspaces";
 import { Sidebar } from "@/components/sidebar";
 import { PromoBanner } from "@/components/promo-banner";
 import { ChatLauncher } from "@/components/interactive";
+import { DashboardPaywall } from "@/components/dashboard-paywall";
 
 export default async function DashboardLayout({
   children,
@@ -34,12 +35,14 @@ export default async function DashboardLayout({
         workspaces={workspaces.map((w) => ({ id: w.id, name: w.name }))}
         currentWorkspaceId={ws.id}
         isStaff={!!user.is_staff}
+        showDevMode={process.env.NODE_ENV !== "production"}
       />
-      <div className="pt-14 lg:pl-[210px]">
+      <div className="pt-14 lg:pl-[var(--pt-sidebar-width,232px)]">
         {showUpsell && <PromoBanner until={upsellUntil!.toISOString()} />}
         <main className="mx-auto max-w-6xl p-4 md:p-6">{children}</main>
       </div>
       <ChatLauncher variant="app" />
+      <DashboardPaywall show={!user.is_staff && !entitled(sub)} />
     </div>
   );
 }

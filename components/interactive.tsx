@@ -1,8 +1,9 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter, usePathname } from "next/navigation";
+import { createPortal } from "react-dom";
 import { Icon } from "./icons";
 
 /** iOS-style toggle that PATCHes a JSON body on change. */
@@ -96,7 +97,11 @@ export function ActionButton({
   body,
   className = "btn-subtle",
   confirmText,
+  confirmTitle = "Confirm action",
+  confirmLabel = "Delete",
+  confirmTone = "danger",
   redirectTo,
+  onSuccess,
   disabled,
   title,
 }: {
@@ -106,43 +111,212 @@ export function ActionButton({
   body?: Record<string, unknown>;
   className?: string;
   confirmText?: string;
+  confirmTitle?: string;
+  confirmLabel?: string;
+  confirmTone?: "danger" | "default";
   redirectTo?: string;
+  onSuccess?: () => void | Promise<void>;
   disabled?: boolean;
   title?: string;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run() {
+    setBusy(true);
+    try {
+      const res = await fetch(endpoint, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => null);
+        setError(data?.error?.message ?? "Something went wrong.");
+        return;
+      }
+      if (redirectTo) {
+        router.push(redirectTo);
+      }
+      await onSuccess?.();
+      router.refresh();
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
-    <button
-      type="button"
-      className={className}
-      disabled={disabled || busy}
-      title={title}
-      onClick={async () => {
-        if (confirmText && !window.confirm(confirmText)) return;
-        setBusy(true);
-        try {
-          const res = await fetch(endpoint, {
-            method,
-            headers: { "Content-Type": "application/json" },
-            body: body ? JSON.stringify(body) : undefined,
-          });
-          if (!res.ok) {
-            const data = await res.json().catch(() => null);
-            alert(data?.error?.message ?? "Something went wrong.");
+    <>
+      <button
+        type="button"
+        className={className}
+        disabled={disabled || busy}
+        title={title}
+        onClick={() => {
+          if (confirmText) {
+            setConfirmOpen(true);
             return;
           }
-          if (redirectTo) {
-            router.push(redirectTo);
-          }
-          router.refresh();
-        } finally {
-          setBusy(false);
-        }
-      }}
+          void run();
+        }}
+      >
+        {children}
+      </button>
+      {confirmOpen && (
+        <ActionDialog
+          title={confirmTitle}
+          message={confirmText}
+          confirmLabel={confirmLabel}
+          tone={confirmTone === "danger" ? "danger" : undefined}
+          busy={busy}
+          onCancel={() => setConfirmOpen(false)}
+          onConfirm={async () => {
+            await run();
+            setConfirmOpen(false);
+          }}
+        />
+      )}
+      {error && (
+        <ActionDialog
+          title="Something went wrong"
+          message={error}
+          confirmLabel="OK"
+          onCancel={() => setError(null)}
+          onConfirm={() => setError(null)}
+        />
+      )}
+    </>
+  );
+}
+
+function ActionDialog({
+  title,
+  message,
+  confirmLabel,
+  tone,
+  busy,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  message?: string;
+  confirmLabel: string;
+  tone?: "danger";
+  busy?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void | Promise<void>;
+}) {
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/30 p-4"
+      onClick={onCancel}
     >
-      {children}
-    </button>
+      <div className="card w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+        <p className="text-lg font-extrabold">{title}</p>
+        {message && <p className="mt-2 text-sm text-muted">{message}</p>}
+        <div className="mt-5 flex justify-end gap-2">
+          {(tone === "danger" || confirmLabel !== "OK") && (
+            <button type="button" className="btn-subtle" disabled={busy} onClick={onCancel}>
+              Cancel
+            </button>
+          )}
+          <button
+            type="button"
+            className={tone === "danger" ? "btn-danger" : "btn-primary"}
+            disabled={busy}
+            onClick={() => void onConfirm()}
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body
+  );
+}
+
+export function FormDialog({
+  title,
+  message,
+  fields,
+  confirmLabel = "Save",
+  busy,
+  error,
+  onCancel,
+  onSubmit,
+}: {
+  title: string;
+  message?: string;
+  fields: {
+    name: string;
+    label: string;
+    defaultValue?: string;
+    placeholder?: string;
+    type?: "text" | "email" | "password";
+    required?: boolean;
+  }[];
+  confirmLabel?: string;
+  busy?: boolean;
+  error?: string | null;
+  onCancel: () => void;
+  onSubmit: (values: Record<string, string>) => void | Promise<void>;
+}) {
+  const [mounted, setMounted] = useState(false);
+  const [values, setValues] = useState<Record<string, string>>(() =>
+    Object.fromEntries(fields.map((field) => [field.name, field.defaultValue ?? ""]))
+  );
+  useEffect(() => setMounted(true), []);
+  if (!mounted) return null;
+  const canSubmit = fields.every((field) => !field.required || values[field.name]?.trim());
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-black/30 p-4"
+      onClick={onCancel}
+    >
+      <form
+        className="card w-full max-w-sm p-5"
+        onClick={(e) => e.stopPropagation()}
+        onSubmit={(e) => {
+          e.preventDefault();
+          if (canSubmit) void onSubmit(values);
+        }}
+      >
+        <p className="text-lg font-extrabold">{title}</p>
+        {message && <p className="mt-2 text-sm text-muted">{message}</p>}
+        <div className="mt-4 flex flex-col gap-3">
+          {fields.map((field) => (
+            <label key={field.name} className="flex flex-col gap-1.5 text-sm font-semibold">
+              {field.label}
+              <input
+                className="input"
+                type={field.type ?? "text"}
+                value={values[field.name] ?? ""}
+                placeholder={field.placeholder}
+                autoFocus={field === fields[0]}
+                onChange={(e) =>
+                  setValues((current) => ({ ...current, [field.name]: e.target.value }))
+                }
+              />
+            </label>
+          ))}
+        </div>
+        {error && <p className="mt-3 text-sm font-semibold text-danger">{error}</p>}
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" className="btn-subtle" disabled={busy} onClick={onCancel}>
+            Cancel
+          </button>
+          <button type="submit" className="btn-primary" disabled={busy || !canSubmit}>
+            {confirmLabel}
+          </button>
+        </div>
+      </form>
+    </div>,
+    document.body
   );
 }
 
@@ -162,10 +336,29 @@ export function Dropdown({
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [mounted, setMounted] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  useEffect(() => setMounted(true), []);
+  useLayoutEffect(() => {
+    if (!open || !ref.current) return;
+    const rect = ref.current.getBoundingClientRect();
+    const estimatedHeight = menuRef.current?.offsetHeight ?? 180;
+    let nextTop = side === "top" ? rect.top - estimatedHeight - 6 : rect.bottom + 6;
+    if (side === "bottom" && nextTop + estimatedHeight > window.innerHeight - 8) {
+      nextTop = rect.top - estimatedHeight - 6;
+    }
+    const nextLeft = align === "right" ? rect.right - width : rect.left;
+    setPos({
+      top: Math.max(8, nextTop),
+      left: Math.min(Math.max(8, nextLeft), window.innerWidth - width - 8),
+    });
+  }, [open, align, side, width]);
   useEffect(() => {
     if (!open) return;
     const onClick = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (!ref.current?.contains(target) && !menuRef.current?.contains(target)) setOpen(false);
     };
     document.addEventListener("mousedown", onClick);
     return () => document.removeEventListener("mousedown", onClick);
@@ -173,16 +366,78 @@ export function Dropdown({
   return (
     <div className="relative" ref={ref}>
       <div onClick={() => setOpen((v) => !v)}>{trigger}</div>
-      {open && (
+      {open && mounted && pos && createPortal(
         <div
-          className={`absolute z-50 overflow-hidden rounded-xl border border-line bg-white py-1 shadow-lg fade-up ${side === "top" ? "mb-1.5" : "mt-1.5"}`}
-          style={{ width, [align === "left" ? "left" : "right"]: 0, [side === "top" ? "bottom" : "top"]: "100%" }}
-          onClick={() => setOpen(false)}
+          ref={menuRef}
+          className="fixed z-[120] overflow-hidden rounded-xl border border-line bg-white py-1 shadow-lg fade-up"
+          style={{ width, top: pos.top, left: pos.left }}
+          onClick={(e) => {
+            if ((e.target as HTMLElement).closest("a, button")) setOpen(false);
+          }}
         >
           {children}
-        </div>
+        </div>,
+        document.body
       )}
     </div>
+  );
+}
+
+export type SelectOption = { value: string; label: string };
+
+/** Drop-in replacement for a native <select> — same value/onChange shape, our own popover chrome. */
+export function Select({
+  value,
+  onChange,
+  options,
+  disabled,
+  className,
+  width = 200,
+  align = "left",
+}: {
+  value: string;
+  onChange: (value: string) => void;
+  options: SelectOption[];
+  disabled?: boolean;
+  className?: string;
+  width?: number;
+  align?: "left" | "right";
+}) {
+  const selected = options.find((o) => o.value === value) ?? options[0];
+  return (
+    <Dropdown
+      align={align}
+      width={width}
+      trigger={
+        <button
+          type="button"
+          disabled={disabled}
+          className={`input flex items-center justify-between gap-2 text-left disabled:cursor-not-allowed disabled:opacity-50 ${className ?? ""}`}
+        >
+          <span className="truncate">{selected?.label ?? ""}</span>
+          <Icon name="chevronDown" size={15} className="shrink-0 text-muted" />
+        </button>
+      }
+    >
+      <div className="max-h-72 overflow-y-auto py-1">
+        {options.map((option) => {
+          const active = option.value === value;
+          return (
+            <button
+              key={option.value}
+              type="button"
+              onClick={() => onChange(option.value)}
+              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold transition-colors hover:bg-page ${
+                active ? "text-primary-deep" : "text-ink"
+              }`}
+            >
+              <Icon name="check" size={14} className={active ? "text-primary-deep" : "opacity-0"} />
+              <span className="truncate">{option.label}</span>
+            </button>
+          );
+        })}
+      </div>
+    </Dropdown>
   );
 }
 
@@ -363,12 +618,6 @@ export function ChatLauncher({ variant = "app" }: { variant?: "app" | "marketing
     }
   }
 
-  async function clearChat() {
-    if (!window.confirm("Clear this conversation?")) return;
-    await fetch("/api/support-chat", { method: "DELETE" });
-    await fetchMessages();
-  }
-
   return (
     <>
       {open && (
@@ -379,9 +628,19 @@ export function ChatLauncher({ variant = "app" }: { variant?: "app" | "marketing
               <p className="text-[11px] text-muted">{copy.disclaimer}</p>
             </div>
             {messages.length > 0 && (
-              <button type="button" onClick={clearChat} className="text-xs text-muted hover:text-ink" title="Clear conversation">
+              <ActionButton
+                endpoint="/api/support-chat"
+                method="DELETE"
+                confirmTitle="Clear conversation?"
+                confirmText="This removes the current support chat history."
+                confirmLabel="Clear"
+                confirmTone="default"
+                className="text-xs text-muted hover:text-ink"
+                title="Clear conversation"
+                onSuccess={fetchMessages}
+              >
                 Clear
-              </button>
+              </ActionButton>
             )}
           </div>
 
@@ -530,24 +789,19 @@ export function LeadDetail({ leadId, status: initialStatus, notes: initialNotes 
 
   return (
     <div className="flex flex-col gap-3">
-      <label className="text-xs font-bold uppercase tracking-wide text-muted">
-        Status
-        <select
-          className="input mt-1"
+      <div>
+        <p className="text-xs font-bold uppercase tracking-wide text-muted">Status</p>
+        <Select
+          className="mt-1"
           value={status}
           disabled={busy}
-          onChange={(e) => {
-            setStatus(e.target.value);
-            save({ status: e.target.value });
+          onChange={(v) => {
+            setStatus(v);
+            save({ status: v });
           }}
-        >
-          {LEAD_STATUSES.map((s) => (
-            <option key={s} value={s}>
-              {s.charAt(0).toUpperCase() + s.slice(1)}
-            </option>
-          ))}
-        </select>
-      </label>
+          options={LEAD_STATUSES.map((s) => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) }))}
+        />
+      </div>
       <label className="text-xs font-bold uppercase tracking-wide text-muted">
         Notes
         <textarea

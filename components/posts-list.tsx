@@ -7,7 +7,10 @@ import { platform as platformOf } from "@/lib/platforms";
 import { EmptyState, StatusPill } from "./ui";
 import { AccountAvatar } from "./platform-icon";
 import { Icon } from "./icons";
-import { ActionButton, Dropdown } from "./interactive";
+import { PostActions } from "./post-actions";
+import { PostsListShell } from "./posts-list-shell";
+
+const PAGE_SIZE = 8;
 
 const EMPTY: Record<string, { title: string; subtitle: React.ReactNode }> = {
   all: { title: "No posts", subtitle: "Get started by creating a post" },
@@ -33,19 +36,35 @@ type ResultRow = {
   error_message: string | null;
   username: string;
 };
+type PostQuery = {
+  q: string;
+  sort: "recent" | "oldest";
+  type: string;
+  platform: string;
+  period: string;
+  page: number;
+};
+type EnrichedPost = {
+  post: PostRow;
+  dests: DestRow[];
+  results: ResultRow[];
+  thumb: { id: string; kind: string } | null;
+};
 
 export async function PostsListPage({
   user,
   workspaceId,
   filter,
+  query,
 }: {
   user: User;
   workspaceId: string;
   filter: "all" | "scheduled" | "posted" | "draft";
+  query: PostQuery;
 }) {
   const { data } = await listPosts([workspaceId], {
     status: filter === "all" ? undefined : filter,
-    limit: 100,
+    limit: 1000,
   });
 
   if (data.length === 0) {
@@ -67,9 +86,7 @@ export async function PostsListPage({
     listRecords<{ id: string; kind: string }>("media"),
   ]);
 
-  return (
-    <div className="card divide-y divide-line overflow-hidden">
-      {data.map((post) => {
+  const enriched = data.map((post) => {
         const dests = destRows
           .filter((d) => d.post_id === post.id)
           .map((d) => {
@@ -100,17 +117,238 @@ export async function PostsListPage({
           .filter((m) => m.post_id === post.id)
           .sort((a, b) => a.sort_order - b.sort_order)[0];
         const thumb = firstLink ? mediaRows.find((m) => m.id === firstLink.media_id) : undefined;
-        return (
-          <PostRowCard
-            key={post.id}
-            post={post}
-            dests={dests}
-            results={results}
-            thumb={thumb ?? null}
-            user={user}
-          />
-        );
-      })}
+        return { post, dests, results, thumb: thumb ?? null };
+      });
+
+  const searched = applyPostFilters(enriched, query);
+  const timeBuckets = timeBucketOptions(searched.beforePeriod, query.period);
+  const pageCount = Math.max(1, Math.ceil(searched.posts.length / PAGE_SIZE));
+  const page = Math.min(Math.max(1, Number.isFinite(query.page) ? query.page : 1), pageCount);
+  const pagePosts = searched.posts.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const groups = groupByMonth(pagePosts);
+
+  if (searched.posts.length === 0) {
+    return (
+      <>
+        <TimeBucketTabs buckets={timeBuckets} active={query.period} filter={filter} query={query} />
+        <EmptyState
+          icon="filter"
+          title="No posts match those filters"
+          subtitle="Try a different search, type, platform, or time range."
+        />
+      </>
+    );
+  }
+
+  return (
+    <PostsListShell>
+      <TimeBucketTabs buckets={timeBuckets} active={query.period} filter={filter} query={query} />
+      {groups.map((group) => (
+        <section key={group.key} className="flex flex-col gap-3">
+          <h2 className="px-1 text-xs font-extrabold uppercase tracking-wide text-muted">
+            {group.label}
+          </h2>
+          {group.items.map(({ post, dests, results, thumb }) => (
+            <PostRowCard
+              key={post.id}
+              post={post}
+              dests={dests}
+              results={results}
+              thumb={thumb}
+              user={user}
+            />
+          ))}
+        </section>
+      ))}
+      <PostsPagination page={page} pageCount={pageCount} total={searched.posts.length} filter={filter} query={query} />
+    </PostsListShell>
+  );
+}
+
+function applyPostFilters(posts: EnrichedPost[], query: PostQuery) {
+  const q = query.q.trim().toLowerCase();
+  const beforePeriod = posts
+    .filter(({ post }) => query.type === "all" || post.type === query.type)
+    .filter(({ dests }) => query.platform === "all" || dests.some((d) => d.platform === query.platform))
+    .filter(({ post, dests, results }) => {
+      if (!q) return true;
+      const haystack = [
+        post.caption,
+        post.status,
+        post.type,
+        ...dests.flatMap((d) => [d.username, d.platform, platformOf(d.platform)?.name ?? ""]),
+        ...results.flatMap((r) => [r.username, r.platform, r.error_message ?? ""]),
+      ]
+        .join(" ")
+        .toLowerCase();
+      return haystack.includes(q);
+    });
+
+  const postsInPeriod = beforePeriod.filter(({ post }) => {
+    if (!query.period || query.period === "all") return true;
+    const date = postDate(post);
+    if (query.period.startsWith("month:")) {
+      return monthKey(date) === query.period.slice("month:".length);
+    }
+    if (query.period.startsWith("year:")) {
+      return String(date.getFullYear()) === query.period.slice("year:".length);
+    }
+    return true;
+  });
+
+  const postsSorted = postsInPeriod.sort((a, b) => {
+    const diff = postDate(a.post).getTime() - postDate(b.post).getTime();
+    return query.sort === "oldest" ? diff : -diff;
+  });
+
+  return { beforePeriod, posts: postsSorted };
+}
+
+function postDate(post: PostRow) {
+  return new Date(post.posted_at ?? post.scheduled_at ?? post.created_at);
+}
+
+function monthKey(date: Date) {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
+}
+
+function monthLabel(date: Date) {
+  const now = new Date();
+  const thisMonth = monthKey(now);
+  const lastMonthDate = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const key = monthKey(date);
+  if (key === thisMonth) return "This month";
+  if (key === monthKey(lastMonthDate)) return "Last month";
+  return date.toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
+
+function groupByMonth(posts: EnrichedPost[]) {
+  const map = new Map<string, { key: string; label: string; items: EnrichedPost[] }>();
+  for (const item of posts) {
+    const date = postDate(item.post);
+    const key = monthKey(date);
+    if (!map.has(key)) map.set(key, { key, label: monthLabel(date), items: [] });
+    map.get(key)!.items.push(item);
+  }
+  return Array.from(map.values());
+}
+
+function timeBucketOptions(posts: EnrichedPost[], active: string) {
+  const monthMap = new Map<string, Date>();
+  const yearMap = new Map<string, Date>();
+  for (const { post } of posts) {
+    const date = postDate(post);
+    monthMap.set(monthKey(date), new Date(date.getFullYear(), date.getMonth(), 1));
+    yearMap.set(String(date.getFullYear()), new Date(date.getFullYear(), 0, 1));
+  }
+  const months = Array.from(monthMap.entries())
+    .sort((a, b) => b[1].getTime() - a[1].getTime())
+    .map(([key, date]) => ({ key: `month:${key}`, label: monthLabel(date) }));
+  const years = Array.from(yearMap.entries())
+    .sort((a, b) => Number(b[0]) - Number(a[0]))
+    .map(([key]) => ({ key: `year:${key}`, label: key }));
+  const buckets = [{ key: "all", label: "All time" }, ...months, ...years];
+  return active === "all" || buckets.some((bucket) => bucket.key === active)
+    ? buckets
+    : [{ key: active, label: "Selected range" }, ...buckets];
+}
+
+function postsHref(
+  filter: "all" | "scheduled" | "posted" | "draft",
+  query: PostQuery,
+  overrides: Partial<PostQuery>
+) {
+  const next = { ...query, ...overrides };
+  const params = new URLSearchParams();
+  if (filter !== "all") params.set("status", filter);
+  if (next.q.trim()) params.set("q", next.q.trim());
+  if (next.sort === "oldest") params.set("sort", "oldest");
+  if (next.type && next.type !== "all") params.set("type", next.type);
+  if (next.platform && next.platform !== "all") params.set("platform", next.platform);
+  if (next.period && next.period !== "all") params.set("period", next.period);
+  if (next.page > 1) params.set("page", String(next.page));
+  return `/dashboard/posts${params.toString() ? `?${params}` : ""}`;
+}
+
+function TimeBucketTabs({
+  buckets,
+  active,
+  filter,
+  query,
+}: {
+  buckets: { key: string; label: string }[];
+  active: string;
+  filter: "all" | "scheduled" | "posted" | "draft";
+  query: PostQuery;
+}) {
+  if (buckets.length <= 1) return null;
+  return (
+    <div className="flex flex-wrap gap-2">
+      {buckets.map((bucket) => (
+        <Link
+          key={bucket.key}
+          href={postsHref(filter, query, { period: bucket.key, page: 1 })}
+          className={`rounded-full border px-3 py-1.5 text-xs font-bold transition-colors ${
+            (active || "all") === bucket.key
+              ? "border-primary bg-primary-soft text-primary-deep"
+              : "border-line bg-white text-muted hover:text-ink"
+          }`}
+        >
+          {bucket.label}
+        </Link>
+      ))}
+    </div>
+  );
+}
+
+function PostsPagination({
+  page,
+  pageCount,
+  total,
+  filter,
+  query,
+}: {
+  page: number;
+  pageCount: number;
+  total: number;
+  filter: "all" | "scheduled" | "posted" | "draft";
+  query: PostQuery;
+}) {
+  if (pageCount <= 1) return null;
+  return (
+    <div className="flex flex-col gap-3 rounded-xl border border-line bg-white px-4 py-3 sm:flex-row sm:items-center sm:justify-between">
+      <p className="text-sm font-semibold text-muted">
+        Page {page} of {pageCount} · {total} posts
+      </p>
+      <div className="flex flex-wrap gap-2">
+        <Link
+          aria-disabled={page === 1}
+          href={postsHref(filter, query, { page: Math.max(1, page - 1) })}
+          className={`btn-subtle ${page === 1 ? "pointer-events-none opacity-50" : ""}`}
+        >
+          <Icon name="chevronLeft" size={14} /> Previous
+        </Link>
+        {Array.from({ length: pageCount }, (_, i) => i + 1).map((n) => (
+          <Link
+            key={n}
+            href={postsHref(filter, query, { page: n })}
+            className={`flex h-9 w-9 items-center justify-center rounded-lg border text-sm font-bold ${
+              n === page
+                ? "border-primary bg-primary text-white"
+                : "border-line bg-white text-muted hover:text-ink"
+            }`}
+          >
+            {n}
+          </Link>
+        ))}
+        <Link
+          aria-disabled={page === pageCount}
+          href={postsHref(filter, query, { page: Math.min(pageCount, page + 1) })}
+          className={`btn-subtle ${page === pageCount ? "pointer-events-none opacity-50" : ""}`}
+        >
+          Next <Icon name="chevronRight" size={14} />
+        </Link>
+      </div>
     </div>
   );
 }
@@ -141,27 +379,23 @@ function PostRowCard({
       })
     : null;
 
+  const resultSummary =
+    results.length > 0
+      ? `${results.filter((r) => r.success).length}/${results.length} platforms published`
+      : post.status === "scheduled"
+        ? "Scheduled for publishing"
+        : post.is_draft
+          ? "Caption saved, no publish time yet"
+          : "";
+
   return (
-    <div className="p-4">
+    <div className="card overflow-visible p-4">
       <div className="flex items-center gap-4">
-        {/* Departure column — when this post leaves (or left) the station */}
-        <div className="hidden w-16 shrink-0 sm:block">
-          {when ? (
-            <>
-              <p className="text-[11px] font-bold uppercase tracking-wide text-muted">
-                {dateLabel}
-              </p>
-              <p className="text-sm font-semibold tabular-nums">{timeLabel}</p>
-            </>
-          ) : (
-            <p className="text-sm font-semibold text-muted">—</p>
-          )}
-        </div>
         {thumb ? (
           thumb.kind === "video" ? (
-            <video src={`/api/media-file/${thumb.id}`} className="h-12 w-12 shrink-0 rounded-lg object-cover" muted />
+            <video src={`/api/media-file/${thumb.id}`} className="h-14 w-14 shrink-0 rounded-lg object-cover" muted />
           ) : thumb.kind === "pdf" ? (
-            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-page text-muted">
+            <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-page text-muted">
               <Icon name="file" size={18} />
             </span>
           ) : (
@@ -169,11 +403,11 @@ function PostRowCard({
             <img
               src={`/api/media-file/${thumb.id}`}
               alt=""
-              className="h-12 w-12 shrink-0 rounded-lg object-cover"
+              className="h-14 w-14 shrink-0 rounded-lg object-cover"
             />
           )
         ) : (
-          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-page text-muted">
+          <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-page text-muted">
             <Icon name="type" size={18} />
           </span>
         )}
@@ -181,7 +415,7 @@ function PostRowCard({
           <p className="truncate text-sm font-semibold">
             {post.caption || <span className="italic text-muted">No caption</span>}
           </p>
-          <div className="mt-1.5 flex items-center gap-2">
+          <div className="mt-1.5 flex flex-wrap items-center gap-2">
             {dests.slice(0, 6).map((d) => (
               <span key={d.social_account_id} title={`@${d.username} · ${platformOf(d.platform)?.name}`}>
                 <AccountAvatar
@@ -195,49 +429,24 @@ function PostRowCard({
             {dests.length > 6 && (
               <span className="text-xs text-muted">+{dests.length - 6} more</span>
             )}
+            {resultSummary && <span className="text-xs text-muted">{resultSummary}</span>}
             {when && (
-              <span className="flex items-center gap-1 text-xs text-muted sm:hidden">
+              <span className="flex items-center gap-1 text-xs text-muted lg:hidden">
                 <Icon name={post.posted_at ? "send" : "clock"} size={12} /> {dateLabel},{" "}
                 {timeLabel}
               </span>
             )}
           </div>
         </div>
-        <div className="shrink-0">
+        <div className="flex shrink-0 flex-col items-end gap-1.5">
           <StatusPill status={post.is_draft ? "draft" : post.status} />
-        </div>
-        <Dropdown
-          align="right"
-          width={190}
-          trigger={
-            <button type="button" aria-label="Post actions" className="btn-subtle !px-2 !py-1.5">
-              <Icon name="dots" size={16} strokeWidth={2.5} />
-            </button>
-          }
-        >
-          <Link
-            href={`/dashboard/create/${post.id}`}
-            className="flex items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-page"
-          >
-            <Icon name={editable ? "pencil" : "eye"} size={14} /> {editable ? "Edit" : "View"}
-          </Link>
-          <ActionButton
-            endpoint={`/api/app/posts/${post.id}/duplicate`}
-            className="flex w-full items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-page"
-          >
-            <Icon name="copy" size={14} /> Duplicate
-          </ActionButton>
-          {editable && (
-            <ActionButton
-              endpoint={`/api/app/posts/${post.id}`}
-              method="DELETE"
-              confirmText="Delete this post?"
-              className="flex w-full items-center gap-2 px-3 py-2 text-sm font-medium text-danger hover:bg-red-50"
-            >
-              <Icon name="trash" size={14} /> Delete
-            </ActionButton>
+          {when && (
+            <span className="hidden items-center gap-1 text-xs text-muted lg:flex">
+              <Icon name={post.posted_at ? "send" : "clock"} size={12} /> {dateLabel}, {timeLabel}
+            </span>
           )}
-        </Dropdown>
+        </div>
+        <PostActions postId={post.id} caption={post.caption} editable={editable} />
       </div>
 
       {results.length > 0 && (

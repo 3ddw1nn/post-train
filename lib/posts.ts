@@ -1,8 +1,8 @@
 // Post domain logic shared by the dashboard, the public API v1, and the MCP tools.
-import { convexMutation, convexQuery, now, patchRecord, uid } from "./db";
+import { convexMutation, convexQuery, now, uid } from "./db";
 import type { User } from "./auth";
 import { getSubscription } from "./billing";
-import { entitled, freePostsRemaining, canCreatePosts } from "./entitlements";
+import { canCreatePosts } from "./entitlements";
 import { platform as platformOf, CAPTION_MAX, type PostType } from "./platforms";
 import { nextQueueSlot, applyJitter, QueueError } from "./queue";
 import { importFromUrl } from "./media";
@@ -174,24 +174,10 @@ export async function createPost(
     }
   }
 
-  // Free-tier metering: each destination consumes 1 of the 5 free posts (spec FAQ),
-  // charged when a post is actually scheduled (not for drafts).
   const sub = await getSubscription(user.id);
-  let creditsUsed = 0;
   if (!isDraft) {
-    if (!canCreatePosts(user, sub)) {
-      throw new DomainError(403, "No active subscription and no free posts remaining.", "paywall");
-    }
-    if (!entitled(sub)) {
-      if (freePostsRemaining(user) < accounts.length) {
-        throw new DomainError(
-          403,
-          `This post needs ${accounts.length} free post credits but only ${freePostsRemaining(user)} remain. Upgrade to continue.`,
-          "paywall"
-        );
-      }
-      creditsUsed = accounts.length;
-      await patchRecord("users", user.id, { free_posts_used: user.free_posts_used + creditsUsed });
+    if (!canCreatePosts(sub, user)) {
+      throw new DomainError(403, "Subscribe to create, schedule, or publish posts.", "paywall");
     }
   }
 
@@ -211,7 +197,7 @@ export async function createPost(
     queue_timezone: queueTz,
     platform_configurations: input.platform_configurations ? JSON.stringify(input.platform_configurations) : null,
     account_configurations: accountConfigs.length ? JSON.stringify(accountConfigs) : null,
-    free_credits_used: creditsUsed,
+    free_credits_used: 0,
     media_ids: mediaIds,
     destinations: accounts.map((account) => ({
       social_account_id: account.id,
@@ -359,16 +345,8 @@ export async function updatePost(post: PostRow, input: UpdatePostInput): Promise
 }
 
 export async function deletePost(post: PostRow): Promise<void> {
-  if (!["draft", "scheduled"].includes(post.status)) {
+  if (!post.is_draft && !["draft", "scheduled"].includes(post.status)) {
     throw new DomainError(400, "Published posts cannot be deleted.");
-  }
-  if (post.free_credits_used > 0) {
-    const user = await convexQuery<User | null>(api.auth.getUserById, { id: post.created_by });
-    if (user) {
-      await patchRecord("users", user.id, {
-        free_posts_used: Math.max(0, user.free_posts_used - post.free_credits_used),
-      });
-    }
   }
   await convexMutation(api.posts.deletePost, { id: post.id });
 }

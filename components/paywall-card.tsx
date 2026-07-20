@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Icon } from "./icons";
 
-/** Shown on create routes without an active subscription/free credits (spec 03 D13). */
+/** Shown on feature routes without an active subscription. */
 export function PaywallCard() {
   return (
     <div className="flex justify-center py-16">

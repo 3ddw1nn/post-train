@@ -5,12 +5,14 @@ import { getSubscription } from "@/lib/billing";
 import { analyticsAccess } from "@/lib/entitlements";
 import { listAnalytics } from "@/lib/analytics";
 import { ANALYTICS_PLATFORMS, platform as platformOf } from "@/lib/platforms";
-import { EmptyState, Pill } from "@/components/ui";
+import { Pill } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { PlatformIcon } from "@/components/platform-icon";
+import { DemoAnalytics, PreviewBanner } from "@/components/dashboard-preview";
 import { SyncButton } from "./sync-button";
 
 export const metadata = { title: "Analytics" };
+const PREVIEW_PAYWALL_HREF = "/dashboard/settings/plans";
 
 const fmt = (n: number) => (n >= 1_000_000 ? `${(n / 1_000_000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : String(n));
 
@@ -23,32 +25,18 @@ export default async function AnalyticsPage({
   const sub = await getSubscription(user.id);
   const params = await searchParams;
   const tab = params.tab === "posts" ? "posts" : "overview";
-
-  if (!analyticsAccess(sub)) {
-    return (
-      <div className="fade-up">
-        <h1 className="text-2xl font-bold">
-          Analytics <Pill tone="beta">Beta</Pill>
-        </h1>
-        <EmptyState
-          icon="chart"
-          title="Analytics requires Creator or Pro plan"
-          subtitle="Track views, likes, comments and shares for your TikTok, YouTube and Instagram posts — synced on demand."
-          cta={{ label: "View Plans", href: "/dashboard/settings/plans" }}
-        />
-      </div>
-    );
-  }
-
-  const ws = await currentWorkspace(user);
+  const hasAccess = user.is_staff || analyticsAccess(sub);
+  const ws = hasAccess ? await currentWorkspace(user) : null;
   const timeframe = (["7d", "30d", "90d", "all"].includes(params.timeframe ?? "")
     ? params.timeframe
     : "30d") as "7d" | "30d" | "90d" | "all";
-  const { data } = await listAnalytics(ws.id, {
-    timeframe,
-    platform: params.platform || undefined,
-    limit: 100,
-  });
+  const { data } = ws
+    ? await listAnalytics(ws.id, {
+        timeframe,
+        platform: params.platform || undefined,
+        limit: 100,
+      })
+    : { data: [] };
 
   const totals = data.reduce(
     (t, r) => ({
@@ -71,8 +59,10 @@ export default async function AnalyticsPage({
             Views, likes, comments and shares — synced on demand.
           </p>
         </div>
-        <SyncButton />
+        {hasAccess && <SyncButton />}
       </div>
+
+      {!hasAccess && <PreviewBanner feature="analytics" />}
 
       {/* One toolbar: tabs and timeframe share the same rule */}
       <div className="mt-4 flex items-end justify-between gap-3 border-b border-line">
@@ -100,7 +90,7 @@ export default async function AnalyticsPage({
           {(["7d", "30d", "90d", "all"] as const).map((t) => (
             <Link
               key={t}
-              href={`/dashboard/analytics?tab=${tab}&timeframe=${t}`}
+              href={hasAccess ? `/dashboard/analytics?tab=${tab}&timeframe=${t}` : PREVIEW_PAYWALL_HREF}
               className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${
                 timeframe === t ? "bg-primary text-primary-contrast" : "text-muted hover:text-ink"
               }`}
@@ -111,7 +101,9 @@ export default async function AnalyticsPage({
         </div>
       </div>
 
-      {tab === "overview" ? (
+      {!hasAccess ? (
+        <DemoAnalytics tab={tab} />
+      ) : tab === "overview" ? (
         <div className="card mt-6 overflow-hidden">
           <div className="grid grid-cols-2 lg:grid-cols-4 lg:divide-x lg:divide-line">
             {(

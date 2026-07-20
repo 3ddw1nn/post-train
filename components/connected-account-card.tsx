@@ -47,14 +47,6 @@ export function ConnectedAccountCard({
         </a>
         <ActionButton
           endpoint={`/api/connections/${account.id}`}
-          method="PATCH"
-          body={{ status: "needs_reauth" }}
-          className="flex w-full items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-page"
-        >
-          <Icon name="clock" size={14} /> Simulate expiry
-        </ActionButton>
-        <ActionButton
-          endpoint={`/api/connections/${account.id}`}
           method="DELETE"
           confirmText={`Remove @${account.username}? Scheduled posts to this account will fail at publish time.`}
           className="flex w-full items-center gap-2 px-3 py-2 text-sm font-medium text-danger hover:bg-red-50"

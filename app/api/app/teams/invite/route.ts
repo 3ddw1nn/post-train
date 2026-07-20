@@ -1,4 +1,5 @@
 import { requireUser, sign } from "@/lib/auth";
+import { canManageWorkspace } from "@/lib/permissions";
 import { convexMutation, findRecord } from "@/lib/db";
 import { queueEmail } from "@/lib/emails";
 import { api } from "@/convex/_generated/api";
@@ -11,11 +12,8 @@ export async function POST(req: Request) {
   if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
     return Response.json({ error: { message: "Enter a valid email." } }, { status: 400 });
   }
-  const team = await findRecord<{ id: string; name: string }>("teams", {
-    id: teamId,
-    creator_id: user.id,
-  });
-  if (!team) {
+  const team = await findRecord<{ id: string; name: string; workspace_id: string }>("teams", { id: teamId });
+  if (!team || !(await canManageWorkspace(team.workspace_id, user.id))) {
     return Response.json({ error: { message: "Team not found." } }, { status: 404 });
   }
   const existing = await findRecord("team_members", { team_id: teamId, email_invited: email });

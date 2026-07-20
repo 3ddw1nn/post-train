@@ -1,7 +1,8 @@
+import Link from "next/link";
 import { requireUser } from "@/lib/auth";
 import { PLATFORMS, connectHref } from "@/lib/platforms";
 import { PlatformIcon } from "@/components/platform-icon";
-import { FooterBar } from "../../footer-bar";
+import { Icon } from "@/components/icons";
 
 export const metadata = { title: "Add your accounts" };
 
@@ -10,6 +11,12 @@ export default async function OnboardingConnectAdd() {
   const grid = PLATFORMS.filter((p) => p.onboardingGrid);
   return (
     <div className="fade-up mx-auto max-w-2xl">
+      <Link
+        href="/onboarding/connect"
+        className="mb-4 inline-flex items-center gap-1 text-sm font-semibold text-muted hover:text-ink"
+      >
+        <Icon name="chevronLeft" size={15} /> Back
+      </Link>
       <h1 className="text-2xl font-bold">Add all your accounts</h1>
       <p className="mt-1 text-sm text-muted">
         Connect with each platform&apos;s official sign-in. We never see or store your
@@ -29,7 +36,6 @@ export default async function OnboardingConnectAdd() {
           </div>
         ))}
       </div>
-      <FooterBar backHref="/onboarding/connect" />
     </div>
   );
 }

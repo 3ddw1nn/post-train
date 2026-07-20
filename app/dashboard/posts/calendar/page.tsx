@@ -1,16 +1,22 @@
 import Link from "next/link";
 import { requireOnboardedUser } from "@/lib/auth";
+import { getSubscription } from "@/lib/billing";
+import { entitled } from "@/lib/entitlements";
 import { currentWorkspace } from "@/lib/workspaces";
 import { listRecords } from "@/lib/db";
 import { postsInRange, type PostRow } from "@/lib/posts";
 import { formatInTz, wallTimeToUtc } from "@/lib/tz";
 import { Icon } from "@/components/icons";
 import { AccountAvatar } from "@/components/platform-icon";
+import { DemoCalendarGrid, PreviewBanner } from "@/components/dashboard-preview";
 import { PlatformFilter } from "./platform-filter";
+import { MonthPicker } from "./month-picker";
+import { CalendarPendingOverlay } from "./calendar-pending-overlay";
 
 export const metadata = { title: "Calendar" };
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+const PREVIEW_PAYWALL_HREF = "/dashboard/settings/plans";
 
 function localDateKey(iso: string, tz: string): string {
   return formatInTz(iso, tz, { year: "numeric", month: "2-digit", day: "2-digit" });
@@ -26,7 +32,8 @@ export default async function CalendarPage({
   searchParams: Promise<{ view?: string; date?: string; platform?: string }>;
 }) {
   const user = await requireOnboardedUser();
-  const ws = await currentWorkspace(user);
+  const sub = await getSubscription(user.id);
+  const hasAccess = user.is_staff || entitled(sub);
   const params = await searchParams;
   const view = params.view === "week" ? "week" : "month";
   const tz = user.timezone || "UTC";
@@ -68,13 +75,16 @@ export default async function CalendarPage({
   const rangeEnd = new Date(
     wallTimeToUtc(tz, last.y, last.m, last.d, 0, 0).getTime() + 86400_000
   ).toISOString();
-  const posts = await postsInRange(ws.id, rangeStart, rangeEnd, params.platform || undefined);
-  const [mediaLinks, mediaRows, destRows, accounts] = await Promise.all([
-    listRecords<{ post_id: string; media_id: string; sort_order: number }>("post_media"),
-    listRecords<{ id: string; kind: string }>("media"),
-    listRecords<{ post_id: string; social_account_id: number }>("post_destinations"),
-    listRecords<{ id: number; username: string; platform: string; avatar_url: string | null }>("social_accounts"),
-  ]);
+  const ws = hasAccess ? await currentWorkspace(user) : null;
+  const posts = ws ? await postsInRange(ws.id, rangeStart, rangeEnd, params.platform || undefined) : [];
+  const [mediaLinks, mediaRows, destRows, accounts] = hasAccess
+    ? await Promise.all([
+        listRecords<{ post_id: string; media_id: string; sort_order: number }>("post_media"),
+        listRecords<{ id: string; kind: string }>("media"),
+        listRecords<{ post_id: string; social_account_id: number }>("post_destinations"),
+        listRecords<{ id: number; username: string; platform: string; avatar_url: string | null }>("social_accounts"),
+      ])
+    : [[], [], [], []];
 
   const byDay = new Map<string, PostRow[]>();
   for (const p of posts) {
@@ -84,6 +94,7 @@ export default async function CalendarPage({
     byDay.set(key, [...(byDay.get(key) ?? []), p]);
   }
   const todayKey = keyOf(new Date(), tz);
+  const todayYmd = keyToYmd(todayKey);
 
   // Prev/next navigation anchors
   const nav = (delta: number) => {
@@ -94,9 +105,10 @@ export default async function CalendarPage({
     const d = new Date(Date.UTC(ay, am - 1, ad + delta * 7, 12));
     return `/dashboard/posts/calendar?view=week&date=${fmtDate(d)}${platformQ(params.platform)}`;
   };
+  const currentPeriodHref = `/dashboard/posts/calendar?view=${view}&date=${todayYmd}${platformQ(params.platform)}`;
 
   return (
-    <div className="fade-up">
+    <div className="fade-up lg:relative lg:left-1/2 lg:w-[calc(78vw-var(--pt-sidebar-width,232px)*0.12-2.3rem)] lg:max-w-[1410px] lg:-translate-x-1/2">
       <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
         <h1 className="text-2xl font-bold">Calendar</h1>
         <p className="text-sm text-muted">
@@ -104,25 +116,54 @@ export default async function CalendarPage({
         </p>
       </div>
 
-      <div className="card mt-5 overflow-hidden">
+      {!hasAccess && <PreviewBanner feature="calendar" />}
+
+      <div className="card relative mt-5 overflow-hidden">
+        <CalendarPendingOverlay view={view} />
         {/* Attached toolbar — navigation and filters live with the grid, not above it */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-3 py-2.5">
           <div className="flex items-center gap-1.5">
-            <Link href={nav(-1)} className="btn-subtle !px-2 !py-1.5" aria-label="Previous">
+            <Link
+              href={hasAccess ? nav(-1) : PREVIEW_PAYWALL_HREF}
+              className="btn-subtle !px-2 !py-1.5"
+              aria-label={view === "week" ? "Previous week" : "Previous month"}
+            >
               <Icon name="chevronLeft" size={16} />
             </Link>
-            <span className="min-w-40 text-center font-bold">{label}</span>
-            <Link href={nav(1)} className="btn-subtle !px-2 !py-1.5" aria-label="Next">
+            <MonthPicker
+              label={label}
+              year={ay}
+              month={am}
+              day={ad}
+              view={view}
+              platform={params.platform}
+              previewLocked={!hasAccess}
+            />
+            <Link
+              href={hasAccess ? nav(1) : PREVIEW_PAYWALL_HREF}
+              className="btn-subtle !px-2 !py-1.5"
+              aria-label={view === "week" ? "Next week" : "Next month"}
+            >
               <Icon name="chevronRight" size={16} />
+            </Link>
+            <Link
+              href={hasAccess ? currentPeriodHref : PREVIEW_PAYWALL_HREF}
+              className="btn-subtle !px-3 !py-1.5 text-sm"
+            >
+              {view === "week" ? "This week" : "This month"}
             </Link>
           </div>
           <div className="flex items-center gap-2">
-            <PlatformFilter value={params.platform ?? ""} />
+            <PlatformFilter value={params.platform ?? ""} previewLocked={!hasAccess} />
             <div className="inline-flex rounded-[10px] border border-line bg-white p-0.5">
               {(["month", "week"] as const).map((v) => (
                 <Link
                   key={v}
-                  href={`/dashboard/posts/calendar?view=${v}&date=${params.date ?? fmtDate(new Date())}${platformQ(params.platform)}`}
+                  href={
+                    hasAccess
+                      ? `/dashboard/posts/calendar?view=${v}&date=${params.date ?? fmtDate(new Date())}${platformQ(params.platform)}`
+                      : PREVIEW_PAYWALL_HREF
+                  }
                   className={`rounded-lg px-3 py-1 text-sm font-semibold capitalize ${
                     view === v ? "bg-primary text-primary-contrast" : "text-muted hover:text-ink"
                   }`}
@@ -140,45 +181,60 @@ export default async function CalendarPage({
             </div>
           ))}
         </div>
-        <div className={`grid grid-cols-7 ${view === "month" ? "" : "min-h-[420px]"}`}>
-          {days.map((day, i) => {
+        <div className={`grid grid-cols-7 ${view === "month" ? "" : "min-h-[486px]"}`}>
+          {!hasAccess ? (
+            <DemoCalendarGrid days={days} activeMonth={am} view={view} todayYmd={todayYmd} />
+          ) : days.map((day, i) => {
             const key = `${String(day.m).padStart(2, "0")}/${String(day.d).padStart(2, "0")}/${day.y}`;
             const dayPosts = byDay.get(key) ?? [];
             const isToday = key === todayKey;
             const muted = view === "month" && day.m !== am;
             const dateStr = `${day.y}-${String(day.m).padStart(2, "0")}-${String(day.d).padStart(2, "0")}`;
+            const isPastDay = dateStr < todayYmd;
             return (
               <div
                 key={i}
                 className={`group relative border-b border-r border-line p-1.5 ${
-                  view === "month" ? "min-h-24" : "min-h-[420px]"
-                } ${muted ? "bg-page/40" : "bg-white"}`}
+                  view === "month" ? "min-h-[113px]" : "min-h-[486px]"
+                } ${
+                  isToday
+                    ? "z-10 bg-primary-soft/70 ring-2 ring-inset ring-primary/60"
+                    : isPastDay
+                      ? "bg-gray-100/90"
+                      : muted
+                        ? "bg-page/40"
+                        : "bg-white"
+                }`}
               >
                 <div className="flex items-center justify-between">
-                  <span
-                    className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
-                      isToday ? "bg-primary text-primary-contrast" : muted ? "text-muted/60" : ""
-                    }`}
-                  >
-                    {day.d}
+                  <span className="flex items-center gap-1.5">
+                    <span
+                      className={`flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold ${
+                        isToday
+                          ? "bg-primary text-primary-contrast"
+                          : muted || isPastDay
+                            ? "text-muted/60"
+                            : ""
+                      }`}
+                    >
+                      {day.d}
+                    </span>
+                    {isToday && (
+                      <span className="rounded-full border border-primary/25 bg-white/70 px-2 py-0.5 text-[10px] font-bold text-primary-deep">
+                        Today
+                      </span>
+                    )}
                   </span>
                   <span className="hidden items-center gap-1 group-hover:flex">
-                    {dayPosts[0] && (
+                    {!isPastDay && (
                       <Link
-                        href={`/dashboard/create/${dayPosts[0].id}`}
-                        aria-label="Edit first post of this day"
-                        className="rounded bg-page p-1 text-muted hover:text-ink"
+                        href={`/dashboard/create?date=${dateStr}`}
+                        aria-label={`Create post on ${dateStr}`}
+                        className="rounded-full bg-primary px-2.5 py-1 text-[11px] font-bold text-primary-contrast shadow-sm hover:bg-primary-hover"
                       >
-                        <Icon name="pencil" size={11} />
+                        Create <Icon name="plus" size={11} strokeWidth={3} />
                       </Link>
                     )}
-                    <Link
-                      href={`/dashboard/create?date=${dateStr}`}
-                      aria-label={`Create post on ${dateStr}`}
-                      className="rounded bg-primary p-1 text-primary-contrast"
-                    >
-                      <Icon name="plus" size={11} strokeWidth={3} />
-                    </Link>
                   </span>
                 </div>
                 {dayPosts.length === 0 ? (
@@ -269,4 +325,8 @@ function reorderUS(us: string): [number, number, number] {
   // "MM/DD/YYYY" → [y, m, d]
   const [m, d, y] = us.split("/").map(Number);
   return [y, m, d];
+}
+function keyToYmd(us: string): string {
+  const [y, m, d] = reorderUS(us);
+  return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }

@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 import { requireOnboardedUser } from "@/lib/auth";
 import { getSubscription } from "@/lib/billing";
-import { canCreatePosts, entitled, freePostsRemaining } from "@/lib/entitlements";
+import { canCreatePosts, entitled } from "@/lib/entitlements";
 import { currentWorkspace, workspacesForUser } from "@/lib/workspaces";
 import { accountsForWorkspace } from "@/lib/accounts";
 import { listRecords, recordById } from "@/lib/db";
@@ -29,7 +29,7 @@ export default async function ComposerPage({
   let post = null;
   if (TYPES.includes(slug as PostType)) {
     type = slug as PostType;
-    if (!canCreatePosts(user, sub)) return <PaywallCard />;
+    if (!canCreatePosts(sub, user)) return <PaywallCard />;
   } else {
     // Edit mode: /dashboard/create/{postUUID} (spec 03 D2)
     const candidate = await getPostRow(slug);
@@ -38,6 +38,7 @@ export default async function ComposerPage({
     post = candidate;
     type = candidate.type;
     mode = "edit";
+    if (!canCreatePosts(sub, user)) return <PaywallCard />;
   }
 
   const ws = post
@@ -90,7 +91,7 @@ export default async function ComposerPage({
       pref24h={!!user.pref_24h_time}
       prefFilenameCaption={!!user.pref_filename_caption}
       entitled={entitled(sub)}
-      freeRemaining={freePostsRemaining(user)}
+      freeRemaining={0}
       initialDate={date && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : undefined}
       post={
         post

@@ -6,6 +6,7 @@
 import { useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
+import { Select } from "@/components/interactive";
 import { AccountAvatar } from "@/components/platform-icon";
 import { Pill } from "@/components/ui";
 import { CAPTION_MAX, platform as platformOf } from "@/lib/platforms";
@@ -420,17 +421,15 @@ export function BulkUploader({
             <label className="mt-3 block text-xs font-bold">
               {kind === "video" ? "Videos" : "Images"} per day (1–10)
             </label>
-            <select
-              className="input mt-1"
-              value={perDay}
-              onChange={(e) => setPerDay(Number(e.target.value))}
-            >
-              {Array.from({ length: 10 }, (_, i) => i + 1).map((n) => (
-                <option key={n} value={n}>
-                  {n}
-                </option>
-              ))}
-            </select>
+            <Select
+              className="mt-1"
+              value={String(perDay)}
+              onChange={(v) => setPerDay(Number(v))}
+              options={Array.from({ length: 10 }, (_, i) => i + 1).map((n) => ({
+                value: String(n),
+                label: String(n),
+              }))}
+            />
             <button
               className="btn mt-3 w-full bg-primary text-primary-contrast hover:bg-primary-hover"
               disabled={rows.length === 0}

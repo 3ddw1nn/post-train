@@ -4,7 +4,7 @@ import { useState } from "react";
 import { PLATFORMS, platform as platformOf, connectHref, CONNECT_ERRORS, type PlatformId } from "@/lib/platforms";
 import { PlatformIcon, AccountAvatar } from "@/components/platform-icon";
 import { Icon } from "@/components/icons";
-import { ActionButton } from "@/components/interactive";
+import { ActionButton, Select } from "@/components/interactive";
 
 type Account = { id: number; platform: string; username: string; status: string; avatar_url: string | null };
 
@@ -81,19 +81,12 @@ export function ConnectionsPanel({
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-page/50 px-4 py-2.5">
           <div className="flex items-center gap-1 text-muted">
             <Icon name="filter" size={14} />
-            <select
-              className="input w-auto !border-0 !bg-transparent !py-1 text-xs font-semibold"
+            <Select
+              className="!border-0 !bg-transparent !py-1 text-xs font-semibold"
               value={filter}
-              aria-label="Filter platforms"
-              onChange={(e) => setFilter(e.target.value)}
-            >
-              <option value="">All platforms</option>
-              {PLATFORMS.map((p) => (
-                <option key={p.id} value={p.id}>
-                  {p.name}
-                </option>
-              ))}
-            </select>
+              onChange={setFilter}
+              options={[{ value: "", label: "All platforms" }, ...PLATFORMS.map((p) => ({ value: p.id, label: p.name }))]}
+            />
           </div>
           <label className="flex items-center gap-2 text-xs font-semibold text-muted">
             Show IDs
@@ -159,7 +152,7 @@ export function ConnectionsPanel({
                 <a
                   href={connectHref(p.id, { returnTo: "/dashboard/connections" })}
                   aria-label={`Connect ${p.name}`}
-                  className="btn-subtle order-2 ml-auto shrink-0 !py-1.5 text-xs sm:order-none"
+                  className="btn-dark order-2 ml-auto shrink-0 !py-1.5 text-xs sm:order-none"
                 >
                   <Icon name="plus" size={13} strokeWidth={2.5} /> Connect
                 </a>

@@ -97,6 +97,33 @@ export const changeRole = mutation({
   },
 });
 
+/** Atomically hands ownership to another member: old owner becomes admin, target becomes owner. */
+export const transferOwnership = mutation({
+  args: { workspace_id: v.string(), from_user_id: v.string(), to_user_id: v.string() },
+  handler: async (ctx, args) => {
+    const [fromRow, toRow, workspace] = await Promise.all([
+      ctx.db
+        .query("workspace_members")
+        .withIndex("by_workspace_user", (q) =>
+          q.eq("workspace_id", args.workspace_id).eq("user_id", args.from_user_id)
+        )
+        .unique(),
+      ctx.db
+        .query("workspace_members")
+        .withIndex("by_workspace_user", (q) =>
+          q.eq("workspace_id", args.workspace_id).eq("user_id", args.to_user_id)
+        )
+        .unique(),
+      byLegacyId(ctx, "workspaces", args.workspace_id),
+    ]);
+    if (!fromRow || !toRow || !workspace) return null;
+    await ctx.db.patch(fromRow._id, { role: "admin" });
+    await ctx.db.patch(toRow._id, { role: "owner" });
+    await ctx.db.patch(workspace._id, { owner_id: args.to_user_id });
+    return true;
+  },
+});
+
 export const patchWorkspace = mutation({
   args: { id: v.string(), patch: v.any() },
   handler: async (ctx, args) => {

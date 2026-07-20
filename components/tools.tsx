@@ -2,7 +2,7 @@
 
 // Free marketing tools (spec 11 §12) — all client-side, no login.
 import { useMemo, useRef, useState } from "react";
-import { CopyField } from "./interactive";
+import { CopyField, Select } from "./interactive";
 import { Icon } from "./icons";
 
 /* ---------- image splitters ---------- */
@@ -53,14 +53,15 @@ function SplitterUI({
   return (
     <div>
       {selectable && (
-        <label className="mb-3 flex items-center gap-2 text-sm font-semibold">
+        <div className="mb-3 flex items-center gap-2 text-sm font-semibold">
           Panels:
-          <select className="input w-20" value={n} onChange={(e) => setN(Number(e.target.value))}>
-            {[2, 3, 4, 5, 6, 8, 10].map((x) => (
-              <option key={x}>{x}</option>
-            ))}
-          </select>
-        </label>
+          <Select
+            className="w-20"
+            value={String(n)}
+            onChange={(v) => setN(Number(v))}
+            options={[2, 3, 4, 5, 6, 8, 10].map((x) => ({ value: String(x), label: String(x) }))}
+          />
+        </div>
       )}
       <button className="btn-primary" onClick={() => input.current?.click()} disabled={busy}>
         <Icon name="upload" size={15} /> {busy ? "Slicing…" : `Upload image for ${title}`}

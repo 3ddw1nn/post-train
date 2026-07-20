@@ -4,7 +4,7 @@ import { useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "@/components/icons";
-import { CopyField, ActionButton } from "@/components/interactive";
+import { CopyField, ActionButton, FormDialog } from "@/components/interactive";
 
 type KeyRow = {
   id: string;
@@ -18,10 +18,11 @@ type KeyRow = {
 export function ApiKeysPanel({ hasAccess, keys }: { hasAccess: boolean; keys: KeyRow[] }) {
   const router = useRouter();
   const [freshKey, setFreshKey] = useState<string | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
 
-  async function createKey() {
-    const name = window.prompt("Name this key (e.g. “agent-bot”)", "My API key");
-    if (name === null) return;
+  async function createKey(name: string) {
+    setCreateError(null);
     const res = await fetch("/api/app/api-keys", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -29,9 +30,10 @@ export function ApiKeysPanel({ hasAccess, keys }: { hasAccess: boolean; keys: Ke
     });
     const data = await res.json().catch(() => null);
     if (!res.ok) {
-      alert(data?.error?.message ?? "Could not create key.");
+      setCreateError(data?.error?.message ?? "Could not create key.");
       return;
     }
+    setCreating(false);
     setFreshKey(data.key);
     router.refresh();
   }
@@ -48,7 +50,7 @@ export function ApiKeysPanel({ hasAccess, keys }: { hasAccess: boolean; keys: Ke
         <button
           className="btn-primary"
           disabled={!hasAccess}
-          onClick={createKey}
+          onClick={() => setCreating(true)}
           title={hasAccess ? undefined : "Enable the API add-on first"}
         >
           <Icon name="plus" size={15} /> Create API Key
@@ -97,7 +99,7 @@ export function ApiKeysPanel({ hasAccess, keys }: { hasAccess: boolean; keys: Ke
             <p className="text-sm text-muted">
               Create your first API key to start posting programmatically.
             </p>
-            <button className="btn-primary" disabled={!hasAccess} onClick={createKey}>
+            <button className="btn-primary" disabled={!hasAccess} onClick={() => setCreating(true)}>
               <Icon name="plus" size={15} /> Create your first API Key
             </button>
           </div>
@@ -131,6 +133,25 @@ export function ApiKeysPanel({ hasAccess, keys }: { hasAccess: boolean; keys: Ke
           </div>
         )}
       </section>
+      {creating && (
+        <FormDialog
+          title="Create API key"
+          message="Name this key so you can recognize where it is used."
+          fields={[
+            {
+              name: "name",
+              label: "Key name",
+              defaultValue: "My API key",
+              placeholder: "agent-bot",
+              required: true,
+            },
+          ]}
+          confirmLabel="Create key"
+          error={createError}
+          onCancel={() => setCreating(false)}
+          onSubmit={(values) => createKey(values.name)}
+        />
+      )}
     </>
   );
 }

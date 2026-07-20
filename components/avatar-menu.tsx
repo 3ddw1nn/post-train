@@ -69,30 +69,39 @@ export function UserFooter({
   isStaff,
 }: {
   name: string;
-  planLabel: string;
+  planLabel: string | null;
   isStaff?: boolean;
 }) {
-  const isFree = planLabel.startsWith("Free");
   return (
     <Dropdown
       align="right"
       width={200}
       trigger={
-        <button
-          type="button"
-          className="flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1.5 hover:bg-page"
-        >
-          <UserAvatar name={name} size={28} />
-          <span className="hidden min-w-0 text-left sm:block">
-            <span className="block max-w-[120px] truncate text-[13px] font-semibold leading-tight">
-              {name}
+        <span className="flex items-center gap-2">
+          {!planLabel && (
+            <Link
+              href="/dashboard/settings/plans"
+              className="hidden rounded-lg border border-primary/40 bg-white px-2.5 py-1 text-xs font-bold text-primary-deep shadow-sm hover:bg-primary-soft sm:inline-flex"
+              onClick={(e) => e.stopPropagation()}
+            >
+              Try it for free
+            </Link>
+          )}
+          <span className="flex cursor-pointer items-center gap-2 rounded-lg px-1.5 py-1.5 hover:bg-page">
+            <UserAvatar name={name} size={28} />
+            <span className="hidden min-w-0 text-left sm:block">
+              <span className="block max-w-[120px] truncate text-[13px] font-semibold leading-tight">
+                {name}
+              </span>
+              {planLabel && (
+                <span className="mt-0.5 block">
+                  <Pill tone="success">{planLabel}</Pill>
+                </span>
+              )}
             </span>
-            <span className="mt-0.5 block">
-              <Pill tone={isFree ? "neutral" : "success"}>{planLabel}</Pill>
-            </span>
+            <Icon name="chevronsUpDown" size={13} className="hidden text-muted sm:block" />
           </span>
-          <Icon name="chevronsUpDown" size={13} className="hidden text-muted sm:block" />
-        </button>
+        </span>
       }
     >
       <MenuItems isStaff={isStaff} />

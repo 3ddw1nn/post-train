@@ -11,10 +11,13 @@ export default async function ResetPasswordPage({
   const { token } = await searchParams;
   return (
     <AuthShell>
-      <div className="card p-8">
-        <h1 className="text-xl font-bold">Reset your password</h1>
-        <div className="mt-6">
-          <ResetForm token={token ?? ""} />
+      <div className="card overflow-hidden">
+        <div aria-hidden className="h-1 bg-primary" />
+        <div className="p-8">
+          <h1 className="text-2xl font-bold tracking-tight">Reset your password</h1>
+          <div className="mt-6">
+            <ResetForm token={token ?? ""} />
+          </div>
         </div>
       </div>
     </AuthShell>

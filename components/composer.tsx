@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { Icon } from "./icons";
 import { AccountAvatar } from "./platform-icon";
 import { InfoTip } from "./ui";
+import { ActionButton, Select } from "./interactive";
 import { platform as platformOf, FOUR_IMAGE_PLATFORMS, CAPTION_MAX, type PostType } from "@/lib/platforms";
 import { MediaLibraryModal, MediaThumb, uploadOneFile, type ComposerMedia } from "./media";
 
@@ -239,13 +240,6 @@ export function Composer({
         <h1 className="text-2xl font-bold">
           {mode === "edit" ? `Edit your ${TYPE_LABEL[type]}` : `Create ${TYPE_LABEL[type]}`}
         </h1>
-        {!entitled && (
-          <p className="mt-1 text-xs font-semibold text-warning-ink">
-            Free tier: each selected account uses 1 of your {freeRemaining} remaining free
-            posts.
-          </p>
-        )}
-
         {/* Account selector */}
         <div className="mt-5 flex items-center justify-between">
           <button
@@ -659,17 +653,17 @@ export function Composer({
               <>
                 {scheduleOn ? (
                   <button
-                    className="btn-primary w-full"
+                    className="btn-composer-primary w-full"
                     disabled={busy || selected.size === 0 || !scheduledIso() || uploading > 0}
                     onClick={() =>
-                      submit({ scheduled_at: scheduledIso() }, "/dashboard/posts/scheduled")
+                      submit({ scheduled_at: scheduledIso() }, "/dashboard/posts?status=scheduled")
                     }
                   >
                     Schedule
                   </button>
                 ) : (
                   <button
-                    className="btn-primary w-full"
+                    className="btn-composer-primary w-full"
                     disabled={busy || selected.size === 0 || uploading > 0}
                     onClick={() => submit({}, "/dashboard/posts")}
                   >
@@ -679,7 +673,7 @@ export function Composer({
                 <button
                   className="btn-subtle w-full"
                   disabled={busy || selected.size === 0 || uploading > 0}
-                  onClick={() => submit({ use_queue: true }, "/dashboard/posts/scheduled")}
+                  onClick={() => submit({ use_queue: true }, "/dashboard/posts?status=scheduled")}
                   title="Assign the next free queue slot from Settings → Queue"
                 >
                   <Icon name="clock" size={15} /> Add to queue
@@ -687,7 +681,7 @@ export function Composer({
                 <button
                   className="btn-subtle w-full"
                   disabled={busy || selected.size === 0 || uploading > 0}
-                  onClick={() => submit({ is_draft: true }, "/dashboard/posts/draft")}
+                  onClick={() => submit({ is_draft: true }, "/dashboard/posts?status=draft")}
                 >
                   Save to Drafts
                 </button>
@@ -695,34 +689,30 @@ export function Composer({
             ) : editable ? (
               <>
                 <button
-                  className="btn-primary w-full"
+                  className="btn-composer-primary w-full"
                   disabled={busy || selected.size === 0 || uploading > 0}
                   onClick={() =>
                     submit(
                       scheduleOn && scheduledIso()
                         ? { scheduled_at: scheduledIso(), is_draft: false }
                         : { scheduled_at: null, is_draft: true },
-                      scheduleOn ? "/dashboard/posts/scheduled" : "/dashboard/posts/draft"
+                      scheduleOn ? "/dashboard/posts?status=scheduled" : "/dashboard/posts?status=draft"
                     )
                   }
                 >
                   Update
                 </button>
                 <DuplicateButton postId={post!.id} />
-                <button
-                  className="btn-danger w-full"
+                <ActionButton
+                  endpoint={`/api/app/posts/${post!.id}`}
+                  method="DELETE"
+                  confirmText="Delete this post? This cannot be undone."
+                  redirectTo="/dashboard/posts"
+                  className="btn-danger-soft w-full"
                   disabled={busy}
-                  onClick={async () => {
-                    if (!window.confirm("Delete this post?")) return;
-                    const res = await fetch(`/api/app/posts/${post!.id}`, { method: "DELETE" });
-                    if (res.ok) {
-                      router.push("/dashboard/posts");
-                      router.refresh();
-                    }
-                  }}
                 >
                   Delete
-                </button>
+                </ActionButton>
               </>
             ) : (
               <div className="flex flex-col gap-2">
@@ -754,7 +744,7 @@ function DuplicateButton({ postId }: { postId: string }) {
   const router = useRouter();
   return (
     <button
-      className="btn-subtle w-full"
+      className="btn-composer-secondary w-full"
       onClick={async () => {
         const res = await fetch(`/api/app/posts/${postId}/duplicate`, { method: "POST" });
         const data = await res.json().catch(() => null);
@@ -873,15 +863,16 @@ function PlatformConfigPanel({
           />
           {!!value.is_trial_reel && (
             <div>
-              <label className="text-xs font-bold">Graduation</label>
-              <select
-                className="input mt-1"
+              <p className="text-xs font-bold">Graduation</p>
+              <Select
+                className="mt-1"
                 value={(value.trial_graduation as string) ?? ""}
-                onChange={(e) => set("trial_graduation", e.target.value)}
-              >
-                <option value="">Manual</option>
-                <option value="SS_PERFORMANCE">Automatic (performance)</option>
-              </select>
+                onChange={(v) => set("trial_graduation", v)}
+                options={[
+                  { value: "", label: "Manual" },
+                  { value: "SS_PERFORMANCE", label: "Automatic (performance)" },
+                ]}
+              />
             </div>
           )}
         </>

@@ -4,6 +4,7 @@ import { API_ADDON } from "@/lib/billing-data";
 import { PlatformIcon, PlatformIconRow } from "@/components/platform-icon";
 import { PlanPicker } from "@/components/plan-picker";
 import { Icon } from "@/components/icons";
+import { UserAvatar } from "@/components/avatar-menu";
 
 export const metadata = {
   title: "Post Train — schedule and cross-post to 10 platforms",
@@ -175,6 +176,56 @@ export default function LandingPage() {
           copy="Grid videos, fade-ins, AI-assisted UGC — start from a template, drop your media in, and send it straight to the composer."
           media={<StudioMock />}
         />
+      </section>
+
+      {/* ── Capability grid: the rest of the operation, not just posting ── */}
+      <section className="border-t border-line bg-page py-20">
+        <div className="mx-auto max-w-6xl px-6">
+          <h2 className="text-center text-3xl font-extrabold">
+            The rest of the operation, not just posting
+          </h2>
+          <p className="mt-2 text-center text-sm text-muted">
+            Every plan ships with the parts a real team actually needs day to day.
+          </p>
+          <div className="mt-10 grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            <CapabilityCard
+              title="Deep Analytics"
+              copy="Views, likes, comments and shares, synced straight from each platform."
+              tags={["Real-time sync", "Every platform"]}
+              mock={<AnalyticsMock />}
+            />
+            <CapabilityCard
+              title="Team Workspaces"
+              copy="Invite editors or VAs into your workspace — no shared logins required."
+              tags={["Invite by email", "No shared logins"]}
+              mock={<TeamsMock />}
+            />
+            <CapabilityCard
+              title="Unlimited Connections"
+              copy="Multiple accounts per platform on every plan — Pro removes the cap."
+              tags={["Multi-account", "Every plan"]}
+              mock={<ConnectionsMock />}
+            />
+            <CapabilityCard
+              title="Batch Scheduler"
+              copy="Turn a folder of clips into a week of scheduled posts in one pass."
+              tags={["Bulk upload", "One queue"]}
+              mock={<BatchMock />}
+            />
+            <CapabilityCard
+              title="OAuth-Only, Always"
+              copy="Every connection uses the platform's own sign-in — we never see a password."
+              tags={["Zero passwords", "Official sign-in"]}
+              mock={<SecurityMock />}
+            />
+            <CapabilityCard
+              title="Content Creation Studio"
+              copy="Grid edits, fades and AI-assisted UGC — start from a template and send it straight to the composer."
+              tags={["Templates", "AI-assisted"]}
+              mock={<StudioCapabilityMock />}
+            />
+          </div>
+        </div>
       </section>
 
       {/* ── Stats band ───────────────────────────────────── */}
@@ -373,6 +424,160 @@ function FeatureBlock({
         </div>
       </div>
       <div className="card flex min-h-40 items-center justify-center p-8">{media}</div>
+    </div>
+  );
+}
+
+function CapabilityCard({
+  title,
+  copy,
+  tags,
+  mock,
+}: {
+  title: string;
+  copy: string;
+  tags: string[];
+  mock: React.ReactNode;
+}) {
+  return (
+    <div className="card flex flex-col overflow-hidden">
+      <div className="flex h-40 items-center justify-center border-b border-line bg-page/60 p-6">
+        {mock}
+      </div>
+      <div className="flex flex-1 flex-col p-5">
+        <h3 className="font-bold">{title}</h3>
+        <p className="mt-1.5 text-sm leading-relaxed text-muted">{copy}</p>
+        <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5 border-t border-line pt-3">
+          {tags.map((t) => (
+            <span key={t} className="flex items-center gap-1.5 text-xs font-semibold text-ink">
+              <Icon name="check" size={13} className="text-primary-deep" /> {t}
+            </span>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AnalyticsMock() {
+  const bars = [4, 6, 5, 8, 6, 10, 7, 9];
+  return (
+    <div className="w-full max-w-[220px]">
+      <div className="flex gap-2">
+        <div className="flex-1 rounded-lg border border-line bg-white px-2.5 py-2">
+          <p className="flex items-center gap-1 text-[10px] font-bold text-blue-600">
+            <Icon name="eye" size={10} /> Views
+          </p>
+          <p className="mt-0.5 flex items-baseline gap-1 text-sm font-extrabold">
+            1.2M <span className="text-[9px] font-bold text-emerald-600">+18%</span>
+          </p>
+        </div>
+        <div className="flex-1 rounded-lg border border-line bg-white px-2.5 py-2">
+          <p className="flex items-center gap-1 text-[10px] font-bold text-rose-500">
+            <Icon name="sparkles" size={10} /> Likes
+          </p>
+          <p className="mt-0.5 flex items-baseline gap-1 text-sm font-extrabold">
+            84K <span className="text-[9px] font-bold text-emerald-600">+9%</span>
+          </p>
+        </div>
+      </div>
+      <div className="mt-2 flex h-10 items-end gap-1">
+        {bars.map((h, i) => (
+          <span
+            key={i}
+            className={`flex-1 rounded-sm ${i === 5 ? "bg-primary" : "bg-primary-soft"}`}
+            style={{ height: `${h * 10}%` }}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TeamsMock() {
+  return (
+    <div className="flex w-full max-w-[220px] items-center justify-center">
+      <div className="flex -space-x-2.5">
+        {["Ana", "Jon", "Mia"].map((name) => (
+          <span key={name} className="relative rounded-full ring-2 ring-white">
+            <UserAvatar name={name} size={36} />
+            <span className="absolute -bottom-0.5 -right-0.5 h-2.5 w-2.5 rounded-full bg-emerald-500 ring-2 ring-white" />
+          </span>
+        ))}
+      </div>
+      <span className="ml-3 rounded-full border border-dashed border-line bg-white px-2.5 py-1.5 text-[11px] font-semibold text-muted">
+        +2 more
+      </span>
+    </div>
+  );
+}
+
+function ConnectionsMock() {
+  const sample = ALL_IDS.slice(0, 4);
+  return (
+    <div className="grid w-full max-w-[220px] grid-cols-2 gap-2">
+      {sample.map((id, i) => (
+        <div
+          key={id}
+          className="flex items-center justify-between gap-1.5 rounded-lg border border-line bg-white px-2.5 py-2"
+        >
+          <PlatformIcon id={id} size={16} />
+          <span className="text-[10px] font-bold text-primary-deep">×{i % 2 === 0 ? 2 : 3}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function BatchMock() {
+  return (
+    <div className="grid w-full max-w-[220px] grid-cols-3 gap-1.5">
+      {Array.from({ length: 6 }, (_, i) => (
+        <div
+          key={i}
+          className={`flex h-11 items-center justify-center rounded-lg border ${
+            i < 4 ? "border-primary/30 bg-primary-soft" : "border-amber-200 bg-amber-50"
+          }`}
+        >
+          {i < 4 ? (
+            <Icon name="check" size={14} className="text-primary-deep" />
+          ) : (
+            <Icon name="clock" size={13} className="text-amber-500" />
+          )}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function SecurityMock() {
+  return (
+    <div className="flex w-full max-w-[220px] flex-col items-center gap-2.5">
+      <span className="flex h-12 w-12 items-center justify-center rounded-full bg-primary-soft text-primary-deep">
+        <Icon name="shield" size={22} strokeWidth={1.8} />
+      </span>
+      <span className="flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-[10px] font-bold text-blue-700">
+        <Icon name="lock" size={10} /> No password stored
+      </span>
+    </div>
+  );
+}
+
+function StudioCapabilityMock() {
+  return (
+    <div className="grid w-full max-w-[220px] grid-cols-3 gap-2">
+      <span className="flex h-14 items-center justify-center rounded-lg bg-rose-50 text-rose-500">
+        <Icon name="video" size={18} />
+      </span>
+      <span className="flex h-14 items-center justify-center rounded-lg bg-blue-50 text-blue-500">
+        <Icon name="image" size={18} />
+      </span>
+      <span className="flex h-14 items-center justify-center rounded-lg bg-violet-50 text-violet-500">
+        <Icon name="grid" size={18} />
+      </span>
+      <span className="col-span-3 mt-0.5 flex items-center justify-center gap-1.5 rounded-full border border-line bg-white px-2.5 py-1 text-[10px] font-bold text-muted">
+        <Icon name="sparkles" size={10} className="text-violet-500" /> AI-assisted
+      </span>
     </div>
   );
 }

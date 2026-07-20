@@ -11,6 +11,7 @@ const PATHS: Record<string, React.ReactNode> = {
     <path d="M7 3v4M17 3v4M4 7h16M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" />
   ),
   list: <path d="M8 6h13M8 12h13M8 18h13M4 6h.01M4 12h.01M4 18h.01" />,
+  sidebarPanel: <path d="M4 5h16v14H4V5ZM9 5v14" />,
   clock: <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18ZM12 7v5l3.5 2" />,
   send: <path d="M22 2 11 13M22 2l-7 20-4-9-9-4 20-7Z" />,
   file: <path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8l-5-5ZM14 3v5h5" />,
@@ -62,11 +63,13 @@ const PATHS: Record<string, React.ReactNode> = {
   chat: <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-3-.4-4.2-1L3 20l1-5.3A8.5 8.5 0 1 1 21 11.5Z" />,
   lock: <path d="M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5V11Z" />,
   eye: <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7ZM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />,
+  search: <path d="m21 21-4.35-4.35M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" />,
   grid: <path d="M3 3h8v8H3V3ZM13 3h8v8h-8V3ZM3 13h8v8H3v-8ZM13 13h8v8h-8v-8Z" />,
   zap: <path d="M13 2 3 14h7l-1 8 11-13h-7l1-7Z" />,
   mountain: <path d="m8 3 4 8 5-5 5 15H2L8 3Z" />,
   mail: <path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2ZM22 7l-10 6L2 7" />,
   shield: <path d="M12 3 4 6v6c0 5 3.5 8.5 8 9 4.5-.5 8-4 8-9V6l-8-3ZM9 12l2 2 4-4" />,
+  crown: <path d="M3 8l4.5 4L12 5l4.5 7L21 8l-2 10H5L3 8ZM5 21h14" />,
 };
 
 export function Icon({

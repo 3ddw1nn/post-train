@@ -3,11 +3,12 @@
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
-import { Logo } from "./logo";
+import { Logo, LogoMark } from "./logo";
 import { Icon } from "./icons";
-import { Dropdown } from "./interactive";
+import { ActionButton, Dropdown, FormDialog } from "./interactive";
 import { UserFooter } from "./avatar-menu";
 import { Pill } from "./ui";
+import { DevModeButton } from "./dev-mode-button";
 
 type WorkspaceLite = { id: string; name: string };
 
@@ -23,10 +24,11 @@ type NavItem = {
 
 const SECTIONS: { label: string; items: NavItem[] }[] = [
   {
-    label: "Create",
+    label: "Compose",
     items: [
       { label: "Studio", href: "/dashboard/content-studio", icon: "sparkles" },
       { label: "Batch Scheduler", href: "/dashboard/batch-scheduler", icon: "stack" },
+      { label: "Tools", href: "/dashboard/tools", icon: "grid" },
     ],
   },
   {
@@ -34,34 +36,29 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
     items: [
       { label: "Calendar", href: "/dashboard/posts/calendar", icon: "calendar" },
       {
-        label: "All",
+        label: "Posts",
         href: "/dashboard/posts",
         icon: "list",
-        exclude: ["/dashboard/posts/calendar", "/dashboard/posts/scheduled", "/dashboard/posts/posted", "/dashboard/posts/draft"],
+        exclude: ["/dashboard/posts/calendar"],
       },
-      { label: "Scheduled", href: "/dashboard/posts/scheduled", icon: "clock" },
-      { label: "Posted", href: "/dashboard/posts/posted", icon: "send" },
-      { label: "Drafts", href: "/dashboard/posts/draft", icon: "file" },
       { label: "Analytics", href: "/dashboard/analytics", icon: "chart", badge: "beta" },
     ],
   },
   {
-    label: "Workspace",
-    items: [
-      { label: "Connections", href: "/dashboard/connections", icon: "link" },
-      { label: "Teams", href: "/dashboard/teams", icon: "users" },
-    ],
+    label: "Accounts",
+    items: [{ label: "Connections", href: "/dashboard/connections", icon: "link" }],
   },
   {
-    label: "Configuration",
+    label: "Settings",
     items: [
       {
-        label: "Settings",
+        label: "General",
         href: "/dashboard/settings",
         icon: "gear",
         match: ["/dashboard/settings", "/dashboard/settings/queue"],
-        exclude: ["/dashboard/settings/billing", "/dashboard/settings/plans"],
+        exclude: ["/dashboard/settings/billing", "/dashboard/settings/plans", "/dashboard/settings/workspace"],
       },
+      { label: "Workspace", href: "/dashboard/settings/workspace", icon: "users" },
       { label: "API Keys", href: "/dashboard/api-keys", icon: "key" },
       {
         label: "Billing",
@@ -91,7 +88,7 @@ function FeedbackItem() {
   return (
     <>
       <button type="button" className="nav-item w-full" onClick={() => setOpen(true)}>
-        <Icon name="megaphone" size={16} /> Share feedback
+        <Icon name="megaphone" size={18} /> Share feedback
       </button>
       {open && (
         <div
@@ -150,6 +147,8 @@ function WorkspaceSwitcher({
 }) {
   const router = useRouter();
   const [managing, setManaging] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState<string | null>(null);
   const current = workspaces.find((w) => w.id === currentId) ?? workspaces[0];
 
   async function switchTo(id: string) {
@@ -161,16 +160,20 @@ function WorkspaceSwitcher({
     router.refresh();
   }
 
-  async function createWs() {
-    const name = window.prompt("New workspace name");
-    if (!name?.trim()) return;
+  async function createWs(name: string) {
+    setCreateError(null);
     const res = await fetch("/api/workspaces", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ name }),
+      body: JSON.stringify({ name: name.trim() }),
     });
-    const data = await res.json();
-    if (res.ok) await switchTo(data.id);
+    const data = await res.json().catch(() => null);
+    if (!res.ok) {
+      setCreateError(data?.error?.message ?? "Could not create workspace.");
+      return;
+    }
+    setCreating(false);
+    await switchTo(data.id);
   }
 
   return (
@@ -210,11 +213,23 @@ function WorkspaceSwitcher({
         <button
           type="button"
           className="flex w-full items-center gap-2 px-3 py-2 text-sm font-medium hover:bg-page"
-          onClick={createWs}
+          onClick={() => setCreating(true)}
         >
           <Icon name="plus" size={14} /> New Workspace
         </button>
       </Dropdown>
+
+      {creating && (
+        <FormDialog
+          title="New workspace"
+          message="Name the workspace you want to switch into."
+          fields={[{ name: "name", label: "Workspace name", required: true }]}
+          confirmLabel="Create workspace"
+          error={createError}
+          onCancel={() => setCreating(false)}
+          onSubmit={(values) => createWs(values.name)}
+        />
+      )}
 
       {managing && (
         <div
@@ -229,7 +244,7 @@ function WorkspaceSwitcher({
               ))}
             </div>
             <div className="mt-4 flex justify-between">
-              <button className="btn-subtle" onClick={createWs}>
+              <button className="btn-subtle" onClick={() => setCreating(true)}>
                 <Icon name="plus" size={14} /> New Workspace
               </button>
               <button className="btn-dark" onClick={() => setManaging(false)}>
@@ -263,23 +278,16 @@ function ManageRow({ ws, isCurrent }: { ws: WorkspaceLite; isCurrent: boolean })
       >
         Save
       </button>
-      <button
+      <ActionButton
+        endpoint={`/api/workspaces/${ws.id}`}
+        method="DELETE"
         className="btn-subtle shrink-0 !text-danger"
+        confirmText={`Delete workspace “${ws.name}”?`}
         title={isCurrent ? "Switch away before deleting" : "Delete workspace"}
         disabled={isCurrent}
-        onClick={async () => {
-          if (!window.confirm(`Delete workspace “${ws.name}”?`)) return;
-          const res = await fetch(`/api/workspaces/${ws.id}`, { method: "DELETE" });
-          if (!res.ok) {
-            const data = await res.json().catch(() => null);
-            alert(data?.error?.message ?? "Could not delete.");
-            return;
-          }
-          router.refresh();
-        }}
       >
         <Icon name="trash" size={14} />
-      </button>
+      </ActionButton>
     </div>
   );
 }
@@ -290,22 +298,54 @@ export function Sidebar({
   workspaces,
   currentWorkspaceId,
   isStaff,
+  showDevMode,
 }: {
   displayName: string;
-  planLabel: string;
+  planLabel: string | null;
   workspaces: WorkspaceLite[];
   currentWorkspaceId: string;
   isStaff?: boolean;
+  showDevMode?: boolean;
 }) {
   const path = usePathname();
   const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
   const [optimisticPath, setOptimisticPath] = useState<string | null>(null);
   const activePath = optimisticPath ?? path;
+  const [collapsed, setCollapsed] = useState<Record<string, boolean>>({});
+  const [railCompact, setRailCompact] = useState(false);
 
   useEffect(() => {
     setOptimisticPath(null);
   }, [path]);
+
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("pt_sidebar_collapsed");
+      if (raw) setCollapsed(JSON.parse(raw));
+      setRailCompact(localStorage.getItem("pt_sidebar_compact") === "true");
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.style.setProperty(
+      "--pt-sidebar-width",
+      railCompact ? "72px" : "232px"
+    );
+    try {
+      localStorage.setItem("pt_sidebar_compact", String(railCompact));
+    } catch {}
+  }, [railCompact]);
+
+  function toggleSection(label: string) {
+    setCollapsed((prev) => {
+      const next = { ...prev, [label]: !prev[label] };
+      try {
+        localStorage.setItem("pt_sidebar_collapsed", JSON.stringify(next));
+      } catch {}
+      return next;
+    });
+  }
 
   useEffect(() => {
     for (const href of DASHBOARD_PREFETCH_HREFS) router.prefetch(href);
@@ -326,69 +366,124 @@ export function Sidebar({
     primeRoute(href);
   }
 
+  const showCompactRail = railCompact && !drawerOpen;
   const railNav = (
-    <nav className="flex h-full flex-col gap-4 overflow-y-auto p-4">
-      <Link href="/" onClick={() => setDrawerOpen(false)}>
-        <Logo size={24} />
-      </Link>
+    <nav
+      className={`flex h-full flex-col overflow-y-auto ${
+        showCompactRail ? "items-center gap-3 px-2.5 py-5" : "gap-4 p-4"
+      }`}
+    >
+      <div
+        className={`flex w-full items-center ${
+          showCompactRail ? "flex-col justify-center gap-3" : "justify-between"
+        }`}
+      >
+        <Link href="/" onClick={() => setDrawerOpen(false)} aria-label="Post Train home">
+          {showCompactRail ? <LogoMark size={30} /> : <Logo size={26} />}
+        </Link>
+        {!drawerOpen && (
+          <button
+            type="button"
+            aria-label={showCompactRail ? "Expand sidebar" : "Collapse sidebar"}
+            title={showCompactRail ? "Expand sidebar" : "Collapse sidebar"}
+            className="hidden h-9 w-9 items-center justify-center rounded-lg text-muted transition-colors hover:bg-primary-soft hover:text-primary-deep lg:flex"
+            onClick={() => setRailCompact((v) => !v)}
+          >
+            <Icon name="sidebarPanel" size={17} />
+          </button>
+        )}
+      </div>
       <Link
         href="/dashboard/create"
-        className="btn-primary w-full"
+        className={`btn-primary ${showCompactRail ? "h-12 w-12 !rounded-2xl !px-0 !py-0" : "w-full"}`}
+        title="Create post"
         onMouseEnter={() => primeRoute("/dashboard/create")}
         onFocus={() => primeRoute("/dashboard/create")}
         onTouchStart={() => primeRoute("/dashboard/create")}
         onPointerDown={() => handleNavPress("/dashboard/create")}
         onClick={() => handleNavIntent("/dashboard/create")}
       >
-        <Icon name="plus" size={16} strokeWidth={2.5} /> Create post
+        <Icon name="plus" size={showCompactRail ? 21 : 16} strokeWidth={2.5} />
+        {!showCompactRail && "Create post"}
       </Link>
-      {SECTIONS.map((section) => (
-        <div key={section.label}>
-          <p className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-muted">
-            {section.label}
-          </p>
-          <div className="flex flex-col gap-0.5">
-            {section.items.map((item) => (
-              <Link
-                key={item.label}
-                href={item.href}
-                className="nav-item"
-                data-active={isActive(item, activePath)}
-                onMouseEnter={() => primeRoute(item.href)}
-                onFocus={() => primeRoute(item.href)}
-                onTouchStart={() => primeRoute(item.href)}
-                onPointerDown={() => handleNavPress(item.href)}
-                onClick={() => handleNavIntent(item.href)}
-              >
-                <Icon name={item.icon} size={16} />
-                <span className="flex-1">{item.label}</span>
-                {item.badge === "beta" && (
-                  <span title="Beta" className="text-violet-500">
-                    <Icon name="flask" size={13} />
-                  </span>
-                )}
-              </Link>
-            ))}
+      {SECTIONS.map((section) => {
+        const isCollapsed = !!collapsed[section.label];
+        if (showCompactRail) {
+          return (
+            <div key={section.label} className="flex flex-col items-center gap-1.5">
+              {section.items.map((item) => (
+                <Link
+                  key={item.label}
+                  href={item.href}
+                  title={item.label}
+                  aria-label={item.label}
+                  className="flex h-10 w-10 items-center justify-center rounded-xl text-muted transition-colors hover:bg-primary-soft hover:text-primary-deep data-[active=true]:border data-[active=true]:border-line data-[active=true]:bg-white data-[active=true]:text-primary-deep data-[active=true]:shadow-sm"
+                  data-active={isActive(item, activePath)}
+                  onMouseEnter={() => primeRoute(item.href)}
+                  onFocus={() => primeRoute(item.href)}
+                  onTouchStart={() => primeRoute(item.href)}
+                  onPointerDown={() => handleNavPress(item.href)}
+                  onClick={() => handleNavIntent(item.href)}
+                >
+                  <Icon name={item.icon} size={18} />
+                </Link>
+              ))}
+            </div>
+          );
+        }
+        return (
+          <div key={section.label}>
+            <button
+              type="button"
+              className="flex w-full items-center justify-between rounded-md px-1 py-0.5 text-sm font-bold text-muted/70 hover:text-muted"
+              aria-expanded={!isCollapsed}
+              onClick={() => toggleSection(section.label)}
+            >
+              {section.label}
+              <Icon name={isCollapsed ? "chevronRight" : "chevronDown"} size={15} />
+            </button>
+            {!isCollapsed && (
+              <div className="mt-1 flex flex-col gap-0.5">
+                {section.items.map((item) => (
+                  <Link
+                    key={item.label}
+                    href={item.href}
+                    className="nav-item"
+                    data-active={isActive(item, activePath)}
+                    onMouseEnter={() => primeRoute(item.href)}
+                    onFocus={() => primeRoute(item.href)}
+                    onTouchStart={() => primeRoute(item.href)}
+                    onPointerDown={() => handleNavPress(item.href)}
+                    onClick={() => handleNavIntent(item.href)}
+                  >
+                    <Icon name={item.icon} size={18} />
+                    <span className="flex-1">{item.label}</span>
+                    {item.badge === "beta" && (
+                      <span title="Beta" className="text-violet-500">
+                        <Icon name="flask" size={14} />
+                      </span>
+                    )}
+                  </Link>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
-      ))}
-      <div>
-        <p className="mb-1 px-1 text-[11px] font-bold uppercase tracking-wide text-muted">
-          Support
+        );
+      })}
+      <div className={`rounded-xl border border-line bg-page/60 p-2 ${showCompactRail ? "hidden" : ""}`}>
+        <p className="flex items-center gap-1.5 px-1 pb-1.5 text-sm font-bold text-muted/70">
+          <Icon name="info" size={15} /> Need help?
         </p>
         <div className="flex flex-col gap-0.5">
           <FeedbackItem />
           <Link href="/affiliates" className="nav-item" target="_blank">
-            <Icon name="gift" size={16} /> Earn 30% referral
+            <Icon name="gift" size={18} /> Referral discounts
           </Link>
-          <a href="https://x.com" target="_blank" rel="noreferrer" className="nav-item">
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor" aria-hidden>
-              <path d="M18.9 1.15h3.68l-8.04 9.19L24 22.85h-7.4l-5.8-7.58-6.64 7.58H.47l8.6-9.83L0 1.15h7.59l5.24 6.93 6.06-6.93Zm-1.29 19.5h2.04L6.49 3.24H4.3l13.3 17.4Z" />
-            </svg>
-            Stay updated
-          </a>
           <Link href="/growth-guide" className="nav-item" target="_blank">
-            <Icon name="book" size={16} /> Growth guide
+            <Icon name="book" size={18} /> Playbook
+          </Link>
+          <Link href="/contact" className="nav-item" target="_blank">
+            <Icon name="mail" size={18} /> Contact us
           </Link>
         </div>
       </div>
@@ -398,12 +493,16 @@ export function Sidebar({
   return (
     <>
       {/* Sidebar: full height, front layer — brand + nav live here */}
-      <aside className="fixed inset-y-0 left-0 z-40 hidden w-[210px] border-r border-line bg-white shadow-[2px_0_8px_rgba(0,0,0,0.03)] lg:block">
+      <aside
+        className={`fixed inset-y-0 left-0 z-40 hidden border-r border-line bg-white shadow-[2px_0_8px_rgba(0,0,0,0.03)] transition-[width] duration-200 lg:block ${
+          railCompact ? "w-[72px]" : "w-[232px]"
+        }`}
+      >
         {railNav}
       </aside>
 
       {/* Content-area bar: starts beside the sidebar (behind it, not over it) — workspace + account only */}
-      <header className="fixed left-0 right-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-white px-4 lg:left-[210px]">
+      <header className="fixed left-0 right-0 top-0 z-30 flex h-14 items-center gap-3 border-b border-line bg-white px-4 lg:left-[var(--pt-sidebar-width,232px)]">
         <div className="flex items-center gap-3 lg:hidden">
           <button
             type="button"
@@ -418,6 +517,7 @@ export function Sidebar({
           </Link>
         </div>
         <WorkspaceSwitcher workspaces={workspaces} currentId={currentWorkspaceId} />
+        {showDevMode && <DevModeButton />}
         <div className="ml-auto">
           <UserFooter name={displayName} planLabel={planLabel} isStaff={isStaff} />
         </div>

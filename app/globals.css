@@ -37,6 +37,15 @@ body {
   background: white;
 }
 
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
 /* iOS-style toggle */
 .pt-toggle {
   @apply relative inline-flex h-6 w-11 shrink-0 cursor-pointer items-center rounded-full transition-colors;
@@ -74,6 +83,15 @@ body {
 .btn-danger {
   @apply btn bg-danger text-white hover:bg-red-700;
 }
+.btn-danger-soft {
+  @apply btn border border-red-200 bg-red-50 text-red-700 hover:bg-red-100;
+}
+.btn-composer-primary {
+  @apply btn bg-primary-deep text-white hover:bg-primary-dark shadow-[0_1px_2px_rgba(6,63,59,0.18)];
+}
+.btn-composer-secondary {
+  @apply btn border border-line bg-white text-ink/90 hover:border-primary/25 hover:bg-primary-soft/45;
+}
 .btn-warning {
   @apply btn bg-amber-400 text-amber-950 hover:bg-amber-500;
 }
@@ -87,7 +105,7 @@ body {
 }
 
 .nav-item {
-  @apply flex items-center gap-2.5 rounded-lg px-2.5 py-1.5 text-[13px] font-medium text-ink/80 hover:bg-page transition-colors;
+  @apply flex items-center gap-2.5 rounded-lg px-3 py-2 text-sm font-medium text-ink/80 hover:bg-page transition-colors;
 }
 .nav-item[data-active="true"] {
   @apply bg-primary-soft text-primary-deep;
