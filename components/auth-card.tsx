@@ -1,21 +1,60 @@
 import Link from "next/link";
-import { Logo } from "./logo";
+import { Logo, LogoMark } from "./logo";
 import { AuthForm } from "./auth-form";
+
+const ROUTE_STOPS = [
+  { title: "Write once", desc: "One caption, tuned per platform." },
+  { title: "Pick a departure", desc: "Schedule it, or drop it in a queue slot." },
+  { title: "Arrives everywhere", desc: "Every connected account, on time." },
+];
+
+export function AuthShell({ children }: { children: React.ReactNode }) {
+  return (
+    <main className="flex min-h-screen bg-page-onboarding">
+      {/* Brand rail — the route your content rides */}
+      <aside className="hidden w-[380px] shrink-0 flex-col justify-between bg-primary-dark p-10 pb-24 text-white lg:flex">
+        <Link href="/" className="inline-flex items-center gap-2.5">
+          <LogoMark size={30} />
+          <span className="text-2xl font-bold tracking-tight">post train</span>
+        </Link>
+        <ol className="flex flex-col gap-8 border-l border-white/25 pl-6">
+          {ROUTE_STOPS.map((stop) => (
+            <li key={stop.title} className="relative">
+              <span
+                aria-hidden
+                className="absolute -left-[30px] top-1.5 h-2 w-2 rounded-full bg-white"
+              />
+              <p className="font-semibold">{stop.title}</p>
+              <p className="mt-0.5 text-sm text-white/75">{stop.desc}</p>
+            </li>
+          ))}
+        </ol>
+        <p className="text-xs text-white/60">Write once. Post everywhere.</p>
+      </aside>
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex items-center justify-center border-b border-line bg-white py-4 lg:hidden">
+          <Link href="/">
+            <Logo size={26} />
+          </Link>
+        </div>
+        <div className="flex flex-1 items-center justify-center px-4 py-10">
+          <div className="w-full max-w-sm">{children}</div>
+        </div>
+      </div>
+    </main>
+  );
+}
 
 export function AuthCard({ mode }: { mode: "signin" | "signup" }) {
   const googleConfigured = !!process.env.GOOGLE_CLIENT_ID;
   return (
-    <main className="flex min-h-screen items-center justify-center bg-page-onboarding px-4">
-      <div className="card w-full max-w-sm p-8">
-        <div className="flex justify-center">
-          <Link href="/">
-            <Logo />
-          </Link>
-        </div>
-        <h1 className="mt-6 text-center text-xl font-bold">
+    <AuthShell>
+      <div className="card p-8">
+        <h1 className="text-xl font-bold">
           {mode === "signin" ? "Welcome back" : "Create your account"}
         </h1>
-        <p className="mt-1 text-center text-sm text-muted">
+        <p className="mt-1 text-sm text-muted">
           {mode === "signin"
             ? "Sign in to keep your posting streak going."
             : "Start cross-posting in under two minutes."}
@@ -56,24 +95,24 @@ export function AuthCard({ mode }: { mode: "signin" | "signup" }) {
           </div>
           <AuthForm mode={mode} />
         </div>
-        <p className="mt-5 text-center text-sm text-muted">
-          {mode === "signin" ? (
-            <>
-              New here?{" "}
-              <Link href="/create-account" className="font-semibold text-primary-deep">
-                Create an account
-              </Link>
-            </>
-          ) : (
-            <>
-              Already have an account?{" "}
-              <Link href="/signin" className="font-semibold text-primary-deep">
-                Sign in
-              </Link>
-            </>
-          )}
-        </p>
       </div>
-    </main>
+      <p className="mt-5 text-center text-sm text-muted">
+        {mode === "signin" ? (
+          <>
+            New here?{" "}
+            <Link href="/create-account" className="font-semibold text-primary-deep">
+              Create an account
+            </Link>
+          </>
+        ) : (
+          <>
+            Already have an account?{" "}
+            <Link href="/signin" className="font-semibold text-primary-deep">
+              Sign in
+            </Link>
+          </>
+        )}
+      </p>
+    </AuthShell>
   );
 }

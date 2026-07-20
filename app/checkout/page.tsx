@@ -32,22 +32,22 @@ export default async function CheckoutPage({
   }
 
   return (
-    <main className="flex min-h-screen items-center justify-center bg-[#f6f8fa] px-4">
+    <main className="flex min-h-screen items-center justify-center bg-page-onboarding px-4">
       <div className="w-full max-w-md">
-        <div className="card p-8">
-          <div className="flex items-center gap-2.5">
-            <LogoMark size={30} />
+        <div className="card overflow-hidden">
+          <div className="flex items-center gap-2.5 border-b border-line bg-page/50 px-6 py-4">
+            <LogoMark size={26} />
             <div>
               <p className="text-sm font-bold leading-tight">Post Train</p>
               <p className="text-xs text-muted">Change subscription</p>
             </div>
           </div>
-          <div className="mt-6 rounded-xl bg-page p-4">
+          <div className="p-6">
             <div className="flex items-baseline justify-between">
               <p className="font-bold">
                 {p.name} · {interval === "year" ? "Yearly" : "Monthly"}
               </p>
-              <p className="font-bold">
+              <p className="font-bold tabular-nums">
                 ${amount}/{interval === "year" ? "yr" : "mo"}
               </p>
             </div>
@@ -55,14 +55,14 @@ export default async function CheckoutPage({
               Your plan changes immediately — you&apos;ll be charged or credited a prorated
               amount on your next invoice.
             </p>
+            <ConfirmChangeButton plan={plan} interval={interval} />
+            <Link
+              href="/dashboard/settings/plans"
+              className="mt-3 block text-center text-sm font-medium text-muted hover:text-ink"
+            >
+              ← Cancel and go back
+            </Link>
           </div>
-          <ConfirmChangeButton plan={plan} interval={interval} />
-          <Link
-            href="/dashboard/settings/plans"
-            className="mt-3 block text-center text-sm font-medium text-muted hover:text-ink"
-          >
-            ← Cancel and go back
-          </Link>
         </div>
       </div>
     </main>

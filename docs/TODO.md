@@ -15,39 +15,36 @@ Post Train started from the Post Bridge template; the goal is a UI that reads as
 
 **Dashboard — core**
 
-- [ ] Posts list (dashboard/posts)
-- [ ] Draft posts (dashboard/posts/draft)
-- [ ] Scheduled posts (dashboard/posts/scheduled)
-- [ ] Posted (dashboard/posts/posted)
-- [ ] Calendar view (dashboard/posts/calendar)
-- [ ] Connections (dashboard/connections)
-- [ ] Analytics (dashboard/analytics)
+- [x] Posts list (dashboard/posts) — done (2026-07-19): floating card stack → one unified panel with divided rows and a leading departure-time rail (date over time), smaller thumbs, status pill right
+- [x] Draft posts (dashboard/posts/draft) — done (2026-07-19): shares the new list; header restructured to title-left / purpose-line-right
+- [x] Scheduled posts (dashboard/posts/scheduled) — done (2026-07-19): same
+- [x] Posted (dashboard/posts/posted) — done (2026-07-19): same
+- [x] Calendar view (dashboard/posts/calendar) — done (2026-07-19): three floating control clusters merged into one toolbar attached inside the calendar panel; tooltip-only description became a visible subtitle
+- [x] Connections (dashboard/connections) — done (2026-07-19): row layout inverted (platform identity left, account chips middle, quiet "+ Connect" right instead of dark button first); capacity meter in the page header; re-auth warnings promoted above the list; filter/Show-IDs moved into a panel toolbar
+- [x] Analytics (dashboard/analytics) — done (2026-07-19): 4-card stat grid → single report panel (stat strip with hairline dividers + attached "By platform" section); tabs and timeframe control share one toolbar rule
 
 **Dashboard — secondary**
 
-- [ ] Content Studio hub (dashboard/content-studio)
+- [x] Content Studio hub (dashboard/content-studio) — done earlier (see above)
 - [ ] Content Studio wizard (dashboard/content-studio/[template])
-- [ ] Bulk tools hub (dashboard/bulk-tools)
-- [ ] Bulk creation (dashboard/bulk-tools/creation)
-- [ ] Bulk images (dashboard/bulk-tools/images)
-- [ ] Bulk videos (dashboard/bulk-tools/videos)
-- [ ] Settings (dashboard/settings)
-- [ ] Billing settings (dashboard/settings/billing)
-- [ ] Plans settings (dashboard/settings/plans)
-- [ ] Queue settings (dashboard/settings/queue)
-- [ ] Teams (dashboard/teams)
-- [ ] API keys (dashboard/api-keys)
+- [x] Batch scheduler (formerly bulk-tools) — done earlier
+- [x] Settings (dashboard/settings) — done (2026-07-19): nine stacked identical cards → one ruled panel with label-left / control-right sections; also fixed the loading skeleton duplicating the layout's h1 + tabs
+- [x] Billing settings (dashboard/settings/billing) — done (2026-07-19): uppercase-tracked eyebrow dropped; plan + API add-on merged into one panel with a header bar; fixed stray "0" leaking from numeric `&&` renders of cancel_at_period_end
+- [ ] Plans settings (dashboard/settings/plans) — deliberately skipped: PlanPicker is shared with onboarding/plans, which stays untouched
+- [x] Queue settings (dashboard/settings/queue) — done (2026-07-19): two stacked cards → one timetable panel with header bar (timezone chip right) and randomize as a ruled footer
+- [x] Teams (dashboard/teams) — done (2026-07-19): card-per-team → roster panel (header bar with name + member count, avatar rows instead of dot list, invite in ruled footer)
+- [x] API keys (dashboard/api-keys) — done (2026-07-19): key list gets a header bar with count and mono key chips; webhook + docs cards merged into one ruled panel
 
 **Onboarding & auth**
 
-- [ ] Sign in (signin)
-- [ ] Create account (create-account)
-- [ ] Reset password (reset-password)
-- [ ] Onboarding start (onboarding/start)
-- [ ] Onboarding connect (onboarding/connect)
-- [ ] Onboarding connect/add (onboarding/connect/add)
-- [ ] Onboarding plans (onboarding/plans)
-- [ ] Checkout (checkout)
+- [x] Sign in (signin) — done (2026-07-19): centered-logo card → split shell with deep-teal brand rail (route-stops motif) and left-aligned form panel; rail collapses to a top bar on mobile
+- [x] Create account (create-account) — done (2026-07-19): same shell
+- [x] Reset password (reset-password) — done (2026-07-19): same shell
+- [ ] Onboarding start (onboarding/start) — stays untouched by decision (onboarding wizard)
+- [ ] Onboarding connect (onboarding/connect) — stays untouched by decision
+- [ ] Onboarding connect/add (onboarding/connect/add) — stays untouched by decision
+- [ ] Onboarding plans (onboarding/plans) — stays untouched by decision
+- [x] Checkout (checkout) — done (2026-07-19): header-bar receipt card; off-token background replaced with the onboarding page token
 
 **Marketing / public**
 

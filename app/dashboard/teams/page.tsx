@@ -6,6 +6,7 @@ import { canManageWorkspace, type WorkspaceRole } from "@/lib/permissions";
 import { listRecords } from "@/lib/db";
 import { Icon } from "@/components/icons";
 import { EmptyState } from "@/components/ui";
+import { UserAvatar } from "@/components/avatar-menu";
 import { CreateTeamButton, InviteForm, RefreshButton, MemberActions } from "./teams-widgets";
 
 export const metadata = { title: "Teams" };
@@ -115,27 +116,36 @@ export default async function TeamsPage({
               }));
             const canManage = canManageByTeam.get(t.id) ?? false;
             return (
-              <div key={t.id} className="card p-5">
-                <div className="flex items-center gap-2">
-                  <Icon name="users" size={18} className="text-muted" />
-                  <p className="font-bold">{t.name}</p>
+              <div key={t.id} className="card overflow-hidden">
+                <div className="flex flex-wrap items-center gap-2 border-b border-line bg-page/50 px-5 py-3">
+                  <Icon name="users" size={16} className="text-muted" />
+                  <p className="text-sm font-bold">{t.name}</p>
                   {canManage && (
                     <span className="pill bg-gray-100 text-gray-600">You manage this</span>
                   )}
+                  <span className="ml-auto text-xs font-semibold text-muted">
+                    {members.length} member{members.length === 1 ? "" : "s"}
+                  </span>
                 </div>
-                <div className="mt-3 flex flex-col gap-1.5">
+                <div className="flex flex-col divide-y divide-line">
                   {members.length === 0 && (
-                    <p className="text-sm text-muted">No members yet — invite someone below.</p>
+                    <p className="px-5 py-4 text-sm text-muted">
+                      No members yet — invite someone below.
+                    </p>
                   )}
                   {members.map((m, i) => (
-                    <div key={i} className="flex items-center gap-2 text-sm">
+                    <div key={i} className="flex items-center gap-3 px-5 py-2.5 text-sm">
+                      <UserAvatar name={m.display_name ?? m.email_invited} size={28} />
+                      <span className="min-w-0 truncate font-medium">
+                        {m.display_name ?? m.email_invited}
+                      </span>
                       <span
-                        className={`h-2 w-2 rounded-full ${
-                          m.status === "active" ? "bg-primary" : "bg-amber-400"
+                        className={`ml-auto text-xs capitalize ${
+                          m.status === "active"
+                            ? "font-semibold text-muted"
+                            : "pill bg-warning-bg !font-semibold text-warning-ink"
                         }`}
-                      />
-                      <span className="font-medium">{m.display_name ?? m.email_invited}</span>
-                      <span className="ml-auto text-xs capitalize text-muted">
+                      >
                         {m.status === "active" ? m.role ?? "member" : "invite pending"}
                       </span>
                       {canManage && m.status === "active" && m.role !== "owner" && m.user_id && (
@@ -145,7 +155,7 @@ export default async function TeamsPage({
                   ))}
                 </div>
                 {canManage && (
-                  <div className="mt-4 border-t border-line pt-3">
+                  <div className="border-t border-line px-5 py-3">
                     <InviteForm teamId={t.id} />
                   </div>
                 )}

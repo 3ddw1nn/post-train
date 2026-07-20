@@ -5,7 +5,7 @@ import { getSubscription } from "@/lib/billing";
 import { analyticsAccess } from "@/lib/entitlements";
 import { listAnalytics } from "@/lib/analytics";
 import { ANALYTICS_PLATFORMS, platform as platformOf } from "@/lib/platforms";
-import { Tabs, EmptyState, Pill } from "@/components/ui";
+import { EmptyState, Pill } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { PlatformIcon } from "@/components/platform-icon";
 import { SyncButton } from "./sync-button";
@@ -63,40 +63,57 @@ export default async function AnalyticsPage({
   return (
     <div className="fade-up">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="flex items-center gap-2 text-2xl font-bold">
-          Analytics <Pill tone="beta">Beta</Pill>
-        </h1>
-        <div className="flex items-center gap-2">
-          <div className="inline-flex rounded-[10px] border border-line bg-white p-0.5">
-            {(["7d", "30d", "90d", "all"] as const).map((t) => (
-              <Link
-                key={t}
-                href={`/dashboard/analytics?tab=${tab}&timeframe=${t}`}
-                className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${
-                  timeframe === t ? "bg-primary text-primary-contrast" : "text-muted hover:text-ink"
-                }`}
-              >
-                {t}
-              </Link>
-            ))}
-          </div>
-          <SyncButton />
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-bold">
+            Analytics <Pill tone="beta">Beta</Pill>
+          </h1>
+          <p className="mt-1 text-sm text-muted">
+            Views, likes, comments and shares — synced on demand.
+          </p>
+        </div>
+        <SyncButton />
+      </div>
+
+      {/* One toolbar: tabs and timeframe share the same rule */}
+      <div className="mt-4 flex items-end justify-between gap-3 border-b border-line">
+        <div className="flex gap-1 overflow-x-auto">
+          {(
+            [
+              ["overview", "Overview", "/dashboard/analytics"],
+              ["posts", "Posts", "/dashboard/analytics?tab=posts"],
+            ] as const
+          ).map(([key, label, href]) => (
+            <Link
+              key={key}
+              href={href}
+              className={`whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors ${
+                tab === key
+                  ? "border-primary text-ink"
+                  : "border-transparent text-muted hover:text-ink"
+              }`}
+            >
+              {label}
+            </Link>
+          ))}
+        </div>
+        <div className="mb-1.5 inline-flex shrink-0 rounded-[10px] border border-line bg-white p-0.5">
+          {(["7d", "30d", "90d", "all"] as const).map((t) => (
+            <Link
+              key={t}
+              href={`/dashboard/analytics?tab=${tab}&timeframe=${t}`}
+              className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${
+                timeframe === t ? "bg-primary text-primary-contrast" : "text-muted hover:text-ink"
+              }`}
+            >
+              {t}
+            </Link>
+          ))}
         </div>
       </div>
 
-      <div className="mt-4">
-        <Tabs
-          active={tab}
-          tabs={[
-            { key: "overview", label: "Overview", href: "/dashboard/analytics" },
-            { key: "posts", label: "Posts", href: "/dashboard/analytics?tab=posts" },
-          ]}
-        />
-      </div>
-
       {tab === "overview" ? (
-        <>
-          <div className="mt-6 grid grid-cols-2 gap-4 lg:grid-cols-4">
+        <div className="card mt-6 overflow-hidden">
+          <div className="grid grid-cols-2 lg:grid-cols-4 lg:divide-x lg:divide-line">
             {(
               [
                 ["Views", totals.views, "eye"],
@@ -105,18 +122,20 @@ export default async function AnalyticsPage({
                 ["Shares", totals.shares, "send"],
               ] as const
             ).map(([label, value, icon]) => (
-              <div key={label} className="card p-5">
-                <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted">
+              <div key={label} className="px-5 py-4">
+                <p className="flex items-center gap-1.5 text-xs font-bold text-muted">
                   <Icon name={icon} size={13} /> {label}
                 </p>
-                <p className="mt-2 text-3xl font-extrabold tracking-tight">{fmt(value)}</p>
+                <p className="mt-1 text-2xl font-bold tabular-nums tracking-tight">
+                  {fmt(value)}
+                </p>
               </div>
             ))}
           </div>
 
-          <div className="card mt-4 p-5">
+          <div className="border-t border-line px-5 py-4">
             <h2 className="font-bold">By platform</h2>
-            <div className="mt-3 flex flex-col divide-y divide-line">
+            <div className="mt-2 flex flex-col divide-y divide-line">
               {ANALYTICS_PLATFORMS.map((pid) => {
                 const rows = data.filter((r) => r.platform === pid);
                 const views = rows.reduce((s, r) => s + r.view_count, 0);
@@ -125,7 +144,7 @@ export default async function AnalyticsPage({
                     <PlatformIcon id={pid} size={20} />
                     <span className="font-semibold">{platformOf(pid)?.name}</span>
                     <span className="text-sm text-muted">{rows.length} tracked posts</span>
-                    <span className="ml-auto font-bold">{fmt(views)} views</span>
+                    <span className="ml-auto font-bold tabular-nums">{fmt(views)} views</span>
                     <SyncButton platform={pid} />
                   </div>
                 );
@@ -137,7 +156,7 @@ export default async function AnalyticsPage({
               </p>
             )}
           </div>
-        </>
+        </div>
       ) : (
         <div className="card mt-6 overflow-x-auto p-0">
           <table className="w-full min-w-[720px] text-sm">

@@ -45,21 +45,22 @@ export function QueueEditor({
   }
 
   return (
-    <div className="flex flex-col gap-4">
-      <section className="card p-5">
-        <h2 className="font-bold">Queue Schedule</h2>
-        <p className="mt-1 text-sm text-muted">
-          You have {activeCount} slot{activeCount === 1 ? "" : "s"} to post during your
-          week.
-        </p>
-        <p className="text-xs text-muted">
-          Editing your schedule here won&apos;t affect posts that are already scheduled.
-        </p>
-        <p className="mt-2 text-xs font-semibold text-muted">
-          Timezone: <span className="text-ink">{timezone}</span>
-        </p>
+    <section className="card overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-page/50 px-5 py-3">
+        <div>
+          <h2 className="text-sm font-bold">Queue Schedule</h2>
+          <p className="text-xs text-muted">
+            {activeCount} slot{activeCount === 1 ? "" : "s"} per week · edits don&apos;t
+            affect posts already scheduled
+          </p>
+        </div>
+        <span className="rounded-md border border-line bg-white px-2 py-1 text-xs font-semibold text-muted">
+          {timezone}
+        </span>
+      </div>
 
-        <div className="mt-4 overflow-x-auto">
+      <div className="p-5 pt-4">
+        <div className="overflow-x-auto">
           <table className="w-full min-w-[480px] text-sm">
             <thead>
               <tr className="text-left text-xs font-bold text-muted">
@@ -134,25 +135,23 @@ export function QueueEditor({
             <Icon name="plus" size={14} /> Add time
           </button>
         </div>
-      </section>
+      </div>
 
-      <section className="card p-5">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="font-bold">Randomize posting time</h2>
-            <p className="mt-1 text-sm text-muted">
-              Shift each queued post by up to ±10 minutes so your feed doesn&apos;t look
-              scheduled to the minute.
-            </p>
-          </div>
-          <Toggle
-            on={randomize}
-            endpoint="/api/app/workspace"
-            field="randomize_queue_time"
-            label="Randomize posting time"
-          />
+      <div className="flex items-center justify-between gap-4 border-t border-line p-5">
+        <div>
+          <h2 className="text-sm font-bold">Randomize posting time</h2>
+          <p className="mt-1 text-sm text-muted">
+            Shift each queued post by up to ±10 minutes so your feed doesn&apos;t look
+            scheduled to the minute.
+          </p>
         </div>
-      </section>
-    </div>
+        <Toggle
+          on={randomize}
+          endpoint="/api/app/workspace"
+          field="randomize_queue_time"
+          label="Randomize posting time"
+        />
+      </div>
+    </section>
   );
 }

@@ -14,11 +14,22 @@ import {
 
 export const metadata = { title: "Settings" };
 
-function Card({ title, children }: { title: string; children: React.ReactNode }) {
+function Section({
+  title,
+  desc,
+  children,
+}: {
+  title: string;
+  desc?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <section className="card p-5">
-      <h2 className="font-bold">{title}</h2>
-      <div className="mt-3">{children}</div>
+    <section className="grid gap-3 p-5 sm:grid-cols-[190px_minmax(0,1fr)] sm:gap-6">
+      <div>
+        <h2 className="text-sm font-bold">{title}</h2>
+        {desc && <p className="mt-1 text-xs text-muted">{desc}</p>}
+      </div>
+      <div className="min-w-0">{children}</div>
     </section>
   );
 }
@@ -35,7 +46,7 @@ function ToggleRow({
   on: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between gap-4 py-2.5">
+    <div className="flex items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0">
       <div>
         <p className="text-sm font-semibold">{title}</p>
         <p className="text-xs text-muted">{desc}</p>
@@ -52,43 +63,40 @@ export default async function SettingsPage() {
   });
 
   return (
-    <div className="flex flex-col gap-4">
-      <Card title="Profile">
+    <div className="card divide-y divide-line">
+      <Section title="Profile" desc="Shown in your workspace and on team invites.">
         <div className="flex items-start gap-4">
           <UserAvatar name={user.display_name || user.email} size={44} />
-          <div className="flex-1">
+          <div className="min-w-0 flex-1">
             <DisplayNameForm initial={user.display_name} />
-            <p className="mt-1.5 text-xs text-muted">
-              Shown in your workspace and on team invites.
-            </p>
             <p className="mt-2 text-sm text-muted">
               Signed in as <span className="font-semibold text-ink">{user.email}</span>
             </p>
           </div>
         </div>
-      </Card>
+      </Section>
 
-      <Card title="Email Address">
+      <Section title="Email address" desc="Where alerts and summaries are delivered.">
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm text-muted">{user.email}</p>
           <ChangeEmailButton current={user.email} />
         </div>
-      </Card>
+      </Section>
 
-      <Card title="Password">
+      <Section title="Password">
         <ChangePasswordControls />
-      </Card>
+      </Section>
 
-      <Card title="Security">
+      <Section title="Security">
         <div className="flex items-center justify-between gap-3">
           <p className="text-sm text-muted">
             Revokes every active session on every device, including this one.
           </p>
           <SignOutAllButton />
         </div>
-      </Card>
+      </Section>
 
-      <Card title="Email Preferences">
+      <Section title="Email preferences" desc="Which emails we send, and when.">
         <div className="divide-y divide-line">
           <ToggleRow
             title="Automation Emails"
@@ -109,9 +117,9 @@ export default async function SettingsPage() {
             on={!!user.email_post_summary}
           />
         </div>
-      </Card>
+      </Section>
 
-      <Card title="Platform Preferences">
+      <Section title="Platform preferences" desc="Defaults applied when composing and publishing.">
         <div className="divide-y divide-line">
           <ToggleRow
             title="Use file name as caption"
@@ -132,26 +140,28 @@ export default async function SettingsPage() {
             on={!!user.pref_server_video_processing}
           />
         </div>
-      </Card>
+      </Section>
 
-      <Card title="Weekly Posting Goal">
+      <Section title="Weekly posting goal">
         <WeeklyGoalForm initial={user.weekly_posting_goal} />
-      </Card>
+      </Section>
 
-      <Card title="Connect to Claude (MCP)">
+      <Section
+        title="Connect to Claude (MCP)"
+        desc="Manage your posts from Claude or any MCP client."
+      >
         <p className="text-sm text-muted">
-          Manage your posts from Claude or any MCP client. Point it at your Post Train MCP
-          server and authenticate with an API key.
+          Point your client at your Post Train MCP server and authenticate with an API key.
         </p>
         <div className="mt-3">
           <McpUrlField />
         </div>
-        <a href="/mcp" className="btn-primary mt-3">
+        <a href="/mcp" className="btn-subtle mt-3">
           Setup Guide
         </a>
-      </Card>
+      </Section>
 
-      <Card title="Connected Apps">
+      <Section title="Connected apps" desc="Third-party apps authorized on your account.">
         {apps.length === 0 ? (
           <p className="text-sm text-muted">No connected apps yet.</p>
         ) : (
@@ -166,7 +176,7 @@ export default async function SettingsPage() {
             ))}
           </ul>
         )}
-      </Card>
+      </Section>
     </div>
   );
 }

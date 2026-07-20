@@ -9,7 +9,10 @@ export default async function PostedPage() {
   const ws = await currentWorkspace(user);
   return (
     <div className="fade-up">
-      <h1 className="text-2xl font-bold">Posted</h1>
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <h1 className="text-2xl font-bold">Posted</h1>
+        <p className="text-sm text-muted">Published posts, with per-platform results.</p>
+      </div>
       <div className="mt-5">
         <PostsListPage user={user} workspaceId={ws.id} filter="posted" />
       </div>

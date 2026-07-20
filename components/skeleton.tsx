@@ -48,11 +48,15 @@ export function CardListSkeleton({
   thumb?: boolean;
 }) {
   return (
-    <div className="flex flex-col gap-3">
+    <div className="card divide-y divide-line overflow-hidden">
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className="card p-4">
+        <div key={i} className="p-4">
           <div className="flex items-center gap-4">
-            {thumb && <SkeletonBlock className="h-14 w-14 shrink-0" />}
+            <div className="hidden w-16 shrink-0 sm:block">
+              <SkeletonBlock className="h-3 w-10" />
+              <SkeletonBlock className="mt-1.5 h-4 w-14" />
+            </div>
+            {thumb && <SkeletonBlock className="h-12 w-12 shrink-0" />}
             <div className="min-w-0 flex-1">
               <SkeletonBlock className="h-4 w-3/4 max-w-full" />
               <div className="mt-3 flex gap-2">
@@ -61,10 +65,7 @@ export function CardListSkeleton({
                 <SkeletonBlock className="h-6 w-6 rounded-full" />
               </div>
             </div>
-            <div className="hidden shrink-0 flex-col items-end gap-2 sm:flex">
-              <SkeletonBlock className="h-6 w-20 rounded-full" />
-              <SkeletonBlock className="h-4 w-24" />
-            </div>
+            <SkeletonBlock className="h-6 w-20 shrink-0 rounded-full" />
             <SkeletonBlock className="h-9 w-9 shrink-0" />
           </div>
         </div>
@@ -158,34 +159,40 @@ export function CreateHubSkeleton() {
 export function ConnectionsSkeleton() {
   return (
     <div className="fade-up">
-      <h1 className="text-2xl font-bold">Connections</h1>
-      <div className="card mt-5 p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          <div>
-            <h2 className="font-bold">Connected Accounts</h2>
-            <SkeletonBlock className="mt-1 h-4 w-48" />
-          </div>
-          <div className="flex items-center gap-3">
-            <SkeletonBlock className="h-6 w-24" />
-            <SkeletonBlock className="h-8 w-36" />
-          </div>
+      <div className="flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="text-2xl font-bold">Connections</h1>
+          <p className="mt-1 text-sm text-muted">Every account your posts can depart to.</p>
         </div>
-
-        <div className="mt-4 flex flex-col divide-y divide-line">
+        <div>
+          <SkeletonBlock className="h-5 w-28" />
+          <SkeletonBlock className="mt-1.5 h-1 w-36 rounded-full" />
+        </div>
+      </div>
+      <div className="card mt-5 overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line bg-page/50 px-4 py-2.5">
+          <SkeletonBlock className="h-6 w-32" />
+          <SkeletonBlock className="h-6 w-24" />
+        </div>
+        <div className="flex flex-col divide-y divide-line">
           {Array.from({ length: 10 }).map((_, i) => (
-            <div key={i} className="flex flex-wrap items-center gap-3 py-3">
-              <SkeletonBlock className="h-6 w-6 rounded-full" />
-              <SkeletonBlock className="h-8 w-28" />
-              <div className="flex flex-wrap items-center gap-2">
+            <div key={i} className="flex flex-wrap items-center gap-3 px-4 py-3">
+              <div className="flex w-32 shrink-0 items-center gap-2.5">
+                <SkeletonBlock className="h-5 w-5 rounded-full" />
+                <SkeletonBlock className="h-4 w-20" />
+              </div>
+              <div className="flex min-w-0 flex-1 flex-wrap items-center gap-2">
                 {Array.from({ length: i % 3 === 0 ? 2 : 1 }).map((__, j) => (
                   <SkeletonBlock key={j} className="h-8 w-28 rounded-full" />
                 ))}
               </div>
+              <SkeletonBlock className="ml-auto h-8 w-24 shrink-0" />
             </div>
           ))}
         </div>
-
-        <SkeletonBlock className="mt-5 h-4 w-72 max-w-full" />
+        <div className="border-t border-line px-4 py-3">
+          <SkeletonBlock className="h-4 w-72 max-w-full" />
+        </div>
       </div>
     </div>
   );
@@ -195,54 +202,66 @@ export function AnalyticsSkeleton() {
   return (
     <div className="fade-up">
       <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="flex items-center gap-2 text-2xl font-bold">
-          Analytics <SkeletonBlock className="h-6 w-12 rounded-full" />
-        </h1>
-        <div className="flex items-center gap-2">
-          <div className="inline-flex rounded-[10px] border border-line bg-white p-0.5">
-            {["7d", "30d", "90d", "all"].map((label, i) => (
-              <span
-                key={label}
-                className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${
-                  i === 1 ? "bg-primary text-primary-contrast" : "text-muted"
-                }`}
-              >
-                {label}
-              </span>
-            ))}
-          </div>
-          <SkeletonBlock className="h-9 w-20" />
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-bold">
+            Analytics <SkeletonBlock className="h-6 w-12 rounded-full" />
+          </h1>
+          <p className="mt-1 text-sm text-muted">
+            Views, likes, comments and shares — synced on demand.
+          </p>
+        </div>
+        <SkeletonBlock className="h-9 w-20" />
+      </div>
+
+      <div className="mt-4 flex items-end justify-between gap-3 border-b border-line">
+        <div className="flex gap-1">
+          {["Overview", "Posts"].map((label, i) => (
+            <span
+              key={label}
+              className={`whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-semibold ${
+                i === 0 ? "border-primary text-ink" : "border-transparent text-muted"
+              }`}
+            >
+              {label}
+            </span>
+          ))}
+        </div>
+        <div className="mb-1.5 inline-flex shrink-0 rounded-[10px] border border-line bg-white p-0.5">
+          {["7d", "30d", "90d", "all"].map((label, i) => (
+            <span
+              key={label}
+              className={`rounded-lg px-2.5 py-1 text-xs font-semibold ${
+                i === 1 ? "bg-primary text-primary-contrast" : "text-muted"
+              }`}
+            >
+              {label}
+            </span>
+          ))}
         </div>
       </div>
 
-      <div className="mt-4 flex gap-1 overflow-x-auto border-b border-line">
-        {["Overview", "Posts"].map((label, i) => (
-          <span
-            key={label}
-            className={`whitespace-nowrap border-b-2 px-4 py-2.5 text-sm font-semibold ${
-              i === 0 ? "border-primary text-ink" : "border-transparent text-muted"
-            }`}
-          >
-            {label}
-          </span>
-        ))}
-      </div>
-
-      <div className="mt-6">
-        <StatGridSkeleton />
-      </div>
-      <div className="card mt-4 p-5">
-        <h2 className="font-bold">By platform</h2>
-        <div className="mt-3 flex flex-col divide-y divide-line">
-          {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="flex items-center gap-3 py-3">
-              <SkeletonBlock className="h-5 w-5 rounded-full" />
-              <SkeletonBlock className="h-5 w-24" />
-              <SkeletonBlock className="h-4 w-28" />
-              <SkeletonBlock className="ml-auto h-5 w-20" />
-              <SkeletonBlock className="h-8 w-16" />
+      <div className="card mt-6 overflow-hidden">
+        <div className="grid grid-cols-2 lg:grid-cols-4 lg:divide-x lg:divide-line">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="px-5 py-4">
+              <SkeletonBlock className="h-4 w-20" />
+              <SkeletonBlock className="mt-2 h-7 w-16" />
             </div>
           ))}
+        </div>
+        <div className="border-t border-line px-5 py-4">
+          <h2 className="font-bold">By platform</h2>
+          <div className="mt-2 flex flex-col divide-y divide-line">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <div key={i} className="flex items-center gap-3 py-3">
+                <SkeletonBlock className="h-5 w-5 rounded-full" />
+                <SkeletonBlock className="h-5 w-24" />
+                <SkeletonBlock className="h-4 w-28" />
+                <SkeletonBlock className="ml-auto h-5 w-20" />
+                <SkeletonBlock className="h-8 w-16" />
+              </div>
+            ))}
+          </div>
         </div>
       </div>
     </div>
@@ -252,20 +271,25 @@ export function AnalyticsSkeleton() {
 export function CalendarSkeleton() {
   return (
     <div className="fade-up">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="flex items-center gap-2 text-2xl font-bold">Calendar</h1>
-        <div className="flex items-center gap-1.5">
-          <SkeletonBlock className="h-8 w-8" />
-          <SkeletonBlock className="h-6 w-40" />
-          <SkeletonBlock className="h-8 w-8" />
-        </div>
-        <div className="flex items-center gap-2">
-          <SkeletonBlock className="h-9 w-36" />
-          <SkeletonBlock className="h-9 w-32" />
-        </div>
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <h1 className="text-2xl font-bold">Calendar</h1>
+        <p className="text-sm text-muted">
+          Every scheduled and published post, in your local timezone.
+        </p>
       </div>
 
       <div className="card mt-5 overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-3 py-2.5">
+          <div className="flex items-center gap-1.5">
+            <SkeletonBlock className="h-8 w-8" />
+            <SkeletonBlock className="h-6 w-40" />
+            <SkeletonBlock className="h-8 w-8" />
+          </div>
+          <div className="flex items-center gap-2">
+            <SkeletonBlock className="h-9 w-36" />
+            <SkeletonBlock className="h-9 w-32" />
+          </div>
+        </div>
         <div className="grid grid-cols-7 border-b border-line bg-page/50">
           {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
             <div key={day} className="px-2 py-2 text-center text-xs font-bold text-muted">
@@ -404,36 +428,40 @@ export function ApiKeysSkeleton() {
         <SkeletonBlock className="h-10 w-36" />
       </div>
 
-      <section className="card mt-4 p-5">
+      <section className="card mt-4 overflow-hidden">
+        <div className="flex items-center justify-between border-b border-line bg-page/50 px-4 py-2.5">
+          <h2 className="text-sm font-bold">Active keys</h2>
+          <SkeletonBlock className="h-4 w-12" />
+        </div>
         <div className="flex flex-col divide-y divide-line">
           {Array.from({ length: 3 }).map((_, i) => (
-            <div key={i} className="flex flex-wrap items-center gap-3 py-3">
-              <SkeletonBlock className="h-5 w-5" />
+            <div key={i} className="flex flex-wrap items-center gap-3 px-4 py-3">
               <div className="min-w-0 flex-1">
                 <SkeletonBlock className="h-5 w-40" />
-                <SkeletonBlock className="mt-1 h-4 w-32" />
+                <SkeletonBlock className="mt-1 h-4 w-48" />
               </div>
-              <SkeletonBlock className="h-4 w-48" />
+              <SkeletonBlock className="h-7 w-28" />
               <SkeletonBlock className="h-8 w-20" />
             </div>
           ))}
         </div>
       </section>
 
-      <section className="card mt-4 p-5">
-        <h2 className="font-bold">Webhook</h2>
-        <SkeletonBlock className="mt-2 h-4 w-full" />
-        <div className="mt-3 flex items-center gap-2">
-          <SkeletonBlock className="h-10 flex-1" />
-          <SkeletonBlock className="h-10 w-16 shrink-0" />
+      <section className="card mt-4 divide-y divide-line">
+        <div className="p-5">
+          <h2 className="text-sm font-bold">Webhook</h2>
+          <SkeletonBlock className="mt-2 h-4 w-full" />
+          <div className="mt-3 flex items-center gap-2">
+            <SkeletonBlock className="h-10 flex-1" />
+            <SkeletonBlock className="h-10 w-16 shrink-0" />
+          </div>
+          <SkeletonBlock className="mt-3 h-4 w-72 max-w-full" />
         </div>
-        <SkeletonBlock className="mt-3 h-4 w-72 max-w-full" />
-      </section>
-
-      <section className="card mt-4 p-5">
-        <SkeletonBlock className="h-5 w-44" />
-        <SkeletonBlock className="mt-2 h-4 w-full" />
-        <SkeletonBlock className="mt-2 h-4 w-80 max-w-full" />
+        <div className="p-5">
+          <SkeletonBlock className="h-5 w-44" />
+          <SkeletonBlock className="mt-2 h-4 w-full" />
+          <SkeletonBlock className="mt-2 h-4 w-80 max-w-full" />
+        </div>
       </section>
     </div>
   );
@@ -455,22 +483,22 @@ export function TeamsSkeleton() {
       </div>
       <div className="mt-3 flex flex-col gap-3">
         {Array.from({ length: 2 }).map((_, i) => (
-          <div key={i} className="card p-5">
-            <div className="flex items-center gap-2">
-              <SkeletonBlock className="h-5 w-5" />
-              <SkeletonBlock className="h-5 w-40" />
-              <SkeletonBlock className="h-6 w-28 rounded-full" />
+          <div key={i} className="card overflow-hidden">
+            <div className="flex items-center gap-2 border-b border-line bg-page/50 px-5 py-3">
+              <SkeletonBlock className="h-4 w-4" />
+              <SkeletonBlock className="h-4 w-40" />
+              <SkeletonBlock className="ml-auto h-4 w-20" />
             </div>
-            <div className="mt-3 flex flex-col gap-2">
+            <div className="flex flex-col divide-y divide-line">
               {Array.from({ length: 3 }).map((__, j) => (
-                <div key={j} className="flex items-center gap-2">
-                  <SkeletonBlock className="h-2 w-2 rounded-full" />
+                <div key={j} className="flex items-center gap-3 px-5 py-2.5">
+                  <SkeletonBlock className="h-7 w-7 rounded-full" />
                   <SkeletonBlock className="h-4 w-48" />
                   <SkeletonBlock className="ml-auto h-4 w-20" />
                 </div>
               ))}
             </div>
-            <div className="mt-4 border-t border-line pt-3">
+            <div className="border-t border-line px-5 py-3">
               <SkeletonBlock className="h-10 w-full" />
             </div>
           </div>
@@ -483,34 +511,35 @@ export function TeamsSkeleton() {
 export function BillingSkeleton() {
   return (
     <div className="flex flex-col gap-4">
-      <section className="card p-5">
-        <p className="text-xs font-bold uppercase tracking-wide text-muted">Current Plan</p>
-        <div className="mt-2 flex items-center justify-between">
-          <SkeletonBlock className="h-8 w-48" />
-          <SkeletonBlock className="h-6 w-20 rounded-full" />
+      <section className="card overflow-hidden">
+        <div className="flex items-center justify-between border-b border-line bg-page/50 px-5 py-3">
+          <h2 className="text-sm font-bold">Current plan</h2>
+          <SkeletonBlock className="h-6 w-16 rounded-full" />
         </div>
-        <SkeletonBlock className="mt-2 h-4 w-28" />
-        <div className="mt-4 grid grid-cols-2 gap-4">
-          <div>
-            <SkeletonBlock className="h-4 w-20" />
-            <SkeletonBlock className="mt-2 h-5 w-32" />
+        <div className="p-5">
+          <div className="flex items-baseline justify-between">
+            <SkeletonBlock className="h-7 w-40" />
+            <SkeletonBlock className="h-5 w-24" />
           </div>
-          <div>
-            <SkeletonBlock className="h-4 w-28" />
-            <SkeletonBlock className="mt-2 h-5 w-20" />
+          <div className="mt-4 grid grid-cols-2 gap-4">
+            <div>
+              <SkeletonBlock className="h-4 w-20" />
+              <SkeletonBlock className="mt-2 h-5 w-32" />
+            </div>
+            <div>
+              <SkeletonBlock className="h-4 w-28" />
+              <SkeletonBlock className="mt-2 h-5 w-20" />
+            </div>
+          </div>
+          <div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-4">
+            <SkeletonBlock className="h-10 w-28" />
+            <SkeletonBlock className="h-10 w-36" />
+            <SkeletonBlock className="h-10 w-40" />
           </div>
         </div>
-        <div className="mt-4 flex flex-wrap gap-2">
-          <SkeletonBlock className="h-10 w-28" />
-          <SkeletonBlock className="h-10 w-36" />
-          <SkeletonBlock className="h-10 w-40" />
-        </div>
-      </section>
-
-      <section className="card p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line p-5">
           <div>
-            <h2 className="font-bold">API Addon</h2>
+            <h3 className="font-bold">API Addon</h3>
             <SkeletonBlock className="mt-2 h-4 w-96 max-w-full" />
             <SkeletonBlock className="mt-2 h-4 w-72 max-w-full" />
           </div>
@@ -695,14 +724,17 @@ export function BulkCreationSkeleton() {
 
 export function QueueSkeleton() {
   return (
-    <div className="flex flex-col gap-4">
-      <section className="card p-5">
-        <h2 className="font-bold">Queue Schedule</h2>
-        <SkeletonBlock className="mt-2 h-4 w-64" />
-        <SkeletonBlock className="mt-2 h-4 w-80 max-w-full" />
-        <SkeletonBlock className="mt-3 h-4 w-48" />
+    <section className="card overflow-hidden">
+      <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-page/50 px-5 py-3">
+        <div>
+          <h2 className="text-sm font-bold">Queue Schedule</h2>
+          <SkeletonBlock className="mt-1 h-3 w-64" />
+        </div>
+        <SkeletonBlock className="h-6 w-32" />
+      </div>
 
-        <div className="mt-4 overflow-x-auto">
+      <div className="p-5 pt-4">
+        <div className="overflow-x-auto">
           <table className="w-full min-w-[480px] text-sm">
             <thead>
               <tr className="text-left text-xs font-bold text-muted">
@@ -735,39 +767,35 @@ export function QueueSkeleton() {
           <SkeletonBlock className="h-10 w-36" />
           <SkeletonBlock className="h-10 w-28" />
         </div>
-      </section>
+      </div>
 
-      <section className="card p-5">
-        <div className="flex items-center justify-between gap-4">
-          <div>
-            <h2 className="font-bold">Randomize posting time</h2>
-            <SkeletonBlock className="mt-2 h-4 w-96 max-w-full" />
-          </div>
-          <SkeletonBlock className="h-6 w-11 rounded-full" />
+      <div className="flex items-center justify-between gap-4 border-t border-line p-5">
+        <div>
+          <h2 className="text-sm font-bold">Randomize posting time</h2>
+          <SkeletonBlock className="mt-2 h-4 w-96 max-w-full" />
         </div>
-      </section>
-    </div>
+        <SkeletonBlock className="h-6 w-11 rounded-full" />
+      </div>
+    </section>
   );
 }
 
 export function SettingsPanelSkeleton() {
+  // Renders inside the settings layout, which already shows the h1 + tabs.
   return (
-    <div className="fade-up mx-auto max-w-4xl">
-      <SkeletonBlock className="h-8 w-36" />
-      <div className="mt-4 flex gap-2 border-b border-line pb-2">
-        {Array.from({ length: 4 }).map((_, i) => (
-          <SkeletonBlock key={i} className="h-8 w-20" />
-        ))}
-      </div>
-      <div className="mt-6 flex flex-col gap-4">
-        {Array.from({ length: 5 }).map((_, i) => (
-          <div key={i} className="card p-5">
-            <SkeletonBlock className="h-5 w-40" />
-            <SkeletonBlock className="mt-4 h-4 w-4/5" />
+    <div className="card divide-y divide-line">
+      {Array.from({ length: 5 }).map((_, i) => (
+        <div key={i} className="grid gap-3 p-5 sm:grid-cols-[190px_minmax(0,1fr)] sm:gap-6">
+          <div>
+            <SkeletonBlock className="h-4 w-32" />
+            <SkeletonBlock className="mt-2 h-3 w-36" />
+          </div>
+          <div>
+            <SkeletonBlock className="h-4 w-4/5" />
             <SkeletonBlock className="mt-3 h-4 w-2/3" />
           </div>
-        ))}
-      </div>
+        </div>
+      ))}
     </div>
   );
 }

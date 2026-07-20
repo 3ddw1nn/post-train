@@ -18,47 +18,64 @@ export default async function BillingPage() {
 
   if (user.is_staff) {
     return (
-      <section className="card p-5">
-        <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted">
-          <Icon name="card" size={13} /> Current Plan
-        </p>
-        <h2 className="mt-2 text-2xl font-extrabold">Staff Account</h2>
-        <p className="mt-1 text-sm text-muted">
-          Full access to every feature — no billing or subscription needed.
-        </p>
+      <section className="card overflow-hidden">
+        <div className="flex items-center gap-2 border-b border-line bg-page/50 px-5 py-3">
+          <Icon name="card" size={14} className="text-muted" />
+          <h2 className="text-sm font-bold">Current plan</h2>
+        </div>
+        <div className="p-5">
+          <h3 className="text-xl font-bold">Staff Account</h3>
+          <p className="mt-1 text-sm text-muted">
+            Full access to every feature — no billing or subscription needed.
+          </p>
+        </div>
       </section>
     );
   }
 
   return (
     <div className="flex flex-col gap-4">
-      <section className="card p-5">
-        <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-muted">
-          <Icon name="card" size={13} /> Current Plan
-        </p>
-        {!sub || sub.status === "canceled" ? (
-          <>
-            <h2 className="mt-2 text-2xl font-extrabold">Free Plan</h2>
-            <p className="mt-1 text-sm text-muted">
-              5 free posts (each destination account counts as one), limited connections.
-            </p>
-            <Link href="/dashboard/settings/plans" className="btn-primary mt-4">
-              View Plans
-            </Link>
-          </>
-        ) : (
-          <>
-            <div className="mt-2 flex items-center justify-between">
-              <h2 className="text-2xl font-extrabold">{plan?.name} Plan</h2>
+      <section className="card overflow-hidden">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-page/50 px-5 py-3">
+          <div className="flex items-center gap-2">
+            <Icon name="card" size={14} className="text-muted" />
+            <h2 className="text-sm font-bold">Current plan</h2>
+          </div>
+          {sub && sub.status !== "canceled" && (
+            <div className="flex items-center gap-1.5">
               {sub.status === "trialing" && !sub.cancel_at_period_end && (
                 <Pill tone="warning">Trial</Pill>
               )}
               {sub.status === "paused" && <Pill tone="neutral">Paused</Pill>}
-              {sub.cancel_at_period_end && <Pill tone="neutral">Cancelling</Pill>}
+              {!!sub.cancel_at_period_end && <Pill tone="neutral">Cancelling</Pill>}
             </div>
-            <p className="text-sm text-muted">
-              ${price}/{sub.interval === "year" ? "year" : "month"}
-            </p>
+          )}
+        </div>
+
+        {!sub || sub.status === "canceled" ? (
+          <div className="flex flex-wrap items-center justify-between gap-4 p-5">
+            <div>
+              <h3 className="text-xl font-bold">Free Plan</h3>
+              <p className="mt-1 text-sm text-muted">
+                5 free posts (each destination account counts as one), limited connections.
+              </p>
+            </div>
+            <Link href="/dashboard/settings/plans" className="btn-primary">
+              View Plans
+            </Link>
+          </div>
+        ) : (
+          <div className="p-5">
+            <div className="flex flex-wrap items-baseline justify-between gap-3">
+              <h3 className="text-xl font-bold">{plan?.name} Plan</h3>
+              <p className="text-sm font-semibold tabular-nums">
+                ${price}
+                <span className="font-medium text-muted">
+                  /{sub.interval === "year" ? "year" : "month"}
+                </span>
+              </p>
+            </div>
+
             <div className="mt-4 grid grid-cols-2 gap-4 text-sm">
               {sub.status === "trialing" && sub.trial_ends_at && (
                 <>
@@ -92,6 +109,7 @@ export default async function BillingPage() {
                 </div>
               )}
             </div>
+
             {sub.status === "trialing" && !sub.cancel_at_period_end && (
               <p className="mt-4 rounded-xl bg-warning-bg px-4 py-2.5 text-sm font-medium text-warning-ink">
                 You&apos;re on a free trial! It ends{" "}
@@ -103,7 +121,7 @@ export default async function BillingPage() {
                 {" — "}you&apos;ll be charged ${price} after. Cancel anytime before then.
               </p>
             )}
-            {sub.cancel_at_period_end && sub.status === "trialing" && (
+            {!!sub.cancel_at_period_end && sub.status === "trialing" && (
               <p className="mt-4 rounded-xl bg-red-50 px-4 py-2.5 text-sm font-medium text-red-700">
                 Your trial is cancelled — premium features are switched off and you
                 won&apos;t be charged.
@@ -114,7 +132,8 @@ export default async function BillingPage() {
                 Your subscription is paused — posting is blocked until you resume.
               </p>
             )}
-            <div className="mt-4 flex flex-wrap gap-2">
+
+            <div className="mt-4 flex flex-wrap gap-2 border-t border-line pt-4">
               <Link href="/dashboard/settings/plans" className="btn-dark">
                 Change Plan
               </Link>
@@ -126,14 +145,14 @@ export default async function BillingPage() {
                 <>
                   <ActionButton
                     endpoint="/api/billing/pause"
-                    className="btn-dark"
+                    className="btn-subtle"
                     confirmText="Pause your subscription? Posting is blocked while paused."
                   >
                     Pause Subscription
                   </ActionButton>
                   <ActionButton
                     endpoint="/api/billing/cancel"
-                    className="btn-dark"
+                    className="btn-subtle"
                     confirmText={
                       sub.status === "trialing"
                         ? "Cancel your trial? Premium features end immediately and you won't be charged."
@@ -145,14 +164,12 @@ export default async function BillingPage() {
                 </>
               )}
             </div>
-          </>
+          </div>
         )}
-      </section>
 
-      <section className="card p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line p-5">
           <div>
-            <h2 className="font-bold">API Addon</h2>
+            <h3 className="font-bold">API Addon</h3>
             <p className="mt-0.5 text-sm text-muted">
               Programmatic posting via the REST API, MCP server and agent skills.
             </p>

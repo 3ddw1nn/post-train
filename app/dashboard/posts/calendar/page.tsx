@@ -5,7 +5,6 @@ import { listRecords } from "@/lib/db";
 import { postsInRange, type PostRow } from "@/lib/posts";
 import { formatInTz, wallTimeToUtc } from "@/lib/tz";
 import { Icon } from "@/components/icons";
-import { InfoTip } from "@/components/ui";
 import { AccountAvatar } from "@/components/platform-icon";
 import { PlatformFilter } from "./platform-filter";
 
@@ -98,38 +97,42 @@ export default async function CalendarPage({
 
   return (
     <div className="fade-up">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="flex items-center gap-2 text-2xl font-bold">
-          Calendar <InfoTip text="Every scheduled and published post, in your local timezone." />
-        </h1>
-        <div className="flex items-center gap-1.5">
-          <Link href={nav(-1)} className="btn-subtle !px-2 !py-1.5" aria-label="Previous">
-            <Icon name="chevronLeft" size={16} />
-          </Link>
-          <span className="min-w-40 text-center font-bold">{label}</span>
-          <Link href={nav(1)} className="btn-subtle !px-2 !py-1.5" aria-label="Next">
-            <Icon name="chevronRight" size={16} />
-          </Link>
-        </div>
-        <div className="flex items-center gap-2">
-          <PlatformFilter value={params.platform ?? ""} />
-          <div className="inline-flex rounded-[10px] border border-line bg-white p-0.5">
-            {(["month", "week"] as const).map((v) => (
-              <Link
-                key={v}
-                href={`/dashboard/posts/calendar?view=${v}&date=${params.date ?? fmtDate(new Date())}${platformQ(params.platform)}`}
-                className={`rounded-lg px-3 py-1 text-sm font-semibold capitalize ${
-                  view === v ? "bg-primary text-primary-contrast" : "text-muted hover:text-ink"
-                }`}
-              >
-                {v}
-              </Link>
-            ))}
-          </div>
-        </div>
+      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+        <h1 className="text-2xl font-bold">Calendar</h1>
+        <p className="text-sm text-muted">
+          Every scheduled and published post, in your local timezone.
+        </p>
       </div>
 
       <div className="card mt-5 overflow-hidden">
+        {/* Attached toolbar — navigation and filters live with the grid, not above it */}
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line px-3 py-2.5">
+          <div className="flex items-center gap-1.5">
+            <Link href={nav(-1)} className="btn-subtle !px-2 !py-1.5" aria-label="Previous">
+              <Icon name="chevronLeft" size={16} />
+            </Link>
+            <span className="min-w-40 text-center font-bold">{label}</span>
+            <Link href={nav(1)} className="btn-subtle !px-2 !py-1.5" aria-label="Next">
+              <Icon name="chevronRight" size={16} />
+            </Link>
+          </div>
+          <div className="flex items-center gap-2">
+            <PlatformFilter value={params.platform ?? ""} />
+            <div className="inline-flex rounded-[10px] border border-line bg-white p-0.5">
+              {(["month", "week"] as const).map((v) => (
+                <Link
+                  key={v}
+                  href={`/dashboard/posts/calendar?view=${v}&date=${params.date ?? fmtDate(new Date())}${platformQ(params.platform)}`}
+                  className={`rounded-lg px-3 py-1 text-sm font-semibold capitalize ${
+                    view === v ? "bg-primary text-primary-contrast" : "text-muted hover:text-ink"
+                  }`}
+                >
+                  {v}
+                </Link>
+              ))}
+            </div>
+          </div>
+        </div>
         <div className="grid grid-cols-7 border-b border-line bg-page/50">
           {DAY_LABELS.map((d) => (
             <div key={d} className="px-2 py-2 text-center text-xs font-bold text-muted">

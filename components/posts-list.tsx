@@ -68,7 +68,7 @@ export async function PostsListPage({
   ]);
 
   return (
-    <div className="flex flex-col gap-3">
+    <div className="card divide-y divide-line overflow-hidden">
       {data.map((post) => {
         const dests = destRows
           .filter((d) => d.post_id === post.id)
@@ -130,37 +130,51 @@ function PostRowCard({
 }) {
   const editable = ["draft", "scheduled"].includes(post.status);
   const when = post.posted_at ?? post.scheduled_at;
-  const whenLabel = when
+  const dateLabel = when
+    ? formatInTz(when, user.timezone, { month: "short", day: "numeric" })
+    : null;
+  const timeLabel = when
     ? formatInTz(when, user.timezone, {
-        month: "short",
-        day: "numeric",
         hour: user.pref_24h_time ? "2-digit" : "numeric",
         minute: "2-digit",
         hour12: !user.pref_24h_time,
       })
-    : "—";
+    : null;
 
   return (
-    <div className="card p-4">
+    <div className="p-4">
       <div className="flex items-center gap-4">
+        {/* Departure column — when this post leaves (or left) the station */}
+        <div className="hidden w-16 shrink-0 sm:block">
+          {when ? (
+            <>
+              <p className="text-[11px] font-bold uppercase tracking-wide text-muted">
+                {dateLabel}
+              </p>
+              <p className="text-sm font-semibold tabular-nums">{timeLabel}</p>
+            </>
+          ) : (
+            <p className="text-sm font-semibold text-muted">—</p>
+          )}
+        </div>
         {thumb ? (
           thumb.kind === "video" ? (
-            <video src={`/api/media-file/${thumb.id}`} className="h-14 w-14 shrink-0 rounded-lg object-cover" muted />
+            <video src={`/api/media-file/${thumb.id}`} className="h-12 w-12 shrink-0 rounded-lg object-cover" muted />
           ) : thumb.kind === "pdf" ? (
-            <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-page text-muted">
-              <Icon name="file" size={20} />
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-page text-muted">
+              <Icon name="file" size={18} />
             </span>
           ) : (
             // eslint-disable-next-line @next/next/no-img-element
             <img
               src={`/api/media-file/${thumb.id}`}
               alt=""
-              className="h-14 w-14 shrink-0 rounded-lg object-cover"
+              className="h-12 w-12 shrink-0 rounded-lg object-cover"
             />
           )
         ) : (
-          <span className="flex h-14 w-14 shrink-0 items-center justify-center rounded-lg bg-page text-muted">
-            <Icon name="type" size={20} />
+          <span className="flex h-12 w-12 shrink-0 items-center justify-center rounded-lg bg-page text-muted">
+            <Icon name="type" size={18} />
           </span>
         )}
         <div className="min-w-0 flex-1">
@@ -181,13 +195,16 @@ function PostRowCard({
             {dests.length > 6 && (
               <span className="text-xs text-muted">+{dests.length - 6} more</span>
             )}
+            {when && (
+              <span className="flex items-center gap-1 text-xs text-muted sm:hidden">
+                <Icon name={post.posted_at ? "send" : "clock"} size={12} /> {dateLabel},{" "}
+                {timeLabel}
+              </span>
+            )}
           </div>
         </div>
-        <div className="flex shrink-0 flex-col items-end gap-1.5">
+        <div className="shrink-0">
           <StatusPill status={post.is_draft ? "draft" : post.status} />
-          <span className="flex items-center gap-1 text-xs text-muted">
-            <Icon name={post.posted_at ? "send" : "clock"} size={12} /> {whenLabel}
-          </span>
         </div>
         <Dropdown
           align="right"
