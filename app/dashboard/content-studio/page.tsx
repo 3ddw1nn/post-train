@@ -9,25 +9,26 @@ export const metadata = { title: "Content Studio" };
 
 const TEMPLATES = [
   {
+    id: "ai-ugc",
+    title: "AI UGC Creator",
+    desc: "Pick a persona, add your hook text and CTA clip — ship UGC-style videos at volume.",
+    tags: ["AI-powered"],
+    icon: "sparkles",
+    featured: true,
+  },
+  {
     id: "grid-2x2",
     title: "2x2 Grid Video",
     desc: "Four clips playing in a satisfying grid — a proven short-form format.",
-    tag: "Trending",
+    tags: ["Trending"],
     icon: "grid",
   },
   {
     id: "fade-in",
     title: "Single Fade-in Video",
     desc: "One clip with a clean fade-in and caption overlay. Simple, fast, effective.",
-    tag: null,
+    tags: [],
     icon: "video",
-  },
-  {
-    id: "ai-ugc",
-    title: "AI UGC Creator",
-    desc: "Pick a persona, add your hook text and CTA clip — ship UGC-style videos at volume.",
-    tag: "Most used",
-    icon: "sparkles",
   },
 ];
 
@@ -39,43 +40,57 @@ export default async function StudioPage() {
   return (
     <div className="fade-up">
       <div className="card p-6">
-        <h1 className="text-2xl font-bold">Content Studio</h1>
+        <div className="mt-1 flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
+          <h1 className="text-2xl font-bold">Content Studio</h1>
+          <p className="text-sm text-muted">
+            Pick a template to start — from quick clip edits to full AI-generated UGC.
+          </p>
+        </div>
 
-        {/* Featured banner — content left, action anchored right */}
-        <div className="mt-5 flex flex-col gap-4 rounded-2xl border-2 border-primary bg-primary-soft p-5 sm:flex-row sm:items-center sm:justify-between">
-          <div>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="pill bg-primary text-primary-contrast">New</span>
-              <span className="pill bg-white text-primary-deep">AI-powered</span>
-            </div>
-            <h2 className="mt-2 text-xl font-bold">AI UGC Video Creator</h2>
-            <p className="mt-1 max-w-xl text-sm text-muted">
-              Turn a persona clip, a hook and your product shot into ready-to-post UGC
-              videos — no filming, no editors, no waiting.
-            </p>
+        {/* Featured banner */}
+        <div className="mt-5 rounded-xl border border-line bg-primary-soft/30 p-5">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="pill bg-primary-soft text-primary-deep">Studio</span>
+            <span className="pill bg-primary-soft text-primary-deep">Multi-platform</span>
           </div>
-          <Link
-            href={unlocked ? "/dashboard/content-studio/ai-ugc" : "/dashboard/settings/plans"}
-            className="btn-primary shrink-0"
-          >
-            {unlocked ? "Try AI UGC Creator" : "Upgrade to use"}
-          </Link>
+          <h2 className="mt-1.5 text-lg font-bold text-wrap balance">
+            Create a week of content in minutes
+          </h2>
+          <p className="mt-2 max-w-xl text-sm text-muted">
+            Pick a template, customize in seconds, schedule across all platforms. Your
+            content library grows while you sleep.
+          </p>
         </div>
 
         {/* Template list — a row per template, not a card grid */}
-        <div className="mt-5 flex flex-col divide-y divide-line rounded-xl border border-line">
+        <div className="mt-5 flex flex-col divide-y divide-line overflow-hidden rounded-xl border border-line">
           {TEMPLATES.map((t) => (
             <div
               key={t.id}
-              className="flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:gap-4"
+              className={`flex flex-col gap-3 p-4 sm:flex-row sm:items-center sm:gap-4 ${
+                t.featured ? "bg-primary-soft/50" : ""
+              }`}
             >
-              <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary-deep">
+              <span
+                className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-lg ${
+                  t.featured
+                    ? "bg-primary text-primary-contrast"
+                    : "bg-primary-soft text-primary-deep"
+                }`}
+              >
                 <Icon name={t.icon} size={20} />
               </span>
               <div className="min-w-0 flex-1">
-                <div className="flex items-center gap-2">
+                <div className="flex flex-wrap items-center gap-2">
                   <h3 className="font-bold">{t.title}</h3>
-                  {t.tag && <span className="pill bg-page text-muted">{t.tag}</span>}
+                  {t.featured && (
+                    <span className="pill bg-primary text-primary-contrast">Featured</span>
+                  )}
+                  {t.tags.map((tag) => (
+                    <span key={tag} className="pill bg-page text-muted">
+                      {tag}
+                    </span>
+                  ))}
                 </div>
                 <p className="mt-0.5 text-sm text-muted">{t.desc}</p>
               </div>

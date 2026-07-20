@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Logo } from "./logo";
 import { Icon } from "./icons";
 import { Dropdown } from "./interactive";
@@ -26,7 +26,7 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
     label: "Create",
     items: [
       { label: "Studio", href: "/dashboard/content-studio", icon: "sparkles" },
-      { label: "Bulk tools", href: "/dashboard/bulk-tools", icon: "stack" },
+      { label: "Batch Scheduler", href: "/dashboard/batch-scheduler", icon: "stack" },
     ],
   },
   {
@@ -71,6 +71,11 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
       },
     ],
   },
+];
+
+const DASHBOARD_PREFETCH_HREFS = [
+  "/dashboard/create",
+  ...SECTIONS.flatMap((section) => section.items.map((item) => item.href)),
 ];
 
 function isActive(item: NavItem, path: string): boolean {
@@ -293,7 +298,33 @@ export function Sidebar({
   isStaff?: boolean;
 }) {
   const path = usePathname();
+  const router = useRouter();
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [optimisticPath, setOptimisticPath] = useState<string | null>(null);
+  const activePath = optimisticPath ?? path;
+
+  useEffect(() => {
+    setOptimisticPath(null);
+  }, [path]);
+
+  useEffect(() => {
+    for (const href of DASHBOARD_PREFETCH_HREFS) router.prefetch(href);
+  }, [router]);
+
+  function primeRoute(href: string) {
+    router.prefetch(href);
+  }
+
+  function handleNavIntent(href: string) {
+    setOptimisticPath(href);
+    setDrawerOpen(false);
+    primeRoute(href);
+  }
+
+  function handleNavPress(href: string) {
+    setOptimisticPath(href);
+    primeRoute(href);
+  }
 
   const railNav = (
     <nav className="flex h-full flex-col gap-4 overflow-y-auto p-4">
@@ -303,7 +334,11 @@ export function Sidebar({
       <Link
         href="/dashboard/create"
         className="btn-primary w-full"
-        onClick={() => setDrawerOpen(false)}
+        onMouseEnter={() => primeRoute("/dashboard/create")}
+        onFocus={() => primeRoute("/dashboard/create")}
+        onTouchStart={() => primeRoute("/dashboard/create")}
+        onPointerDown={() => handleNavPress("/dashboard/create")}
+        onClick={() => handleNavIntent("/dashboard/create")}
       >
         <Icon name="plus" size={16} strokeWidth={2.5} /> Create post
       </Link>
@@ -318,8 +353,12 @@ export function Sidebar({
                 key={item.label}
                 href={item.href}
                 className="nav-item"
-                data-active={isActive(item, path)}
-                onClick={() => setDrawerOpen(false)}
+                data-active={isActive(item, activePath)}
+                onMouseEnter={() => primeRoute(item.href)}
+                onFocus={() => primeRoute(item.href)}
+                onTouchStart={() => primeRoute(item.href)}
+                onPointerDown={() => handleNavPress(item.href)}
+                onClick={() => handleNavIntent(item.href)}
               >
                 <Icon name={item.icon} size={16} />
                 <span className="flex-1">{item.label}</span>

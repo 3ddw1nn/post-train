@@ -27,7 +27,7 @@ export default async function BulkCreationPage() {
           <Link href="/dashboard/content-studio" className="btn-primary">
             Open Content Studio
           </Link>
-          <Link href="/dashboard/bulk-tools/videos" className="btn-subtle">
+          <Link href="/dashboard/batch-scheduler/videos" className="btn-subtle">
             Bulk Video Upload
           </Link>
         </div>

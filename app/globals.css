@@ -105,6 +105,25 @@ body {
   }
 }
 
+.skeleton-shimmer {
+  position: relative;
+  overflow: hidden;
+  background: #e8eeee;
+}
+.skeleton-shimmer::after {
+  position: absolute;
+  inset: 0;
+  content: "";
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.75), transparent);
+  animation: skeletonShimmer 1.4s ease-in-out infinite;
+}
+@keyframes skeletonShimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
 .pt-typing-dot {
   animation: pt-typing 1.2s ease-in-out var(--delay, 0s) infinite;
 }
