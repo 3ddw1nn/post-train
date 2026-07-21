@@ -7,6 +7,7 @@ const nextConfig: NextConfig = {
   // Pin the workspace root to this repo — a stray lockfile in the parent
   // home directory otherwise makes Next.js infer the wrong root.
   outputFileTracingRoot: path.join(__dirname),
+  transpilePackages: ["@shadergradient/react"],
 };
 
 export default nextConfig;

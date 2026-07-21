@@ -62,7 +62,7 @@ export function AuthForm({ mode }: { mode: "signin" | "signup" }) {
       />
       {error && <p className="text-sm font-medium text-danger">{error}</p>}
       <button className="btn-primary w-full" disabled={busy}>
-        {busy ? "One moment…" : mode === "signin" ? "Sign in" : "Create account"}
+        {busy ? "One moment…" : mode === "signin" ? "Log in" : "Create account"}
       </button>
     </form>
   );

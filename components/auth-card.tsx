@@ -2,6 +2,7 @@ import Link from "next/link";
 import { AuthForm } from "./auth-form";
 import { MarketingNav } from "@/app/(marketing)/marketing-nav";
 import { MarketingFooter } from "@/app/(marketing)/marketing-footer";
+import { ShaderGradientBg } from "./shader-gradient-bg";
 import { getSessionUser } from "@/lib/auth";
 
 const ROUTE_STOPS = [
@@ -17,28 +18,11 @@ export async function AuthShell({ children }: { children: React.ReactNode }) {
       <MarketingNav
         user={user ? { name: user.display_name || user.email, isStaff: !!user.is_staff } : null}
       />
-      <main className="flex min-h-[80vh] bg-page-onboarding">
-        {/* Brand rail — the route your content rides */}
-        <aside className="relative hidden w-[400px] shrink-0 flex-col justify-between overflow-hidden bg-primary-dark p-10 pb-16 text-white lg:flex">
-          {/* Ambient depth — soft glow, no motion */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -left-20 -top-24 h-72 w-72 rounded-full bg-primary/25 blur-3xl"
-          />
-          <div
-            aria-hidden
-            className="pointer-events-none absolute -bottom-28 -right-16 h-64 w-64 rounded-full bg-primary/15 blur-3xl"
-          />
-          {/* Rail-tie texture */}
-          <div
-            aria-hidden
-            className="pointer-events-none absolute inset-0 opacity-[0.06]"
-            style={{
-              backgroundImage:
-                "repeating-linear-gradient(90deg, transparent, transparent 26px, rgba(255,255,255,0.7) 26px, rgba(255,255,255,0.7) 27px)",
-            }}
-          />
+      <main className="relative flex min-h-screen overflow-hidden bg-page-onboarding">
+        <ShaderGradientBg className="pointer-events-none absolute inset-0" fadeAt={680} variant="rail" />
 
+        {/* Brand rail — the route your content rides */}
+        <aside className="relative z-10 hidden w-[400px] shrink-0 flex-col justify-between p-10 pb-16 text-white lg:flex">
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img src="/logo-white.svg" alt="" aria-hidden width={34} height={34} className="relative" />
 
@@ -66,7 +50,7 @@ export async function AuthShell({ children }: { children: React.ReactNode }) {
           </p>
         </aside>
 
-        <div className="flex flex-1 items-center justify-center px-4 py-12 sm:py-16">
+        <div className="relative z-10 flex flex-1 items-center justify-center px-4 py-12 sm:py-16">
           <div className="fade-up w-full max-w-sm">{children}</div>
         </div>
       </main>
@@ -80,14 +64,13 @@ export function AuthCard({ mode }: { mode: "signin" | "signup" }) {
   return (
     <AuthShell>
       <div className="card overflow-hidden">
-        <div aria-hidden className="h-1 bg-primary" />
         <div className="p-8">
           <h1 className="text-2xl font-bold tracking-tight">
             {mode === "signin" ? "Welcome back" : "Create your account"}
           </h1>
           <p className="mt-1.5 text-sm text-muted">
             {mode === "signin"
-              ? "Sign in to keep your posting streak going."
+              ? "Log in to keep your posting streak going."
               : "Start cross-posting in under two minutes."}
           </p>
           <div className="mt-6 flex flex-col gap-3">
@@ -140,7 +123,7 @@ export function AuthCard({ mode }: { mode: "signin" | "signup" }) {
           <>
             Already have an account?{" "}
             <Link href="/signin" className="font-semibold text-primary-deep">
-              Sign in
+              Log in
             </Link>
           </>
         )}

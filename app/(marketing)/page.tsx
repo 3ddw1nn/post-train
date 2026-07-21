@@ -5,6 +5,7 @@ import { PlatformIcon, PlatformIconRow } from "@/components/platform-icon";
 import { PlanPicker } from "@/components/plan-picker";
 import { Icon } from "@/components/icons";
 import { UserAvatar } from "@/components/avatar-menu";
+import { ShaderGradientBg } from "@/components/shader-gradient-bg";
 
 export const metadata = {
   title: "Post Train — schedule and cross-post to 10 platforms",
@@ -229,15 +230,16 @@ export default function LandingPage() {
       </section>
 
       {/* ── Stats band ───────────────────────────────────── */}
-      <section className="border-y border-line bg-primary-dark py-12 text-white">
-        <div className="mx-auto grid max-w-4xl grid-cols-1 gap-8 px-6 text-center sm:grid-cols-3">
+      <section className="relative overflow-hidden border-y border-line bg-primary-dark py-12 text-white">
+        <ShaderGradientBg className="pointer-events-none absolute inset-0" />
+        <div className="relative z-10 mx-auto grid max-w-4xl grid-cols-1 gap-8 px-6 text-center sm:grid-cols-3">
           {[
             ["10", "platforms, one dashboard"],
             ["<2 min", "from upload to everywhere"],
             ["7 days", "free on every plan"],
           ].map(([big, small]) => (
             <div key={small}>
-              <p className="text-4xl font-extrabold text-primary">{big}</p>
+              <p className="text-4xl font-extrabold">{big}</p>
               <p className="mt-1 text-sm text-white/80">{small}</p>
             </div>
           ))}
@@ -375,14 +377,17 @@ export default function LandingPage() {
       </section>
 
       {/* ── Final CTA ────────────────────────────────────── */}
-      <section className="border-t border-line bg-primary-dark py-16 text-center text-white">
-        <h2 className="text-3xl font-extrabold">All aboard.</h2>
-        <p className="mx-auto mt-2 max-w-md text-white/80">
-          Your next post could be on 10 platforms in the next two minutes.
-        </p>
-        <Link href="/create-account" className="btn-primary mt-6 !px-8 !py-3 text-base">
-          Try it for free
-        </Link>
+      <section className="relative overflow-hidden border-t border-line bg-primary-dark py-16 text-center text-white">
+        <ShaderGradientBg className="pointer-events-none absolute inset-0" />
+        <div className="relative z-10">
+          <h2 className="text-3xl font-extrabold">All aboard.</h2>
+          <p className="mx-auto mt-2 max-w-md text-white/80">
+            Your next post could be on 10 platforms in the next two minutes.
+          </p>
+          <Link href="/create-account" className="btn-primary mt-6 !px-8 !py-3 text-base">
+            Try it for free
+          </Link>
+        </div>
       </section>
     </>
   );
