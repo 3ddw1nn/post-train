@@ -31,6 +31,10 @@ export function mediaObjectKey(workspaceId: string, mediaId: string) {
   return `workspaces/${workspaceId}/media/${mediaId}`;
 }
 
+export function exploreObjectKey(itemId: string, slideIndex: number) {
+  return `explore/${itemId}/slide-${slideIndex}.jpg`;
+}
+
 export function r2Client() {
   const accountId = required("R2_ACCOUNT_ID");
   return new S3Client({

@@ -11,12 +11,21 @@ import { api } from "@/convex/_generated/api";
 import { convexMutation, convexQuery, patchRecord, now } from "./db";
 import { DomainError } from "./posts";
 import { importFromFile, readMediaBytes, type MediaRow } from "./media";
-import { assertFfmpeg, concatClips, probe, renderFadeIn, renderGrid, renderPlaceholder } from "./ffmpeg";
+import {
+  assertFfmpeg,
+  compositeImageOverlay,
+  concatClips,
+  normalizeSlideImage,
+  probe,
+  renderFadeIn,
+  renderGrid,
+  renderPlaceholder,
+} from "./ffmpeg";
 import { createLipsync, getLipsync, MOCK_OUTPUT_URL, type ProviderJobState } from "./creatify";
 import { falEnabled, falUploadBytes, FAL_AVATAR_PER_SECOND, pollAvatarJob, submitAvatarJob } from "./fal";
 import { STUDIO_AI_MONTHLY_CAP } from "./entitlements";
 
-export const STUDIO_TEMPLATES = ["grid-2x2", "fade-in", "ai-ugc"] as const;
+export const STUDIO_TEMPLATES = ["grid-2x2", "fade-in", "ai-ugc", "slideshow"] as const;
 export type StudioTemplate = (typeof STUDIO_TEMPLATES)[number];
 
 export type StudioJobRow = {
@@ -30,6 +39,7 @@ export type StudioJobRow = {
   provider_job_id: string | null;
   provider_video_url: string | null;
   output_media_id: string | null;
+  output_media_ids: string | null;
   error_message: string | null;
   attempts: number;
   lease_until: string | null;
@@ -45,10 +55,17 @@ export type StudioParams = {
   script?: string;
   cta_media_id?: string;
   aspect_ratio?: string;
+  // Slide text is rasterized to a PNG client-side (same idiom as caption_media_id
+  // below — slim ffmpeg builds have no drawtext/freetype), so the server only
+  // ever sees an already-rendered overlay image, never raw text.
+  slides?: { image_media_id: string; caption_media_id?: string }[];
+  source_explore_item_id?: string;
 };
 
 export const SCRIPT_MAX = 600; // also bounds per-generation provider cost
 export const CAPTION_MAX = 200;
+const SLIDE_MIN = 1;
+const SLIDE_MAX = 10;
 
 /**
  * Pay-as-you-go price transparency for the wizard. Speech averages ~15 chars/s,
@@ -118,6 +135,27 @@ export async function createStudioJob(
         }
         params.caption_media_id = String(input.caption_media_id);
       }
+    }
+  } else if (template === "slideshow") {
+    const slides = Array.isArray(input.slides) ? input.slides : [];
+    if (slides.length < SLIDE_MIN || slides.length > SLIDE_MAX) {
+      throw new DomainError(400, `Pick between ${SLIDE_MIN} and ${SLIDE_MAX} slides.`);
+    }
+    const imageIds = slides.map((s) => String(s.image_media_id));
+    const captionIds = slides.map((s) => s.caption_media_id).filter(Boolean).map(String);
+    const kinds = await uploadedKinds([...imageIds, ...captionIds]);
+    if (imageIds.some((id) => kinds.get(id) !== "image")) {
+      throw new DomainError(400, "Every slide needs an uploaded image.");
+    }
+    if (captionIds.some((id) => kinds.get(id) !== "image")) {
+      throw new DomainError(400, "A slide's caption overlay failed to upload — try again.");
+    }
+    params.slides = slides.map((s) => ({
+      image_media_id: String(s.image_media_id),
+      caption_media_id: s.caption_media_id ? String(s.caption_media_id) : undefined,
+    }));
+    if (input.source_explore_item_id) {
+      params.source_explore_item_id = String(input.source_explore_item_id);
     }
   } else {
     // ai-ugc
@@ -214,6 +252,8 @@ async function advanceJob(job: StudioJobRow): Promise<void> {
     // re-polling the provider is idempotent, so restart from there.
     if (job.status === "queued") await submitGeneration(job, params);
     else await checkGeneration(job, params);
+  } else if (job.template === "slideshow") {
+    await renderSlideshow(job, params);
   } else {
     await renderComposite(job, params);
   }
@@ -336,6 +376,44 @@ async function finishJob(job: StudioJobRow, filePath: string): Promise<void> {
   await patchJob(job.id, {
     status: "done",
     output_media_id: row.id,
+    error_message: null,
+    lease_until: null,
+  });
+}
+
+/** Composites each slide's uploaded photo with its (optional) rasterized text overlay. */
+async function renderSlideshow(job: StudioJobRow, params: StudioParams): Promise<void> {
+  await assertFfmpeg();
+  if (job.status === "queued") await patchJob(job.id, { status: "compositing" });
+  const slides = params.slides ?? [];
+  await withTmpDir(async (dir) => {
+    const outputs: string[] = [];
+    for (let i = 0; i < slides.length; i++) {
+      const slide = slides[i];
+      const base = await fetchMediaTo(dir, slide.image_media_id, `slide-${i}-base.jpg`);
+      const out = path.join(dir, `slide-${i}-out.jpg`);
+      if (slide.caption_media_id) {
+        const overlay = await fetchMediaTo(dir, slide.caption_media_id, `slide-${i}-caption.png`);
+        await compositeImageOverlay(base, overlay, out);
+      } else {
+        await normalizeSlideImage(base, out);
+      }
+      outputs.push(out);
+    }
+    await finishSlideshowJob(job, outputs);
+  });
+}
+
+async function finishSlideshowJob(job: StudioJobRow, filePaths: string[]): Promise<void> {
+  const ids: string[] = [];
+  for (let i = 0; i < filePaths.length; i++) {
+    const name = `${job.template}-${job.created_at.slice(0, 10)}-${job.id.slice(-6)}-${i + 1}.jpg`;
+    const row: MediaRow = await importFromFile(job.workspace_id, filePaths[i], name, "image/jpeg");
+    ids.push(row.id);
+  }
+  await patchJob(job.id, {
+    status: "done",
+    output_media_ids: JSON.stringify(ids),
     error_message: null,
     lease_until: null,
   });

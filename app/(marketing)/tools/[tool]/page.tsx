@@ -17,13 +17,20 @@ export default async function ToolPage({ params }: { params: Promise<{ tool: str
   const { tool } = await params;
   const t = TOOL_LIST.find((x) => x.slug === tool);
   if (!t) notFound();
+  const wide = t.slug === "trend-finder";
   return (
-    <section className="mx-auto max-w-2xl px-6 py-16">
+    <section className={`mx-auto px-6 py-16 ${wide ? "max-w-[1500px]" : "max-w-2xl"}`}>
       <h1 className="text-3xl font-extrabold">{t.name}</h1>
       <p className="mt-2 text-muted">{t.desc}</p>
-      <div className="card mt-8 p-6">
-        <ToolRenderer slug={t.slug} />
-      </div>
+      {wide ? (
+        <div className="mt-8">
+          <ToolRenderer slug={t.slug} />
+        </div>
+      ) : (
+        <div className="card mt-8 p-6">
+          <ToolRenderer slug={t.slug} />
+        </div>
+      )}
       <div className="card mt-8 bg-primary-soft p-6 text-center">
         <p className="font-bold text-primary-dark">
           Like free tools? You&apos;ll love the paid one.

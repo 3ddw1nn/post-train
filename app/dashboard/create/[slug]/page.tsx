@@ -4,7 +4,7 @@ import { getSubscription } from "@/lib/billing";
 import { canCreatePosts, entitled } from "@/lib/entitlements";
 import { currentWorkspace, workspacesForUser } from "@/lib/workspaces";
 import { accountsForWorkspace } from "@/lib/accounts";
-import { listRecords, recordById } from "@/lib/db";
+import { listRecords } from "@/lib/db";
 import { getPostRow, postAccountIds, postMediaIds } from "@/lib/posts";
 import type { PostType } from "@/lib/platforms";
 import { PaywallCard } from "@/components/paywall-card";
@@ -57,14 +57,14 @@ export default async function ComposerPage({
 
   let initialMedia: ComposerMedia[] = [];
   if (!post && mediaParam) {
-    // Prefill from e.g. a finished Content Studio render (?media=<id>).
-    const row = await recordById<ComposerMedia & { workspace_id: string; upload_status: string }>(
-      "media",
-      mediaParam
-    );
-    if (row && row.workspace_id === ws.id && row.upload_status === "uploaded") {
-      initialMedia = [row];
-    }
+    // Prefill from e.g. a finished Content Studio render — a single id
+    // (?media=<id>) for video templates, or a comma-separated list
+    // (?media=<id1>,<id2>,...) for multi-image templates like slideshow.
+    const ids = mediaParam.split(",").filter(Boolean);
+    const rows = (
+      await listRecords<ComposerMedia & { workspace_id: string; upload_status: string }>("media")
+    ).filter((m) => ids.includes(m.id) && m.workspace_id === ws.id && m.upload_status === "uploaded");
+    initialMedia = ids.map((id) => rows.find((r) => r.id === id)).filter(Boolean) as ComposerMedia[];
   }
   if (post) {
     const ids = await postMediaIds(post.id);

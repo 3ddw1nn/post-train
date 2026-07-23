@@ -14,7 +14,10 @@ Visual/layout differentiation (below) doesn't fix an app that still has the exac
 - [ ] Add Home/Overview landing page — proposed, not started. Post-login currently drops into the Posts list like the template does; a real dashboard home (upcoming posts, quick stats, recent activity) would be a structural page the template doesn't have.
 - [ ] Add Activity/Inbox page — proposed, not started. Publish failures and reconnect prompts currently live as banners on Connections; a dedicated page would be new IA, not just new styling.
 - [ ] Fold Batch Scheduler into Studio as a mode toggle — proposed, not started, user chose not to prioritize yet.
+
 - **Why:** page-count/page-naming sameness is what makes an app *feel* like an unmodified template at a glance, independent of any styling pass.
+
+
 
 ### 1. Rebrand every page — differentiate UI from the Post Bridge template
 
@@ -126,6 +129,17 @@ Nothing to build here yet — revisit when the blocker clears.
 
 
 ## 🚀 Post-Launch (deliberately deferred, not forgotten)
+
+
+
+### Explore / trend library (Phase 1 after launch)
+
+- [ ] Keep `/dashboard/explore` hidden for launch. The route currently returns 404 and the sidebar link is removed.
+- [ ] Replace fake seeded Explore posts with licensed/official trend data before re-enabling.
+- [ ] Start with free/low-risk sources: YouTube Data API `mostPopular`, Pinterest Trends keywords if approved, Instagram hashtag search if Meta app review allows it, and manual public research surfaces.
+- [ ] Do not rehost third-party creator media in R2 unless the source/vendor license explicitly allows it.
+- [ ] Treat TikTok trend automation as paid/vendor-backed; keep TikTok Creative Center as a manual research input until budget/rights are clear.
+- [ ] Revisit the dashboard UX after launch and decide whether Explore returns as a paid feature, an internal curation tool, or stays as public free-tool lead gen.
 
 
 

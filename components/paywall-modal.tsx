@@ -29,11 +29,11 @@ export function PaywallModal({ onClose }: { onClose: () => void }) {
         <div className="card relative overflow-hidden p-6 sm:p-10">
           <button
             type="button"
-            aria-label="Explore first"
+            aria-label="Close upgrade prompt"
             className="absolute right-4 top-4 inline-flex items-center gap-1.5 rounded-full border border-line bg-white px-3 py-1.5 text-sm font-semibold text-muted shadow-sm transition-colors hover:bg-page hover:text-ink"
             onClick={onClose}
           >
-            Explore first <Icon name="x" size={18} />
+            Close <Icon name="x" size={18} />
           </button>
           <div className="mx-auto max-w-lg text-center">
             <h2 className="text-2xl font-extrabold sm:text-3xl">Unlock the full ride</h2>

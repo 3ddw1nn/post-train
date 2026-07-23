@@ -30,6 +30,13 @@ const TEMPLATES = [
     tags: [],
     icon: "video",
   },
+  {
+    id: "slideshow",
+    title: "Slideshow",
+    desc: "Drop your own photos into a proven slide structure, with hook text baked onto each one.",
+    tags: ["Photo posts"],
+    icon: "image",
+  },
 ];
 
 export default async function StudioPage() {

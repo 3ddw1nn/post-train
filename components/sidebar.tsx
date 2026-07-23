@@ -24,11 +24,15 @@ type NavItem = {
 
 const SECTIONS: { label: string; items: NavItem[] }[] = [
   {
+    label: "Discover",
+    items: [{ label: "Trend Finder", href: "/dashboard/tools/trend-finder", icon: "search" }],
+  },
+  {
     label: "Compose",
     items: [
       { label: "Studio", href: "/dashboard/content-studio", icon: "sparkles" },
       { label: "Batch Scheduler", href: "/dashboard/batch-scheduler", icon: "stack" },
-      { label: "Tools", href: "/dashboard/tools", icon: "grid" },
+      { label: "Tools", href: "/dashboard/tools", icon: "wrench" },
     ],
   },
   {
@@ -58,7 +62,6 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
         match: ["/dashboard/settings", "/dashboard/settings/queue"],
         exclude: ["/dashboard/settings/billing", "/dashboard/settings/plans", "/dashboard/settings/workspace"],
       },
-      { label: "Workspace", href: "/dashboard/settings/workspace", icon: "users" },
       { label: "API Keys", href: "/dashboard/api-keys", icon: "key" },
       {
         label: "Billing",

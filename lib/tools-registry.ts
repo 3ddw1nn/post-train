@@ -1,6 +1,12 @@
-// Free-tools registry (marketing SEO surface, spec 11 §12). Pure data — the
-// client components live in components/tools.tsx.
+// Free-tools registry (marketing SEO surface, spec 11 §12). Pure data; tool
+// widgets are lazy-loaded through components/tools.tsx.
 export const TOOL_LIST: { slug: string; name: string; desc: string; icon: string }[] = [
+  {
+    slug: "trend-finder",
+    name: "Trend Finder",
+    desc: "Find trend signals from free and connected sources before paying for vendor data.",
+    icon: "search",
+  },
   {
     slug: "instagram-grid-maker",
     name: "Instagram Grid Maker",

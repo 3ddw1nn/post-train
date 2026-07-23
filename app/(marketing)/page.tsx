@@ -67,6 +67,8 @@ const FAQ: [string, string][] = [
 export default function LandingPage() {
   return (
     <>
+      <ShaderGradientBg className="pointer-events-none fixed left-[-1000px] top-0 h-48 w-[640px] opacity-0" />
+
       {/* ── Hero ─────────────────────────────────────────── */}
       <section className="mx-auto grid max-w-6xl items-center gap-10 px-6 py-16 lg:grid-cols-2 lg:py-24">
         <div>

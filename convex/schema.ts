@@ -211,6 +211,7 @@ export default defineSchema({
     provider_job_id: nullableString,
     provider_video_url: nullableString,
     output_media_id: nullableString,
+    output_media_ids: v.optional(nullableString), // JSON string[] — multi-output templates (e.g. slideshow)
     error_message: nullableString,
     attempts: v.number(),
     lease_until: nullableString,
@@ -220,6 +221,45 @@ export default defineSchema({
     .index("by_legacy_id", ["id"])
     .index("by_workspace", ["workspace_id"])
     .index("by_status", ["status"]),
+
+  // Curated "trending post" library shown on the Explore page. Global/shared
+  // across all workspaces (like support_messages) — not workspace-scoped.
+  // v1 is seeded with original placeholder content; a real ingestion source
+  // can populate this same shape later with no UI changes.
+  explore_items: defineTable({
+    id: v.string(),
+    platform: v.string(), // "tiktok" | "instagram"
+    category: v.string(),
+    media_type: v.string(), // "video" | "slideshow"
+    cover_image_url: v.string(),
+    slide_count: v.number(), // denormalized from explore_item_slides, for grid card badges
+    caption: v.string(),
+    hashtags: v.array(v.string()), // small fixed list per post, not unbounded growth
+    creator_handle: v.string(),
+    creator_avatar_url: nullableString,
+    source_url: v.string(),
+    view_count: v.number(),
+    like_count: v.number(),
+    comment_count: v.number(),
+    share_count: v.number(),
+    save_count: v.number(),
+    is_monetized: v.number(),
+    posted_at: v.string(),
+    created_at: v.string(),
+  })
+    .index("by_legacy_id", ["id"])
+    .index("by_category", ["category"])
+    .index("by_platform", ["platform"]),
+
+  // Per-slide images/text for slideshow-type explore_items — a separate
+  // table (not an inline array) since slide counts can grow per Convex
+  // schema guidance, mirroring the post_media join-table pattern above.
+  explore_item_slides: defineTable({
+    explore_item_id: v.string(),
+    sort_order: v.number(),
+    image_url: v.string(),
+    text: v.string(),
+  }).index("by_item", ["explore_item_id"]),
 
   api_keys: defineTable({
     id: v.string(),
@@ -312,6 +352,18 @@ export default defineSchema({
     status: v.string(), // "pending" | "complete" | "error"
     provider: nullableString,
   }).index("by_session", ["session_key"]),
+
+  // AI "summarize & plan to recreate" output for a Trend Finder item. Cached
+  // globally by content_key — generated once, reused for every future viewer.
+  trend_recreations: defineTable({
+    content_key: v.string(), // the trend item id, e.g. "youtube-<id>" / "bluesky-<uri>"
+    status: v.string(), // "pending" | "complete" | "error"
+    summary: v.string(),
+    plan: v.string(),
+    provider: nullableString,
+    title: v.string(),
+    platform: v.string(),
+  }).index("by_content_key", ["content_key"]),
 
   leads: defineTable({
     id: v.string(),

@@ -132,6 +132,28 @@ export async function concatClips(inputs: string[], out: string): Promise<void> 
   ]);
 }
 
+const SCALE_SLIDE = "scale=1080:1350:force_original_aspect_ratio=increase,crop=1080:1350";
+
+/** Re-encode a photo to the shared slideshow frame size, no overlay. */
+export async function normalizeSlideImage(basePath: string, out: string): Promise<void> {
+  await runFfmpeg([
+    "-i", basePath,
+    "-vf", SCALE_SLIDE,
+    "-frames:v", "1", "-q:v", "2", out,
+  ]);
+}
+
+/** Still-image analog of renderOne's overlay branch — bakes a caption PNG onto a static photo. */
+export async function compositeImageOverlay(basePath: string, overlayPngPath: string, out: string): Promise<void> {
+  await runFfmpeg([
+    "-loop", "1", "-i", basePath,
+    "-i", overlayPngPath,
+    "-filter_complex",
+    `[0:v]${SCALE_SLIDE}[base];[1:v]scale=980:-1[cap];[base][cap]overlay=(W-w)/2:H*0.10[v]`,
+    "-map", "[v]", "-frames:v", "1", "-q:v", "2", out,
+  ]);
+}
+
 /** Mock-mode stand-in for provider generation: animated test pattern, no external calls. */
 export async function renderPlaceholder(out: string, seconds = 6): Promise<void> {
   await runFfmpeg([
