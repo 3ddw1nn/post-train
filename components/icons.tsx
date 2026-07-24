@@ -91,6 +91,10 @@ const PATHS: Record<string, React.ReactNode> = {
   warningTriangle: (
     <path d="M12 3 2 20h20L12 3ZM12 10v4M12 17h.01" />
   ),
+  expand: (
+    <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3" />
+  ),
+  download: <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />,
 };
 
 export function Icon({

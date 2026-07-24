@@ -19,6 +19,7 @@ export async function POST(req: Request) {
   const platformId = typeof body.platform === "string" ? body.platform : "";
   const context = typeof body.context === "string" ? body.context.slice(0, 1200) : "";
   const campaignName = typeof body.campaignName === "string" ? body.campaignName.slice(0, 160) : "";
+  const length = body.length === "short" || body.length === "long" ? body.length : "medium";
 
   const p = platformOf(platformId);
   if (!p) {
@@ -30,11 +31,19 @@ export async function POST(req: Request) {
 
   const max = CAPTION_MAX_BY_PLATFORM[p.id] ?? CAPTION_MAX;
   const wantsHashtags = HASHTAG_PLATFORMS.includes(p.id);
+  const target =
+    length === "short" ? Math.min(120, Math.round(max * 0.3)) : length === "long" ? Math.round(max * 0.9) : Math.round(max * 0.55);
+  const lengthInstruction =
+    length === "short"
+      ? `Keep it short and punchy — one brief sentence, well under ${target} characters.`
+      : length === "long"
+        ? `Write a fuller caption that makes good use of the space, aiming for close to ${target} characters.`
+        : `Aim for a medium length, around ${target} characters.`;
 
   const messages: ChatTurn[] = [
     {
       role: "system",
-      content: `You write a single ${p.name} post caption for a slideshow. Match ${p.name}'s typical tone, length, and formatting conventions. Stay at or under ${max} characters total, including any hashtags. ${
+      content: `You write a single ${p.name} post caption for a slideshow. Match ${p.name}'s typical tone and formatting conventions. ${lengthInstruction} Stay at or under ${max} characters total, including any hashtags. ${
         wantsHashtags
           ? "End with 3-5 relevant, specific hashtags on their own line — no generic tags like #love or #instagood."
           : "Do not include hashtags."
@@ -46,7 +55,7 @@ export async function POST(req: Request) {
     },
   ];
 
-  const result = await generateWithFreeAi(messages, Math.min(500, Math.ceil(max / 3)));
+  const result = await generateWithFreeAi(messages, Math.min(500, Math.max(40, Math.ceil(target / 3))));
   if (result.rateLimited) {
     return Response.json(
       { error: { message: "You've used up today's free AI generations — try again later." } },

@@ -39,13 +39,44 @@ const AI_MODELS = [
 ] as const;
 
 const ASPECTS = [
-  { id: "9:16", name: "9:16", hint: "Portrait (TikTok, Reels)", px: "1080×1920px" },
-  { id: "2:3", name: "2:3", hint: "Portrait (Pinterest)", px: "1000×1500px" },
-  { id: "3:4", name: "3:4", hint: "Portrait (Threads, LinkedIn)", px: "1080×1440px" },
-  { id: "4:5", name: "4:5", hint: "Portrait (Instagram Feed)", px: "1080×1350px" },
-  { id: "1:1", name: "1:1", hint: "Square (Instagram, X, Bluesky)", px: "1080×1080px" },
-  { id: "16:9", name: "16:9", hint: "Landscape (X, Facebook, LinkedIn)", px: "1920×1080px" },
+  { id: "9:16", name: "9:16", hint: "Portrait", px: "1080×1920px" },
+  { id: "2:3", name: "2:3", hint: "Portrait", px: "1000×1500px" },
+  { id: "3:4", name: "3:4", hint: "Portrait", px: "1080×1440px" },
+  { id: "4:5", name: "4:5", hint: "Portrait", px: "1080×1350px" },
+  { id: "1:1", name: "1:1", hint: "Square", px: "1080×1080px" },
+  { id: "16:9", name: "16:9", hint: "Landscape", px: "1920×1080px" },
 ] as const;
+
+// The aspect each platform actually crops/displays images at, so the launch
+// preview shows what a post really looks like there regardless of the
+// editing aspect chosen in Settings. Falls back to 9:16 for anything unlisted.
+const PLATFORM_ASPECT: Record<string, (typeof ASPECTS)[number]["id"]> = {
+  tiktok: "9:16",
+  youtube: "9:16",
+  pinterest: "2:3",
+  threads: "3:4",
+  linkedin: "3:4",
+  instagram: "4:5",
+  twitter: "1:1",
+  bluesky: "1:1",
+  mastodon: "1:1",
+  facebook: "16:9",
+  google_business: "1:1",
+};
+function platformAspect(platformId: string): (typeof ASPECTS)[number]["id"] {
+  return PLATFORM_ASPECT[platformId] ?? "9:16";
+}
+
+// Every platform that can post a carousel/slideshow here (source of truth:
+// CAROUSEL_MAX), grouped by the aspect it natively displays at — drives the
+// platform-logo hints in the editing-preview aspect picker. Google Business
+// doesn't support carousel posts, so it's excluded even though it isn't in
+// CAROUSEL_MAX anyway.
+const CAROUSEL_ASPECT_PLATFORMS: Record<string, string[]> = {};
+for (const id of Object.keys(CAROUSEL_MAX)) {
+  if (id === "google_business") continue;
+  (CAROUSEL_ASPECT_PLATFORMS[platformAspect(id)] ??= []).push(id);
+}
 
 const OVERLAYS = [
   { id: "none", name: "No Overlays", desc: "Just the images, no text on top", icon: "image" },
@@ -74,24 +105,86 @@ const SLIDE_CATEGORIES = [
   { id: "case_study", name: "Case Study", icon: "chart" },
 ] as const;
 
-// Text color/shadow only — whether the text sits on a background chip (and
-// what color that chip is) is a separate control (see textBgEnabled/textBgColor),
-// so any of these can be paired with any background.
+// Font families — system/web-safe stacks only (no external font loading, so
+// nothing to fetch and no CSP concerns). `stack` drives both the DOM (inline
+// fontFamily) and the canvas export.
+const FONTS = [
+  { id: "sans", name: "Sans", stack: "-apple-system, 'Segoe UI', Roboto, sans-serif" },
+  { id: "serif", name: "Serif", stack: "Georgia, 'Times New Roman', serif" },
+  { id: "mono", name: "Mono", stack: "ui-monospace, Menlo, Consolas, monospace" },
+  { id: "condensed", name: "Condensed", stack: "'Arial Narrow', 'Roboto Condensed', sans-serif" },
+  { id: "rounded", name: "Rounded", stack: "'Trebuchet MS', 'Segoe UI', sans-serif" },
+  { id: "impact", name: "Impact", stack: "Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif" },
+] as const;
+
+// Text color/effect treatment. `className` styles the DOM; `fill`/`effect` drive
+// the canvas export so a downloaded slide matches. Any style can pair with any
+// background chip (bgEnabled/bgColor is separate, per layer).
 const TEXT_STYLES = [
-  { id: "shadow", name: "Shadow", className: "text-white [text-shadow:0_2px_0_rgba(0,0,0,0.85)]" },
-  { id: "light", name: "Light text", className: "text-white" },
-  { id: "dark", name: "Dark text", className: "text-ink" },
+  { id: "shadow", name: "Shadow", className: "text-white [text-shadow:0_0.06em_0_rgba(0,0,0,0.85)]", fill: "#ffffff", effect: "shadow" },
+  { id: "light", name: "Light", className: "text-white", fill: "#ffffff", effect: "none" },
+  { id: "dark", name: "Dark", className: "text-ink", fill: "#1c1c1e", effect: "none" },
+  {
+    id: "outline",
+    name: "Outline",
+    className:
+      "text-white [text-shadow:-0.035em_-0.035em_0_#000,0.035em_-0.035em_0_#000,-0.035em_0.035em_0_#000,0.035em_0.035em_0_#000]",
+    fill: "#ffffff",
+    effect: "outline",
+  },
+  { id: "pop", name: "Pop", className: "text-[#ffd63b] [text-shadow:0_0.06em_0_rgba(0,0,0,0.9)]", fill: "#ffd63b", effect: "shadow" },
 ] as const;
 
-const TEXT_SIZES = [
-  { id: "normal", name: "Normal" },
-  { id: "small", name: "Small" },
+// Font size is stored as a container-query width unit (cqw = 1% of the slide
+// frame's width) so the overlay scales with the frame — same relative size in
+// the small grid card and the big expand modal. Presets seed the slider.
+const TEXT_SIZE_PRESETS = [
+  { id: "small", name: "Small", scale: 6 },
+  { id: "medium", name: "Medium", scale: 8 },
+  { id: "large", name: "Large", scale: 10.5 },
 ] as const;
+const TEXT_SCALE_MIN = 4;
+const TEXT_SCALE_MAX = 14;
+const TEXT_SCALE_DEFAULT = 8;
 
-const TEXT_WIDTHS = [
-  { id: "wide", name: "Wide" },
-  { id: "narrow", name: "Narrow" },
-] as const;
+// A single draggable/resizable text box on a slide. x/y are the CENTER as a
+// percent of the frame; width is a percent of the frame width (text wraps to a
+// new row when it hits that width). Style is per-layer.
+type TextLayer = {
+  id: string;
+  text: string;
+  x: number;
+  y: number;
+  width: number;
+  scale: number;
+  font: string;
+  style: string;
+  bgEnabled: boolean;
+  bgColor: string;
+};
+const LAYER_WIDTH_MIN = 15;
+const LAYER_WIDTH_MAX = 96;
+function makeLayer(text = "", overrides: Partial<TextLayer> = {}): TextLayer {
+  return {
+    id: crypto.randomUUID(),
+    text,
+    x: 50,
+    y: 50,
+    width: 64,
+    scale: TEXT_SCALE_DEFAULT,
+    font: "sans",
+    style: "shadow",
+    bgEnabled: false,
+    bgColor: "#000000",
+    ...overrides,
+  };
+}
+function layerFont(layer: TextLayer) {
+  return FONTS.find((f) => f.id === layer.font) ?? FONTS[0];
+}
+function layerStyle(layer: TextLayer) {
+  return TEXT_STYLES.find((s) => s.id === layer.style) ?? TEXT_STYLES[0];
+}
 
 // Quick-start templates for the Templates wizard grid. Thumbnails are branded
 // gradient placeholders (real preview images can plug in via `image` later).
@@ -118,6 +211,11 @@ const QUICK_TEMPLATES: QuickTemplate[] = [
 ];
 
 type RefImage = { id: string; url: string; name: string };
+type PlatformSlideData = {
+  sources: string[];
+  uploads: (RefImage | undefined)[];
+  layers: TextLayer[][]; // per-slide list of text boxes
+};
 type StudioMode = "choose" | "custom" | "templates";
 
 function useClickOutside<T extends HTMLElement>(onClose: () => void) {
@@ -305,6 +403,13 @@ function aspectClass(aspect: (typeof ASPECTS)[number]["id"]) {
   }
 }
 
+// width / height, e.g. "9:16" -> 0.5625. Used to size the expand modal so it
+// fits both viewport axes without distorting the aspect.
+function aspectRatioValue(aspect: (typeof ASPECTS)[number]["id"]) {
+  const [w, h] = aspect.split(":").map(Number);
+  return h ? w / h : 1;
+}
+
 /* ------------------------- per-slide source control ------------------------ */
 
 // Anchored via a portal (fixed position) rather than the shared Popover, because
@@ -407,15 +512,363 @@ function SlideSourceControl({
   );
 }
 
-type SlideTextConfig = {
-  className: string; // color/shadow treatment from TEXT_STYLES
-  bgEnabled: boolean;
-  bgColor: string;
-  size: (typeof TEXT_SIZES)[number]["id"];
-  width: (typeof TEXT_WIDTHS)[number]["id"];
-};
-
 const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+
+// Set arr[index] = value, growing the array with `fill` if it's too short.
+// A plain arr.map() silently drops the write when index is past the end (which
+// happens if the per-slide arrays ever drift out of length sync), so writes go
+// through this instead.
+function setAt<T>(arr: T[], index: number, value: T, fill: T): T[] {
+  const next = arr.slice();
+  while (next.length <= index) next.push(fill);
+  next[index] = value;
+  return next;
+}
+
+/** One draggable/resizable/inline-editable text box on a slide. Encapsulates
+ *  its own edit state so React never fights the contentEditable caret. */
+function LayerView({
+  layer,
+  editable,
+  selected,
+  frameRef,
+  onSelect,
+  onChange,
+  onDelete,
+}: {
+  layer: TextLayer;
+  editable: boolean;
+  selected: boolean;
+  frameRef: React.RefObject<HTMLDivElement | null>;
+  onSelect: () => void;
+  onChange: (patch: Partial<TextLayer>) => void;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const editRef = useRef<HTMLDivElement>(null);
+  const boxRef = useRef<HTMLDivElement>(null);
+  const grab = useRef<{ dx: number; dy: number } | null>(null);
+  const resizing = useRef(false);
+
+  // Seed the editable node once when entering edit mode, then leave it
+  // uncontrolled so typing doesn't reset the caret.
+  useEffect(() => {
+    if (!editing) return;
+    const el = editRef.current;
+    if (!el) return;
+    el.textContent = layer.text;
+    el.focus();
+    const sel = window.getSelection();
+    if (sel) {
+      sel.selectAllChildren(el);
+      sel.collapseToEnd();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [editing]);
+
+  const st = layerStyle(layer);
+  const font = layerFont(layer);
+  const hasText = layer.text.trim().length > 0;
+
+  function onMoveDown(e: React.PointerEvent) {
+    if (!editable || editing) return;
+    e.stopPropagation();
+    onSelect();
+    const frame = frameRef.current;
+    if (!frame) return;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    const r = frame.getBoundingClientRect();
+    const cx = r.left + (layer.x / 100) * r.width;
+    const cy = r.top + (layer.y / 100) * r.height;
+    grab.current = { dx: e.clientX - cx, dy: e.clientY - cy };
+  }
+  function onMoveMove(e: React.PointerEvent) {
+    if (!grab.current) return;
+    const frame = frameRef.current;
+    const box = boxRef.current;
+    if (!frame || !box) return;
+    const r = frame.getBoundingClientRect();
+    const el = box.getBoundingClientRect();
+    const halfW = (el.width / 2 / r.width) * 100;
+    const halfH = (el.height / 2 / r.height) * 100;
+    const x = ((e.clientX - grab.current.dx - r.left) / r.width) * 100;
+    const y = ((e.clientY - grab.current.dy - r.top) / r.height) * 100;
+    onChange({
+      x: halfW >= 50 ? 50 : clamp(x, halfW, 100 - halfW),
+      y: halfH >= 50 ? 50 : clamp(y, halfH, 100 - halfH),
+    });
+  }
+  function onMoveUp(e: React.PointerEvent) {
+    grab.current = null;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* pointer already released */
+    }
+  }
+
+  function onResizeDown(e: React.PointerEvent) {
+    e.stopPropagation();
+    e.preventDefault();
+    onSelect();
+    resizing.current = true;
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  }
+  function onResizeMove(e: React.PointerEvent) {
+    if (!resizing.current) return;
+    const frame = frameRef.current;
+    if (!frame) return;
+    const r = frame.getBoundingClientRect();
+    const cx = r.left + (layer.x / 100) * r.width;
+    const halfPx = Math.abs(e.clientX - cx);
+    onChange({ width: clamp(((halfPx * 2) / r.width) * 100, LAYER_WIDTH_MIN, LAYER_WIDTH_MAX) });
+  }
+  function onResizeUp(e: React.PointerEvent) {
+    resizing.current = false;
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* pointer already released */
+    }
+  }
+
+  return (
+    <div
+      ref={boxRef}
+      style={{ left: `${layer.x}%`, top: `${layer.y}%`, width: `${layer.width}%`, transform: "translate(-50%, -50%)" }}
+      className={`absolute z-20 touch-none px-1 text-center ${
+        selected && editable ? "rounded outline outline-2 outline-primary outline-offset-2" : ""
+      }`}
+      onPointerDown={onMoveDown}
+      onPointerMove={onMoveMove}
+      onPointerUp={onMoveUp}
+      onPointerCancel={onMoveUp}
+      onDoubleClick={(e) => {
+        if (!editable) return;
+        e.stopPropagation();
+        onSelect();
+        setEditing(true);
+      }}
+    >
+      <div
+        ref={editRef}
+        contentEditable={editing}
+        suppressContentEditableWarning
+        onInput={(e) => onChange({ text: e.currentTarget.innerText.slice(0, SLIDE_TEXT_MAX) })}
+        onBlur={() => setEditing(false)}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") (e.target as HTMLElement).blur();
+        }}
+        style={{
+          fontSize: `${layer.scale}cqw`,
+          fontFamily: font.stack,
+          ...(layer.bgEnabled ? { backgroundColor: layer.bgColor } : {}),
+        }}
+        className={`inline-block whitespace-pre-wrap break-words rounded px-[0.3em] py-[0.12em] font-black leading-tight outline-none ${st.className} ${
+          hasText || editing ? "" : "italic opacity-50"
+        } ${editing ? "cursor-text" : editable ? "cursor-grab select-none active:cursor-grabbing" : "select-none"}`}
+      >
+        {editing ? undefined : hasText ? layer.text : editable ? "Double-click to edit" : ""}
+      </div>
+      {selected && editable && !editing && (
+        <>
+          <span
+            aria-label="Drag to resize width"
+            onPointerDown={onResizeDown}
+            onPointerMove={onResizeMove}
+            onPointerUp={onResizeUp}
+            onPointerCancel={onResizeUp}
+            className="absolute right-0 top-1/2 h-3 w-3 -translate-y-1/2 translate-x-1/2 cursor-ew-resize touch-none rounded-full border-2 border-primary bg-white shadow"
+          />
+          <button
+            type="button"
+            aria-label="Delete text"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              onDelete();
+            }}
+            className="absolute -right-2.5 -top-2.5 flex h-5 w-5 items-center justify-center rounded-full bg-red-600 text-white shadow"
+          >
+            <Icon name="x" size={11} />
+          </button>
+        </>
+      )}
+    </div>
+  );
+}
+
+/** The image (or placeholder) plus every text layer. Interactive when
+ *  `editable`; a static render for the review step otherwise. */
+function LayeredSlideFrame({
+  index,
+  source,
+  uploadedImage,
+  aspect,
+  show,
+  layers,
+  editable = false,
+  selectedId,
+  onSelect,
+  onChangeLayer,
+  onDeleteLayer,
+  overridden,
+  className,
+}: {
+  index: number;
+  source: string;
+  uploadedImage?: RefImage;
+  aspect: (typeof ASPECTS)[number]["id"];
+  show: boolean;
+  layers: TextLayer[];
+  editable?: boolean;
+  selectedId?: string | null;
+  onSelect?: (id: string | null) => void;
+  onChangeLayer?: (id: string, patch: Partial<TextLayer>) => void;
+  onDeleteLayer?: (id: string) => void;
+  overridden?: boolean;
+  className?: string;
+}) {
+  const frameRef = useRef<HTMLDivElement>(null);
+  return (
+    <div
+      ref={frameRef}
+      // [container-type:inline-size] makes the frame a query container so each
+      // layer's cqw font-size scales with the frame width (same relative size
+      // small or expanded).
+      onPointerDown={editable ? () => onSelect?.(null) : undefined}
+      className={`group relative w-full overflow-hidden rounded-xl border border-primary/25 bg-primary-dark [container-type:inline-size] ${aspectClass(
+        aspect,
+      )} ${className ?? ""}`}
+    >
+      {source === "upload" && uploadedImage ? (
+        // eslint-disable-next-line @next/next/no-img-element -- local object URL preview.
+        <img src={uploadedImage.url} alt={uploadedImage.name} className="h-full w-full object-cover" />
+      ) : (
+        // Dark placeholder (vs a real photo) so light overlay text stays legible
+        // while editing and it reads as an image slot rather than an empty card.
+        <div className="flex h-full flex-col items-center justify-center p-4">
+          <div className="absolute inset-0 bg-gradient-to-br from-primary-deep via-primary-dark to-primary-deep" />
+          <span className="relative z-10 rotate-[-8deg] text-2xl font-black leading-[0.82] text-white/25">
+            POST<br />TRAIN
+          </span>
+        </div>
+      )}
+      {show &&
+        layers.map((layer) => (
+          <LayerView
+            key={layer.id}
+            layer={layer}
+            editable={editable}
+            selected={selectedId === layer.id}
+            frameRef={frameRef}
+            onSelect={() => onSelect?.(layer.id)}
+            onChange={(patch) => onChangeLayer?.(layer.id, patch)}
+            onDelete={() => onDeleteLayer?.(layer.id)}
+          />
+        ))}
+      <span className="absolute bottom-2 right-2 z-30 flex h-6 w-6 items-center justify-center rounded-md bg-ink/70 text-xs font-black text-white">
+        {index + 1}
+      </span>
+      {overridden && (
+        <span className="absolute left-2 top-2 z-30 rounded-md bg-ink/80 px-1.5 py-0.5 text-[10px] font-bold text-white">
+          Independent
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** Full-screen editor for a slide — a much bigger canvas for precise layer
+ *  work. Edits commit live (there's no separate save step for layers). */
+function SlideExpandModal({
+  index,
+  source,
+  uploadedImage,
+  aspect,
+  layers,
+  onChangeLayer,
+  onDeleteLayer,
+  onAddLayer,
+  onClose,
+}: {
+  index: number;
+  source: string;
+  uploadedImage?: RefImage;
+  aspect: (typeof ASPECTS)[number]["id"];
+  layers: TextLayer[];
+  onChangeLayer: (id: string, patch: Partial<TextLayer>) => void;
+  onDeleteLayer: (id: string) => void;
+  onAddLayer: () => void;
+  onClose: () => void;
+}) {
+  const [selectedId, setSelectedId] = useState<string | null>(layers[0]?.id ?? null);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") onClose();
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [onClose]);
+
+  const ar = aspectRatioValue(aspect);
+  const frameWidth = `min(92vw, ${(74 * ar).toFixed(2)}vh)`;
+
+  return createPortal(
+    <div
+      className="fixed inset-0 z-[130] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        className="flex max-h-full w-full flex-col items-center gap-3"
+        style={{ width: frameWidth }}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex w-full items-center justify-between gap-2">
+          <p className="text-sm font-bold text-white">Slide {index + 1}</p>
+          <span className="text-xs font-medium text-white/70">
+            Double-click a text to edit · drag to move · drag the dot to resize
+          </span>
+        </div>
+        <LayeredSlideFrame
+          index={index}
+          source={source}
+          uploadedImage={uploadedImage}
+          aspect={aspect}
+          show
+          editable
+          layers={layers}
+          selectedId={selectedId}
+          onSelect={setSelectedId}
+          onChangeLayer={onChangeLayer}
+          onDeleteLayer={(id) => {
+            onDeleteLayer(id);
+            setSelectedId(null);
+          }}
+          className="shadow-[0_30px_90px_rgba(0,0,0,0.5)]"
+        />
+        <div className="flex w-full items-center justify-between gap-2">
+          <button
+            type="button"
+            onClick={onAddLayer}
+            className="flex items-center gap-1 rounded-xl border border-white/25 bg-white/10 px-3 py-1.5 text-sm font-bold text-white transition-colors hover:bg-white/20"
+          >
+            <Icon name="plus" size={14} /> Add text
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-xl bg-primary px-4 py-1.5 text-sm font-bold text-white transition-colors hover:bg-primary-deep"
+          >
+            Done
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
 
 function SlideStructureCard({
   index,
@@ -423,115 +876,274 @@ function SlideStructureCard({
   onSourceChange,
   uploadedImage,
   aspect,
-  showText,
-  text,
-  onTextChange,
-  textPos,
-  onTextPosChange,
-  textConfig,
+  show,
+  layers,
+  selectedLayerId,
+  onSelectLayer,
+  onChangeLayer,
+  onAddLayer,
+  onDeleteLayer,
+  overridden,
+  onApplyToAll,
 }: {
   index: number;
   source: string;
   onSourceChange: (id: string) => void;
   uploadedImage?: RefImage;
   aspect: (typeof ASPECTS)[number]["id"];
-  showText: boolean;
-  text: string;
-  onTextChange: (t: string) => void;
-  textPos: { x: number; y: number };
-  onTextPosChange: (p: { x: number; y: number }) => void;
-  textConfig: SlideTextConfig;
+  show: boolean;
+  layers: TextLayer[];
+  selectedLayerId: string | null;
+  onSelectLayer: (id: string | null) => void;
+  onChangeLayer: (id: string, patch: Partial<TextLayer>) => void;
+  onAddLayer: () => void;
+  onDeleteLayer: (id: string) => void;
+  /** True when this slide diverges from what other platforms show. */
+  overridden?: boolean;
+  /** Present only when there's more than one platform to sync this slide's layers to. */
+  onApplyToAll?: () => void;
 }) {
-  const boxRef = useRef<HTMLDivElement>(null);
-
-  // Drag the overlay anywhere in the image, clamped to a safe inset so the
-  // block (centered on this point) can't run off the edge.
-  function startDrag(e: React.PointerEvent) {
-    e.preventDefault();
-    const box = boxRef.current;
-    if (!box) return;
-    const move = (ev: PointerEvent) => {
-      const rect = box.getBoundingClientRect();
-      onTextPosChange({
-        x: clamp(((ev.clientX - rect.left) / rect.width) * 100, 14, 86),
-        y: clamp(((ev.clientY - rect.top) / rect.height) * 100, 8, 92),
-      });
-    };
-    const up = () => {
-      window.removeEventListener("pointermove", move);
-      window.removeEventListener("pointerup", up);
-    };
-    window.addEventListener("pointermove", move);
-    window.addEventListener("pointerup", up);
-  }
-
-  const sizeClass = textConfig.size === "normal" ? "text-[13px]" : "text-[10px]";
-  const widthClass = textConfig.width === "wide" ? "max-w-[92%]" : "max-w-[64%]";
+  const [expanded, setExpanded] = useState(false);
 
   return (
     // Sizing comes entirely from the parent grid's column count (see
     // slideGridColumns) — this just fills its grid cell.
-    <div className="flex flex-col gap-2">
-      <div
-        ref={boxRef}
-        className={`group relative w-full overflow-hidden rounded-xl border border-primary/25 bg-gradient-to-br from-primary-soft/70 via-white to-page shadow-sm ${aspectClass(aspect)}`}
-      >
-        {/* Only a photo picked specifically for this slide is shown as-is —
-            reference images (uploaded or pulled from a copied post) are just
-            inspiration for a new AI-generated image, never the literal output. */}
-        {source === "upload" && uploadedImage ? (
-          // eslint-disable-next-line @next/next/no-img-element -- local object URL preview.
-          <img src={uploadedImage.url} alt={uploadedImage.name} className="h-full w-full object-cover" />
-        ) : (
-          <div className="flex h-full flex-col items-center justify-center gap-3 p-4">
-            <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(16,139,128,0.2),transparent_35%),linear-gradient(145deg,rgba(16,139,128,0.12),rgba(255,255,255,0.72))]" />
-            <span className="relative z-10 rotate-[-8deg] text-2xl font-black leading-[0.82] text-primary-deep/35">
-              POST<br />TRAIN
-            </span>
-          </div>
-        )}
-        {showText && text.trim() && (
-          <div
-            role="button"
-            tabIndex={0}
-            aria-label="Drag to reposition overlay text"
-            onPointerDown={startDrag}
-            style={{ left: `${textPos.x}%`, top: `${textPos.y}%`, transform: "translate(-50%, -50%)" }}
-            className={`absolute z-20 cursor-grab touch-none select-none rounded ${widthClass} px-1 text-center active:cursor-grabbing`}
-          >
-            <span
-              style={textConfig.bgEnabled ? { backgroundColor: textConfig.bgColor } : undefined}
-              className={`inline-block whitespace-pre-wrap break-words rounded px-1 py-0.5 font-black leading-tight ${sizeClass} ${textConfig.className}`}
+    <div className="flex flex-col gap-2" data-keep-selection>
+      <div className="relative">
+        <LayeredSlideFrame
+          index={index}
+          source={source}
+          uploadedImage={uploadedImage}
+          aspect={aspect}
+          show={show}
+          editable
+          layers={layers}
+          selectedId={selectedLayerId}
+          onSelect={onSelectLayer}
+          onChangeLayer={onChangeLayer}
+          onDeleteLayer={onDeleteLayer}
+          overridden={overridden}
+        />
+        {show && (
+          <div className="absolute right-2 top-2 z-30 flex gap-1">
+            <button
+              type="button"
+              onClick={onAddLayer}
+              title="Add a text box"
+              aria-label="Add a text box"
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-ink/70 text-white transition-colors hover:bg-ink/90"
             >
-              {text}
-            </span>
+              <Icon name="plus" size={14} />
+            </button>
+            <button
+              type="button"
+              onClick={() => setExpanded(true)}
+              title="Expand to edit text precisely"
+              aria-label="Expand to edit text precisely"
+              className="flex h-7 w-7 items-center justify-center rounded-md bg-ink/70 text-white transition-colors hover:bg-ink/90"
+            >
+              <Icon name="expand" size={14} />
+            </button>
           </div>
         )}
-        <div className="absolute bottom-3 right-3 flex items-end justify-between text-white">
-          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-ink/80 text-sm font-black">
-            {index + 1}
-          </span>
-        </div>
       </div>
       <SlideSourceControl value={source} onChange={onSourceChange} aspect={aspect} />
-      {showText && (
-        <div>
-          <textarea
-            value={text}
-            maxLength={SLIDE_TEXT_MAX}
-            onChange={(e) => onTextChange(e.target.value)}
-            placeholder={`Slide ${index + 1} text…`}
-            rows={2}
-            className="w-full resize-none rounded-lg border border-line bg-white px-2 py-1.5 text-xs text-ink outline-none placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
-          />
-          <div className="mt-0.5 flex justify-end">
-            <span className={`text-[10px] font-semibold ${text.length >= SLIDE_TEXT_MAX ? "text-red-600" : "text-muted"}`}>
-              {text.length}/{SLIDE_TEXT_MAX}
-            </span>
-          </div>
-        </div>
+      {onApplyToAll && (
+        <button
+          type="button"
+          onClick={onApplyToAll}
+          title={`Copy this slide's text to slide ${index + 1} on every other platform`}
+          className="flex w-full items-center justify-center gap-1 rounded-lg border border-line bg-white px-2 py-1 text-[11px] font-bold text-muted transition-colors hover:border-primary hover:text-primary-deep"
+        >
+          <Icon name="copy" size={11} /> Apply to every Slide {index + 1}
+        </button>
+      )}
+      {expanded && (
+        <SlideExpandModal
+          index={index}
+          source={source}
+          uploadedImage={uploadedImage}
+          aspect={aspect}
+          layers={layers}
+          onChangeLayer={onChangeLayer}
+          onDeleteLayer={onDeleteLayer}
+          onAddLayer={onAddLayer}
+          onClose={() => setExpanded(false)}
+        />
       )}
     </div>
+  );
+}
+
+/** Read-only slide render for the launch preview — image + layers, no editing. */
+function SlidePreviewFrame({
+  index,
+  source,
+  uploadedImage,
+  aspect,
+  show,
+  layers,
+  className,
+}: {
+  index: number;
+  source: string;
+  uploadedImage?: RefImage;
+  aspect: (typeof ASPECTS)[number]["id"];
+  show: boolean;
+  layers: TextLayer[];
+  className?: string;
+}) {
+  return (
+    <LayeredSlideFrame
+      index={index}
+      source={source}
+      uploadedImage={uploadedImage}
+      aspect={aspect}
+      show={show}
+      layers={layers}
+      className={className}
+    />
+  );
+}
+
+/* ---------------------- slide → PNG download (review) ---------------------- */
+
+// The slides shown on Review are the same DOM that's drawn here to a canvas at
+// the platform's recommended pixel size, so a download matches what's on screen
+// (placeholder + overlay, or the uploaded photo + overlay).
+// ponytail: remote (CDN) upload URLs from a resumed draft can taint the canvas
+// and make toBlob throw — caught below, falling back to the placeholder. In-
+// session uploads are blob: URLs and export fine. Real AI images aren't wired
+// yet, so most slides export as the placeholder.
+
+function parseAspectPx(aspect: (typeof ASPECTS)[number]["id"]) {
+  const info = ASPECTS.find((a) => a.id === aspect) ?? ASPECTS[0];
+  const [w, h] = info.px.replace(/px/i, "").split(/[×x]/).map((n) => parseInt(n.trim(), 10));
+  return { w: w || 1080, h: h || 1080 };
+}
+
+function loadImage(url: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = url;
+  });
+}
+
+function drawSlidePlaceholder(ctx: CanvasRenderingContext2D, w: number, h: number) {
+  const g = ctx.createLinearGradient(0, 0, w, h);
+  g.addColorStop(0, "#0a5f59"); // primary-deep
+  g.addColorStop(0.5, "#063f3b"); // primary-dark
+  g.addColorStop(1, "#0a5f59");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, w, h);
+  ctx.save();
+  ctx.translate(w / 2, h / 2);
+  ctx.rotate((-8 * Math.PI) / 180);
+  ctx.fillStyle = "rgba(255,255,255,0.25)";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const fs = w * 0.14;
+  ctx.font = `900 ${fs}px -apple-system, 'Segoe UI', Roboto, sans-serif`;
+  ctx.fillText("POST", 0, -fs * 0.41);
+  ctx.fillText("TRAIN", 0, fs * 0.41);
+  ctx.restore();
+}
+
+// Draw one text layer, matching the DOM: cqw font size, per-layer width wrap,
+// center anchor, optional bg chip, and the style's fill/effect.
+function drawLayer(ctx: CanvasRenderingContext2D, w: number, h: number, layer: TextLayer) {
+  if (!layer.text.trim()) return;
+  const st = layerStyle(layer);
+  const font = layerFont(layer);
+  const fontSize = (layer.scale / 100) * w; // cqw
+  ctx.font = `900 ${fontSize}px ${font.stack}`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  const pad = fontSize * 0.3;
+  const innerMax = (layer.width / 100) * w - pad * 2;
+  const lines: string[] = [];
+  for (const para of layer.text.split("\n")) {
+    let line = "";
+    for (const word of para.split(/\s+/).filter(Boolean)) {
+      const cand = line ? `${line} ${word}` : word;
+      if (line && ctx.measureText(cand).width > innerMax) {
+        lines.push(line);
+        line = word;
+      } else {
+        line = cand;
+      }
+    }
+    lines.push(line);
+  }
+  const lineHeight = fontSize * 1.25; // leading-tight
+  const blockH = lines.length * lineHeight;
+  const cx = (layer.x / 100) * w;
+  const cy = (layer.y / 100) * h;
+  const topY = cy - blockH / 2;
+
+  if (layer.bgEnabled) {
+    let maxLineW = 0;
+    for (const ln of lines) maxLineW = Math.max(maxLineW, ctx.measureText(ln).width);
+    const boxW = maxLineW + pad * 2;
+    const boxH = blockH + pad * 0.4;
+    ctx.fillStyle = layer.bgColor;
+    ctx.beginPath();
+    ctx.roundRect(cx - boxW / 2, topY - pad * 0.2, boxW, boxH, fontSize * 0.15);
+    ctx.fill();
+  }
+
+  lines.forEach((ln, i) => {
+    const y = topY + i * lineHeight + lineHeight / 2;
+    ctx.save();
+    if (st.effect === "shadow") {
+      ctx.shadowColor = "rgba(0,0,0,0.85)";
+      ctx.shadowOffsetY = fontSize * 0.13;
+    } else if (st.effect === "outline") {
+      ctx.lineJoin = "round";
+      ctx.lineWidth = fontSize * 0.14;
+      ctx.strokeStyle = "#000000";
+      ctx.strokeText(ln, cx, y);
+    }
+    ctx.fillStyle = st.fill;
+    ctx.fillText(ln, cx, y);
+    ctx.restore();
+  });
+}
+
+async function renderSlideBlob(opts: {
+  aspect: (typeof ASPECTS)[number]["id"];
+  source: string;
+  uploadedImage?: RefImage;
+  show: boolean;
+  layers: TextLayer[];
+}): Promise<Blob> {
+  const { w, h } = parseAspectPx(opts.aspect);
+  const canvas = document.createElement("canvas");
+  canvas.width = w;
+  canvas.height = h;
+  const ctx = canvas.getContext("2d")!;
+
+  if (opts.source === "upload" && opts.uploadedImage) {
+    try {
+      const img = await loadImage(opts.uploadedImage.url);
+      const scale = Math.max(w / img.width, h / img.height); // object-cover
+      const dw = img.width * scale;
+      const dh = img.height * scale;
+      ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+    } catch {
+      drawSlidePlaceholder(ctx, w, h);
+    }
+  } else {
+    drawSlidePlaceholder(ctx, w, h);
+  }
+
+  if (opts.show) for (const layer of opts.layers) drawLayer(ctx, w, h, layer);
+
+  return await new Promise<Blob>((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("Slide render failed"))), "image/png"),
   );
 }
 
@@ -1107,27 +1719,42 @@ export function SlideshowStudio({
   const [context, setContext] = useState(initialSlideTexts?.join("\n") ?? "");
   const [contextBusy, setContextBusy] = useState(false);
   const [contextError, setContextError] = useState("");
-  const [slideCount, setSlideCount] = useState(() => initialSlideTexts?.length || 5);
+  // All per-slide arrays derive from this one count so they can never drift
+  // out of sync (a shorter array silently drops edits at the missing indexes).
+  const initialSlideCount = initialSlideTexts?.length || 5;
+  const [slideCount, setSlideCount] = useState(initialSlideCount);
   const [slideSources, setSlideSources] = useState<string[]>(() =>
-    Array(initialSlideTexts?.length || 5).fill("auto"),
+    Array(initialSlideCount).fill("auto"),
   );
   // Per-slide photos picked via the "Uploaded Images" source — distinct from
   // refImages, which are style/context references and must never be posted as-is.
   const [slideUploads, setSlideUploads] = useState<(RefImage | undefined)[]>(() =>
-    Array(initialSlideTexts?.length || 5).fill(undefined),
+    Array(initialSlideCount).fill(undefined),
   );
-  // Per-slide overlay text + its position (percent of the image, center of the
-  // text block). Prefilled from Explore "recreate" when arriving with slides.
-  const [slideTexts, setSlideTexts] = useState<string[]>(() =>
-    initialSlideTexts?.map((t) => t.slice(0, SLIDE_TEXT_MAX)) ?? Array(5).fill(""),
+  // Per-slide text overlay boxes ("layers"). Each slide starts with one layer
+  // seeded from Explore "recreate" text (if any); users add more with "+".
+  const [slideLayers, setSlideLayers] = useState<TextLayer[][]>(() =>
+    Array.from({ length: initialSlideCount }, (_, i) => {
+      const t = initialSlideTexts?.[i]?.slice(0, SLIDE_TEXT_MAX) ?? "";
+      return t.trim() ? [makeLayer(t, { y: 82 })] : [];
+    }),
   );
-  const [slideTextPos, setSlideTextPos] = useState<{ x: number; y: number }[]>(() =>
-    Array(initialSlideTexts?.length || 5).fill({ x: 50, y: 82 }),
-  );
+  // Which text layer is selected for styling/deletion: { slide index, layer id }.
+  const [selectedLayer, setSelectedLayer] = useState<{ slide: number; id: string } | null>(null);
+  // Per-platform slide overrides — the primary (first selected) platform's
+  // slides live in the arrays above; any other platform shows those same
+  // slides until the user edits something while viewing its tab, at which
+  // point it gets its own independent copy here. "Apply to all" collapses
+  // a single slide's override back across every platform.
+  const [platformSlideOverrides, setPlatformSlideOverrides] = useState<Record<string, PlatformSlideData>>({});
   const [uploadTargetIndex, setUploadTargetIndex] = useState<number | null>(null);
+  const [uploadTargetPlatform, setUploadTargetPlatform] = useState<string | null>(null);
   const slideUploadInput = useRef<HTMLInputElement>(null);
   const [refImages, setRefImages] = useState<RefImage[]>([]);
   const [platformCaptions, setPlatformCaptions] = useState<Record<string, string>>({});
+  const [captionLength, setCaptionLength] = useState<"short" | "medium" | "long">("medium");
+  const [previewPlatform, setPreviewPlatform] = useState<string>("");
+  const [downloadingSlide, setDownloadingSlide] = useState<number | null>(null);
   const [captionBusy, setCaptionBusy] = useState<Record<string, boolean>>({});
   const [captionError, setCaptionError] = useState<Record<string, string>>({});
   const [toneResults, setToneResults] = useState<Record<string, AiToneResult>>({});
@@ -1139,11 +1766,6 @@ export function SlideshowStudio({
   const [language, setLanguage] = useState<(typeof LANGUAGES)[number]["id"]>("en");
   const [slideCategory, setSlideCategory] = useState<SlideCategoryId>("educational");
   const [advancedTextOpen, setAdvancedTextOpen] = useState(true);
-  const [textStyle, setTextStyle] = useState<(typeof TEXT_STYLES)[number]["id"]>("shadow");
-  const [textBgEnabled, setTextBgEnabled] = useState(false);
-  const [textBgColor, setTextBgColor] = useState("#000000");
-  const [textSize, setTextSize] = useState<(typeof TEXT_SIZES)[number]["id"]>("small");
-  const [textWidth, setTextWidth] = useState<(typeof TEXT_WIDTHS)[number]["id"]>("narrow");
   const [translationMode, setTranslationMode] = useState<"same" | (typeof LANGUAGES)[number]["id"]>("same");
   const [slideshowReference, setSlideshowReference] = useState("");
   const [copyModalOpen, setCopyModalOpen] = useState(false);
@@ -1167,9 +1789,25 @@ export function SlideshowStudio({
     return () => {
       refImages.forEach((r) => r.url.startsWith("blob:") && URL.revokeObjectURL(r.url));
       slideUploads.forEach((r) => r?.url.startsWith("blob:") && URL.revokeObjectURL(r.url));
+      Object.values(platformSlideOverrides).forEach((d) =>
+        d.uploads.forEach((r) => r?.url.startsWith("blob:") && URL.revokeObjectURL(r.url)),
+      );
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Clicking anywhere outside a slide card or the styling panel clears the
+  // selected text layer (so its border disappears). Clicks on a layer stop
+  // propagation, so they never reach here.
+  useEffect(() => {
+    if (!selectedLayer) return;
+    function onDown(e: PointerEvent) {
+      if ((e.target as HTMLElement).closest("[data-keep-selection]")) return;
+      setSelectedLayer(null);
+    }
+    document.addEventListener("pointerdown", onDown);
+    return () => document.removeEventListener("pointerdown", onDown);
+  }, [selectedLayer]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1192,17 +1830,7 @@ export function SlideshowStudio({
   const selectedLanguage = LANGUAGES.find((l) => l.id === language) ?? LANGUAGES[0];
   const selectedCategory = SLIDE_CATEGORIES.find((c) => c.id === slideCategory) ?? SLIDE_CATEGORIES[0];
   const selectedModel = AI_MODELS.find((m) => m.id === aiModel) ?? AI_MODELS[0];
-  const selectedTextStyle = TEXT_STYLES.find((s) => s.id === textStyle) ?? TEXT_STYLES[0];
-  const selectedTextSize = TEXT_SIZES.find((s) => s.id === textSize) ?? TEXT_SIZES[0];
-  const selectedTextWidth = TEXT_WIDTHS.find((w) => w.id === textWidth) ?? TEXT_WIDTHS[0];
   const showSlideText = overlays === "text";
-  const slideTextConfig: SlideTextConfig = {
-    className: selectedTextStyle.className,
-    bgEnabled: textBgEnabled,
-    bgColor: textBgColor,
-    size: textSize,
-    width: textWidth,
-  };
   const selectedTranslationLanguage =
     translationMode === "same"
       ? selectedLanguage
@@ -1216,8 +1844,6 @@ export function SlideshowStudio({
     const time = date.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
     return `${day} at ${time}`;
   }, [publishDate, publishTime, isPublishToday]);
-  // Rough placeholder estimate: one generation per slide, at the selected model's per-image credit cost.
-  const creditEstimate = slideCount * selectedModel.credits;
   // Slide cards stay at their 4-per-row max size up to 4 slides, shrink to
   // fit 5 or 6 per row, then hold at the 6-per-row size and wrap any more
   // onto additional rows. CSS flex-wrap can't do this on its own — it
@@ -1243,6 +1869,62 @@ export function SlideshowStudio({
     }
     return set;
   }, [selectedAccountIds, accounts]);
+  const previewPlatforms = useMemo(() => [...selectedPlatforms], [selectedPlatforms]);
+  // The first selected platform's slides ARE the shared arrays (slideSources
+  // etc) — every other platform inherits them until it gets its own override.
+  const primaryPlatform = previewPlatforms[0];
+  const baseSlideData = (): PlatformSlideData => ({ sources: slideSources, uploads: slideUploads, layers: slideLayers });
+  function effectiveSlideData(platformId: string): PlatformSlideData {
+    if (platformId !== primaryPlatform && platformSlideOverrides[platformId]) {
+      return platformSlideOverrides[platformId];
+    }
+    return baseSlideData();
+  }
+  // Which platform tab the Slides editor and the Review step are showing —
+  // shared between both so switching steps doesn't lose your place. Falls
+  // back to the base arrays/editing aspect when no platform is selected yet.
+  const slidesActiveTab = previewPlatforms.includes(previewPlatform) ? previewPlatform : previewPlatforms[0];
+  const activeSlideData = slidesActiveTab ? effectiveSlideData(slidesActiveTab) : baseSlideData();
+  const slidesActiveAspect = slidesActiveTab ? platformAspect(slidesActiveTab) : aspect;
+
+  // The layer the Advanced Text Settings panel styles, and a patch helper that
+  // writes to whichever platform is active.
+  const selectedLayerData = selectedLayer
+    ? (activeSlideData.layers[selectedLayer.slide] ?? []).find((l) => l.id === selectedLayer.id) ?? null
+    : null;
+  function patchSelectedLayer(patch: Partial<TextLayer>) {
+    if (selectedLayer) updateLayer(selectedLayer.slide, selectedLayer.id, patch, slidesActiveTab);
+  }
+
+  // Rasterize the active platform's slide at that platform's native pixel size
+  // and download it as a PNG — matches what the Review preview shows.
+  async function downloadSlide(index: number) {
+    if (downloadingSlide !== null) return;
+    setDownloadingSlide(index);
+    try {
+      const blob = await renderSlideBlob({
+        aspect: slidesActiveAspect,
+        source: activeSlideData.sources[index] ?? "auto",
+        uploadedImage: activeSlideData.uploads[index],
+        show: showSlideText,
+        layers: activeSlideData.layers[index] ?? [],
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      const name = `${campaignName || "slideshow"}-${slidesActiveTab || "slide"}-${slidesActiveAspect.replace(":", "x")}-slide-${index + 1}`;
+      a.download = `${name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "")}.png`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      // best-effort — a failed raster (e.g. a CORS-tainted remote upload) just
+      // doesn't download; nothing else to clean up.
+    } finally {
+      setDownloadingSlide(null);
+    }
+  }
 
   const steps = mode === "templates" ? TEMPLATE_STEPS : CUSTOM_STEPS;
   // "Type" (the mode-chooser screen) is already done by the time this wizard
@@ -1277,22 +1959,32 @@ export function SlideshowStudio({
     });
   }
 
-  // Clamps to [SLIDE_MIN, SLIDE_MAX] and resizes the per-slide arrays to
-  // match — shared by the +/- buttons and direct number entry.
+  // Clamps to [SLIDE_MIN, SLIDE_MAX] and resizes the per-slide arrays (base
+  // and any per-platform overrides) to match — shared by the +/- buttons and
+  // direct number entry. Slide count itself isn't overridable per platform.
   function setSlides(target: number) {
     if (!Number.isFinite(target)) return;
     const next = Math.min(SLIDE_MAX, Math.max(SLIDE_MIN, Math.round(target)));
+    const resize = <T,>(s: T[], fill: () => T) =>
+      s.length >= next ? s.slice(0, next) : [...s, ...Array.from({ length: next - s.length }, fill)];
     setSlideCount(next);
-    setSlideSources((s) => (s.length >= next ? s.slice(0, next) : [...s, ...Array(next - s.length).fill("auto")]));
-    setSlideUploads((s) => (s.length >= next ? s.slice(0, next) : [...s, ...Array(next - s.length).fill(undefined)]));
-    setSlideTexts((s) => (s.length >= next ? s.slice(0, next) : [...s, ...Array(next - s.length).fill("")]));
-    setSlideTextPos((s) => (s.length >= next ? s.slice(0, next) : [...s, ...Array(next - s.length).fill({ x: 50, y: 82 })]));
-  }
-  function updateSlideText(index: number, text: string) {
-    setSlideTexts((s) => s.map((v, i) => (i === index ? text.slice(0, SLIDE_TEXT_MAX) : v)));
-  }
-  function updateSlideTextPos(index: number, pos: { x: number; y: number }) {
-    setSlideTextPos((s) => s.map((v, i) => (i === index ? pos : v)));
+    setSlideSources((s) => resize(s, () => "auto"));
+    setSlideUploads((s) => resize<RefImage | undefined>(s, () => undefined));
+    setSlideLayers((s) => resize<TextLayer[]>(s, () => []));
+    setPlatformSlideOverrides((cur) => {
+      const entries = Object.entries(cur);
+      if (entries.length === 0) return cur;
+      return Object.fromEntries(
+        entries.map(([pid, d]) => [
+          pid,
+          {
+            sources: resize(d.sources, () => "auto"),
+            uploads: resize<RefImage | undefined>(d.uploads, () => undefined),
+            layers: resize<TextLayer[]>(d.layers, () => []),
+          },
+        ]),
+      );
+    });
   }
   function growSlides() {
     setSlides(slideCount + 1);
@@ -1300,12 +1992,50 @@ export function SlideshowStudio({
   function shrinkSlides() {
     setSlides(slideCount - 1);
   }
-  function updateSlideSource(index: number, id: string) {
-    setSlideSources((s) => s.map((v, i) => (i === index ? id : v)));
+
+  // --- per-slide layer ops. All take the active platform: the primary (or no
+  // platform) writes the shared base arrays; any other platform gets its own
+  // independent override the first time it's touched. `mutate` maps one slide's
+  // layer list to a new one.
+  function mutateSlideLayers(index: number, platformId: string | undefined, mutate: (layers: TextLayer[]) => TextLayer[]) {
+    if (!platformId || platformId === primaryPlatform) {
+      setSlideLayers((s) => setAt(s, index, mutate(s[index] ?? []), []));
+      return;
+    }
+    setPlatformSlideOverrides((cur) => {
+      const base = cur[platformId] ?? effectiveSlideData(platformId);
+      return { ...cur, [platformId]: { ...base, layers: setAt(base.layers, index, mutate(base.layers[index] ?? []), []) } };
+    });
+  }
+  function addLayer(index: number, platformId?: string) {
+    const layer = makeLayer();
+    mutateSlideLayers(index, platformId, (ls) => [...ls, layer]);
+    setSelectedLayer({ slide: index, id: layer.id });
+    setOverlays("text");
+  }
+  function updateLayer(index: number, layerId: string, patch: Partial<TextLayer>, platformId?: string) {
+    mutateSlideLayers(index, platformId, (ls) => ls.map((l) => (l.id === layerId ? { ...l, ...patch } : l)));
+  }
+  function deleteLayer(index: number, layerId: string, platformId?: string) {
+    mutateSlideLayers(index, platformId, (ls) => ls.filter((l) => l.id !== layerId));
+    setSelectedLayer((cur) => (cur?.id === layerId ? null : cur));
+  }
+
+  function updateSlideSource(index: number, id: string, platformId?: string) {
+    const isBase = !platformId || platformId === primaryPlatform;
+    if (isBase) {
+      setSlideSources((s) => setAt(s, index, id, "auto"));
+    } else {
+      setPlatformSlideOverrides((cur) => {
+        const base = cur[platformId] ?? effectiveSlideData(platformId);
+        return { ...cur, [platformId]: { ...base, sources: setAt(base.sources, index, id, "auto") } };
+      });
+    }
     // "Uploaded Images" needs an actual photo for this slide — never borrow
     // one from the reference pool, so prompt a file picker right away.
     if (id === "upload") {
       setUploadTargetIndex(index);
+      setUploadTargetPlatform(isBase ? null : platformId ?? null);
       slideUploadInput.current?.click();
     }
   }
@@ -1313,14 +2043,44 @@ export function SlideshowStudio({
   function pickSlideUpload(files: FileList | null) {
     const file = files?.[0];
     const targetIndex = uploadTargetIndex;
+    const targetPlatform = uploadTargetPlatform;
     setUploadTargetIndex(null);
+    setUploadTargetPlatform(null);
     if (!file || targetIndex === null) return;
-    setSlideUploads((cur) => {
-      const prev = cur[targetIndex];
+    const image: RefImage = { id: crypto.randomUUID(), url: URL.createObjectURL(file), name: file.name };
+    if (!targetPlatform || targetPlatform === primaryPlatform) {
+      setSlideUploads((cur) => {
+        const prev = cur[targetIndex];
+        if (prev?.url.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+        const next = [...cur];
+        next[targetIndex] = image;
+        return next;
+      });
+      return;
+    }
+    setPlatformSlideOverrides((cur) => {
+      const base = cur[targetPlatform] ?? effectiveSlideData(targetPlatform);
+      const prev = base.uploads[targetIndex];
       if (prev?.url.startsWith("blob:")) URL.revokeObjectURL(prev.url);
-      const next = [...cur];
-      next[targetIndex] = { id: crypto.randomUUID(), url: URL.createObjectURL(file), name: file.name };
-      return next;
+      const uploads = [...base.uploads];
+      uploads[targetIndex] = image;
+      return { ...cur, [targetPlatform]: { ...base, uploads } };
+    });
+  }
+
+  // Copies one slide's whole layer list (for whichever platform is being
+  // viewed) onto every platform — base + every existing override — so that
+  // slide's text is in sync everywhere. Images and other slides are untouched.
+  function applyTextOverlayToAllPlatforms(index: number, fromPlatformId: string) {
+    const layers = effectiveSlideData(fromPlatformId).layers[index] ?? [];
+    const clone = () => layers.map((l) => ({ ...l }));
+    setSlideLayers((s) => setAt(s, index, clone(), []));
+    setPlatformSlideOverrides((cur) => {
+      const entries = Object.entries(cur);
+      if (entries.length === 0) return cur;
+      return Object.fromEntries(
+        entries.map(([pid, d]) => [pid, { ...d, layers: setAt(d.layers, index, clone(), []) }]),
+      );
     });
   }
 
@@ -1332,8 +2092,7 @@ export function SlideshowStudio({
       setSlideCount(template.slides);
       setSlideSources(Array(template.slides).fill("auto"));
       setSlideUploads(Array(template.slides).fill(undefined));
-      setSlideTexts(Array(template.slides).fill(""));
-      setSlideTextPos(Array(template.slides).fill({ x: 50, y: 82 }));
+      setSlideLayers(Array.from({ length: template.slides }, () => []));
       if (!campaignName.trim()) setCampaignName(template.title);
       if (!context.trim()) setContext(`${template.title}\n\n${template.desc}`);
     }
@@ -1406,8 +2165,7 @@ export function SlideshowStudio({
         setSlideCount(next);
         setSlideSources(Array(next).fill("ai"));
         setSlideUploads(Array(next).fill(undefined));
-        setSlideTexts(Array(next).fill(""));
-        setSlideTextPos(Array(next).fill({ x: 50, y: 82 }));
+        setSlideLayers(Array.from({ length: next }, () => []));
       }
 
       setCopyModalOpen(false);
@@ -1432,6 +2190,12 @@ export function SlideshowStudio({
     setDraftStatus("saving");
     const remoteRefImages = refImages.filter((r) => !r.url.startsWith("blob:"));
     const remoteSlideUploads = slideUploads.map((r) => (r && !r.url.startsWith("blob:") ? r : undefined));
+    const remotePlatformSlideOverrides = Object.fromEntries(
+      Object.entries(platformSlideOverrides).map(([pid, d]) => [
+        pid,
+        { ...d, uploads: d.uploads.map((r) => (r && !r.url.startsWith("blob:") ? r : undefined)) },
+      ]),
+    );
     const snapshot = {
       mode,
       selectedTemplate,
@@ -1442,8 +2206,8 @@ export function SlideshowStudio({
       slideCount,
       slideSources,
       slideUploads: remoteSlideUploads,
-      slideTexts,
-      slideTextPos,
+      slideLayers,
+      platformSlideOverrides: remotePlatformSlideOverrides,
       refImages: remoteRefImages,
       platformCaptions,
       aiModel,
@@ -1451,11 +2215,6 @@ export function SlideshowStudio({
       overlays,
       language,
       slideCategory,
-      textStyle,
-      textBgEnabled,
-      textBgColor,
-      textSize,
-      textWidth,
       translationMode,
       slideshowReference,
       selectedAccountIds: [...selectedAccountIds],
@@ -1509,8 +2268,8 @@ export function SlideshowStudio({
     setSlideCount(p.slideCount ?? 5);
     setSlideSources(p.slideSources ?? []);
     setSlideUploads(p.slideUploads ?? []);
-    setSlideTexts(p.slideTexts ?? []);
-    setSlideTextPos(p.slideTextPos ?? []);
+    setSlideLayers(p.slideLayers ?? []);
+    setPlatformSlideOverrides(p.platformSlideOverrides ?? {});
     setRefImages(p.refImages ?? []);
     setPlatformCaptions(p.platformCaptions ?? {});
     setAiModel(p.aiModel ?? "nano-banana-2");
@@ -1518,11 +2277,6 @@ export function SlideshowStudio({
     setOverlays(p.overlays ?? "none");
     setLanguage(p.language ?? "en");
     setSlideCategory(p.slideCategory ?? "educational");
-    setTextStyle(p.textStyle ?? "shadow");
-    setTextBgEnabled(p.textBgEnabled ?? false);
-    setTextBgColor(p.textBgColor ?? "#000000");
-    setTextSize(p.textSize ?? "small");
-    setTextWidth(p.textWidth ?? "narrow");
     setTranslationMode(p.translationMode ?? "same");
     setSlideshowReference(p.slideshowReference ?? "");
     setSelectedAccountIds(new Set(p.selectedAccountIds ?? []));
@@ -1562,8 +2316,8 @@ export function SlideshowStudio({
     slideCount,
     slideSources,
     slideUploads,
-    slideTexts,
-    slideTextPos,
+    slideLayers,
+    platformSlideOverrides,
     refImages,
     platformCaptions,
     aiModel,
@@ -1571,11 +2325,6 @@ export function SlideshowStudio({
     overlays,
     language,
     slideCategory,
-    textStyle,
-    textBgEnabled,
-    textBgColor,
-    textSize,
-    textWidth,
     translationMode,
     slideshowReference,
     selectedAccountIds,
@@ -1618,7 +2367,7 @@ export function SlideshowStudio({
       const response = await fetch("/api/app/studio/platform-caption", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: platformId, context, campaignName }),
+        body: JSON.stringify({ platform: platformId, context, campaignName, length: captionLength }),
       });
       const data = (await response.json()) as { text?: string; error?: { message?: string } };
       if (!response.ok || !data.text) {
@@ -1755,21 +2504,15 @@ export function SlideshowStudio({
         <h2 className="text-lg font-bold text-ink">{steps[step]}</h2>
       </div>
       <div className="flex flex-wrap items-center gap-2">
-        {isSettingsStep && (
-          <>
-            <button type="button" className="btn-subtle !py-1.5 text-sm">
-              <Icon name="file" size={15} /> <span className="hidden sm:inline">Save as Template</span>
-              <span className="sm:hidden">Save</span>
-            </button>
-            <button
-              type="button"
-              className="btn-subtle !h-9 !w-9 !p-0"
-              title="Version history"
-              aria-label="Version history"
-            >
-              <Icon name="clock" size={16} />
-            </button>
-          </>
+        {isSettingsStep && draftStatus !== "idle" && (
+          <button
+            type="button"
+            onClick={() => setConfirmDeleteDraft(true)}
+            className="btn-subtle !py-1.5 text-sm text-red-600 hover:text-red-700"
+          >
+            <Icon name="trash" size={15} /> <span className="hidden sm:inline">Delete draft</span>
+            <span className="sm:hidden">Delete</span>
+          </button>
         )}
         <button type="button" onClick={goBack} className="btn-subtle !py-1.5 text-sm">
           <Icon name="chevronLeft" size={15} /> Back
@@ -2050,7 +2793,7 @@ export function SlideshowStudio({
                 </div>
               </div>
 
-              {/* Generation settings — model, aspect, overlays, language — apply to
+              {/* Generation settings — model, overlays, language — apply to
                   every slide in this section, so they live right under its title. */}
               <div className="mt-3 flex flex-wrap items-center gap-2">
                 <Popover
@@ -2072,30 +2815,6 @@ export function SlideshowStudio({
                             <span className="block truncate text-xs text-muted">{m.desc}</span>
                           </span>
                           <CreditBadge credits={m.credits} active={m.id === aiModel} />
-                        </MenuRow>
-                      ))}
-                    </>
-                  )}
-                </Popover>
-
-                <Popover
-                  width="min-w-[18rem]"
-                  trigger={(open) => (
-                    <ToolbarButton open={open} icon="image" muted>
-                      {aspect}
-                    </ToolbarButton>
-                  )}
-                >
-                  {(close) => (
-                    <>
-                      {ASPECTS.map((a) => (
-                        <MenuRow key={a.id} active={a.id === aspect} onClick={() => { setAspect(a.id); close(); }}>
-                          <span className="w-12 text-lg font-bold">{a.name}</span>
-                          <span className="min-w-0 flex-1">
-                            <span className="block text-sm text-muted">{a.hint}</span>
-                            <span className="block text-xs text-muted/70">{a.px}</span>
-                          </span>
-                          {a.id === aspect && <Icon name="check" size={15} className="ml-auto text-primary-deep" />}
                         </MenuRow>
                       ))}
                     </>
@@ -2150,30 +2869,109 @@ export function SlideshowStudio({
                 </Popover>
               </div>
 
+              {/* One tab per platform being posted to — each shows its own native
+                  aspect (in text) and, once edited independently, its own slides. */}
+              {previewPlatforms.length > 0 ? (
+                <div className="mt-4 flex flex-wrap items-center gap-1.5">
+                  {previewPlatforms.map((pid) => {
+                    const isActive = pid === slidesActiveTab;
+                    const hasOverride = pid !== primaryPlatform && !!platformSlideOverrides[pid];
+                    return (
+                      <button
+                        key={pid}
+                        type="button"
+                        onClick={() => setPreviewPlatform(pid)}
+                        className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition-colors ${
+                          isActive
+                            ? "border-primary bg-primary-soft/50 text-primary-deep"
+                            : "border-line bg-white text-muted hover:text-ink"
+                        }`}
+                      >
+                        <PlatformIcon id={pid} size={14} />
+                        {platformOf(pid)?.name ?? pid}
+                        <span className={isActive ? "text-primary-deep/70" : "text-muted/70"}>{platformAspect(pid)}</span>
+                        {hasOverride && (
+                          <span
+                            className="h-1.5 w-1.5 rounded-full bg-primary"
+                            title="Independent from other platforms"
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                  <Popover
+                    width="min-w-[15rem]"
+                    trigger={(open) => (
+                      <span
+                        className={`flex h-8 w-8 items-center justify-center rounded-full border transition-colors ${
+                          open ? "border-primary text-primary-deep" : "border-line text-muted hover:text-ink"
+                        }`}
+                      >
+                        <Icon name="info" size={14} />
+                      </span>
+                    )}
+                  >
+                    {() => (
+                      <div className="p-1">
+                        <p className="px-1.5 py-1 text-xs font-bold uppercase tracking-wide text-muted">
+                          Aspect ratio by platform
+                        </p>
+                        {ASPECTS.filter((a) => (CAROUSEL_ASPECT_PLATFORMS[a.id] ?? []).length > 0).map((a) => (
+                          <div key={a.id} className="flex items-center gap-2 px-1.5 py-1.5 text-xs">
+                            <span className="w-9 font-bold text-ink">{a.name}</span>
+                            <span className="flex items-center gap-1">
+                              {CAROUSEL_ASPECT_PLATFORMS[a.id].map((pid) => (
+                                <PlatformIcon key={pid} id={pid} size={14} />
+                              ))}
+                            </span>
+                            <span className="ml-auto text-muted/70">{a.px}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </Popover>
+                </div>
+              ) : (
+                <p className="mt-4 text-xs text-muted">
+                  Select accounts under Post To to format slides for each platform.
+                </p>
+              )}
+
               <div
                 className="mt-4 grid gap-4"
                 style={{ gridTemplateColumns: `repeat(${slideGridColumns}, minmax(0, 1fr))` }}
               >
-                {slideSources.map((source, i) => (
+                {activeSlideData.sources.map((source, i) => (
                   <SlideStructureCard
                     key={i}
                     index={i}
                     source={source}
-                    onSourceChange={(id) => updateSlideSource(i, id)}
-                    uploadedImage={slideUploads[i]}
-                    aspect={aspect}
-                    showText={showSlideText}
-                    text={slideTexts[i] ?? ""}
-                    onTextChange={(t) => updateSlideText(i, t)}
-                    textPos={slideTextPos[i] ?? { x: 50, y: 82 }}
-                    onTextPosChange={(p) => updateSlideTextPos(i, p)}
-                    textConfig={slideTextConfig}
+                    onSourceChange={(id) => updateSlideSource(i, id, slidesActiveTab)}
+                    uploadedImage={activeSlideData.uploads[i]}
+                    aspect={slidesActiveAspect}
+                    show={showSlideText}
+                    layers={activeSlideData.layers[i] ?? []}
+                    selectedLayerId={selectedLayer?.slide === i ? selectedLayer.id : null}
+                    onSelectLayer={(id) => setSelectedLayer(id ? { slide: i, id } : null)}
+                    onChangeLayer={(id, patch) => updateLayer(i, id, patch, slidesActiveTab)}
+                    onAddLayer={() => addLayer(i, slidesActiveTab)}
+                    onDeleteLayer={(id) => deleteLayer(i, id, slidesActiveTab)}
+                    // ponytail: flags the whole card once this platform has
+                    // diverged at all, not just when this specific slide has —
+                    // precise per-slide diffing isn't worth it here.
+                    overridden={!!slidesActiveTab && slidesActiveTab !== primaryPlatform && !!platformSlideOverrides[slidesActiveTab]}
+                    onApplyToAll={
+                      previewPlatforms.length > 1 && slidesActiveTab
+                        ? () => applyTextOverlayToAllPlatforms(i, slidesActiveTab)
+                        : undefined
+                    }
                   />
                 ))}
               </div>
               {showSlideText && (
                 <p className="mt-2 text-xs text-muted">
-                  Drag the text on a slide to reposition it. Styling applies to every slide.
+                  Add text with +, double-click a text to edit it, drag to move, and drag the dot to resize. Click a text to
+                  style it in Advanced Text Settings below.
                 </p>
               )}
               {exceededPlatforms.length > 0 && (
@@ -2201,135 +2999,168 @@ export function SlideshowStudio({
                 <Icon name={advancedTextOpen ? "chevronUp" : "chevronDown"} size={15} />
               </button>
 
-              {advancedTextOpen && (
-                <div className="mt-4 grid gap-6 rounded-xl border border-line bg-page/50 p-4 sm:grid-cols-2 lg:grid-cols-4">
-                  <div>
-                    <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Font Size</p>
-                    <div className="flex flex-wrap gap-1">
-                      {TEXT_SIZES.map((size) => (
-                        <button
-                          key={size.id}
-                          type="button"
-                          onClick={() => {
-                            setTextSize(size.id);
-                            setOverlays("text");
-                          }}
-                          className={`rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${
-                            textSize === size.id
-                              ? "border border-primary bg-white text-primary-deep"
-                              : "border border-transparent text-muted hover:text-ink"
-                          }`}
-                        >
-                          {size.name}
-                        </button>
-                      ))}
-                    </div>
+              {advancedTextOpen &&
+                (!selectedLayerData ? (
+                  <div className="mt-4 rounded-xl border border-dashed border-line bg-page/50 p-6 text-center text-sm font-semibold text-muted">
+                    Click a text on a slide to style it — font, size, style, and background apply to that text box.
                   </div>
-
-                  <div>
-                    <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Text Width</p>
-                    <div className="flex flex-wrap gap-1">
-                      {TEXT_WIDTHS.map((width) => (
-                        <button
-                          key={width.id}
-                          type="button"
-                          onClick={() => {
-                            setTextWidth(width.id);
-                            setOverlays("text");
-                          }}
-                          className={`rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${
-                            textWidth === width.id
-                              ? "border border-primary bg-white text-primary-deep"
-                              : "border border-transparent text-muted hover:text-ink"
-                          }`}
-                        >
-                          {width.name}
-                        </button>
-                      ))}
+                ) : (
+                  <div
+                    data-keep-selection
+                    className="mt-4 grid gap-6 rounded-xl border border-line bg-page/50 p-4 sm:grid-cols-2 lg:grid-cols-4"
+                  >
+                    <div>
+                      <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Font</p>
+                      <div className="flex flex-wrap gap-1">
+                        {FONTS.map((f) => (
+                          <button
+                            key={f.id}
+                            type="button"
+                            onClick={() => patchSelectedLayer({ font: f.id })}
+                            style={{ fontFamily: f.stack }}
+                            className={`rounded-lg px-2.5 py-1.5 text-sm font-bold transition-colors ${
+                              selectedLayerData.font === f.id
+                                ? "border border-primary bg-white text-primary-deep"
+                                : "border border-transparent text-muted hover:text-ink"
+                            }`}
+                          >
+                            {f.name}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
 
-                  <div>
-                    <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Style</p>
-                    <div className="grid grid-cols-3 gap-1.5">
-                      {TEXT_STYLES.map((style) => (
-                        <button
-                          key={style.id}
-                          type="button"
-                          onClick={() => {
-                            setTextStyle(style.id);
-                            setOverlays("text");
-                          }}
-                          aria-pressed={textStyle === style.id}
-                          className={`flex h-12 items-center justify-center rounded-lg border p-1.5 transition-colors ${
-                            textStyle === style.id
-                              ? "border-primary ring-2 ring-primary/30"
-                              : "border-line hover:border-primary/50"
-                          }`}
-                          title={style.name}
-                        >
-                          {/* Neutral gradient stands in for a photo backdrop, so
-                              white-text styles stay legible in the preview. */}
-                          <span className="flex h-full w-full items-center justify-center rounded-md bg-gradient-to-br from-slate-300 via-slate-400 to-slate-600">
-                            <span
-                              className={`rounded px-1.5 py-0.5 text-sm font-black ${style.className}`}
-                              style={textBgEnabled ? { backgroundColor: textBgColor } : undefined}
-                            >
-                              Aa
+                    <div>
+                      <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Font Size</p>
+                      <div className="flex flex-wrap gap-1">
+                        {TEXT_SIZE_PRESETS.map((size) => (
+                          <button
+                            key={size.id}
+                            type="button"
+                            onClick={() => patchSelectedLayer({ scale: size.scale })}
+                            className={`rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${
+                              selectedLayerData.scale === size.scale
+                                ? "border border-primary bg-white text-primary-deep"
+                                : "border border-transparent text-muted hover:text-ink"
+                            }`}
+                          >
+                            {size.name}
+                          </button>
+                        ))}
+                      </div>
+                      <input
+                        type="range"
+                        min={TEXT_SCALE_MIN}
+                        max={TEXT_SCALE_MAX}
+                        step={0.5}
+                        value={selectedLayerData.scale}
+                        onChange={(e) => patchSelectedLayer({ scale: Number(e.target.value) })}
+                        aria-label="Font size"
+                        className="mt-3 w-full cursor-pointer accent-primary"
+                      />
+                    </div>
+
+                    <div>
+                      <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Style</p>
+                      <div className="grid grid-cols-3 gap-1.5">
+                        {TEXT_STYLES.map((style) => (
+                          <button
+                            key={style.id}
+                            type="button"
+                            onClick={() => patchSelectedLayer({ style: style.id })}
+                            aria-pressed={selectedLayerData.style === style.id}
+                            className={`flex h-12 items-center justify-center rounded-lg border p-1.5 transition-colors ${
+                              selectedLayerData.style === style.id
+                                ? "border-primary ring-2 ring-primary/30"
+                                : "border-line hover:border-primary/50"
+                            }`}
+                            title={style.name}
+                          >
+                            <span className="flex h-full w-full items-center justify-center rounded-md bg-gradient-to-br from-slate-300 via-slate-400 to-slate-600">
+                              <span
+                                className={`rounded px-1.5 py-0.5 text-sm font-black ${style.className}`}
+                                style={selectedLayerData.bgEnabled ? { backgroundColor: selectedLayerData.bgColor } : undefined}
+                              >
+                                Aa
+                              </span>
                             </span>
-                          </span>
-                        </button>
-                      ))}
+                          </button>
+                        ))}
+                      </div>
                     </div>
-                  </div>
 
-                  <div>
-                    <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Text Background</p>
-                    <div className="flex flex-wrap items-center gap-1">
-                      <button
-                        type="button"
-                        onClick={() => setTextBgEnabled(false)}
-                        className={`rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${
-                          !textBgEnabled
-                            ? "border border-primary bg-white text-primary-deep"
-                            : "border border-transparent text-muted hover:text-ink"
-                        }`}
-                      >
-                        None
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setTextBgEnabled(true)}
-                        className={`rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${
-                          textBgEnabled
-                            ? "border border-primary bg-white text-primary-deep"
-                            : "border border-transparent text-muted hover:text-ink"
-                        }`}
-                      >
-                        Color
-                      </button>
-                      {textBgEnabled && (
-                        <label className="flex items-center gap-1.5 rounded-lg border border-line bg-white px-2 py-1">
-                          <input
-                            type="color"
-                            value={textBgColor}
-                            onChange={(e) => setTextBgColor(e.target.value)}
-                            className="h-6 w-6 cursor-pointer border-0 bg-transparent p-0"
-                            aria-label="Text background color"
-                          />
-                          <span className="font-mono text-xs text-muted">{textBgColor}</span>
-                        </label>
-                      )}
+                    <div>
+                      <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Text Background</p>
+                      <div className="flex flex-wrap items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => patchSelectedLayer({ bgEnabled: false })}
+                          className={`rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${
+                            !selectedLayerData.bgEnabled
+                              ? "border border-primary bg-white text-primary-deep"
+                              : "border border-transparent text-muted hover:text-ink"
+                          }`}
+                        >
+                          None
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => patchSelectedLayer({ bgEnabled: true })}
+                          className={`rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${
+                            selectedLayerData.bgEnabled
+                              ? "border border-primary bg-white text-primary-deep"
+                              : "border border-transparent text-muted hover:text-ink"
+                          }`}
+                        >
+                          Color
+                        </button>
+                        {selectedLayerData.bgEnabled && (
+                          <label className="flex items-center gap-1.5 rounded-lg border border-line bg-white px-2 py-1">
+                            <input
+                              type="color"
+                              value={selectedLayerData.bgColor}
+                              onChange={(e) => patchSelectedLayer({ bgColor: e.target.value })}
+                              className="h-6 w-6 cursor-pointer border-0 bg-transparent p-0"
+                              aria-label="Text background color"
+                            />
+                            <span className="font-mono text-xs text-muted">{selectedLayerData.bgColor}</span>
+                          </label>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              )}
+                ))}
             </section>
 
             <section className="mt-6">
-              <FieldLabel icon="type">Platform Descriptions</FieldLabel>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <FieldLabel icon="type">Platform Captions</FieldLabel>
+                {selectedPlatforms.size > 0 && (
+                  <div className="flex items-center gap-1 rounded-xl border border-line bg-page p-1">
+                    {(
+                      [
+                        ["short", "Short"],
+                        ["medium", "Medium"],
+                        ["long", "Long"],
+                      ] as const
+                    ).map(([id, label]) => (
+                      <button
+                        key={id}
+                        type="button"
+                        onClick={() => setCaptionLength(id)}
+                        className={`rounded-lg px-2.5 py-1 text-xs font-bold transition-colors ${
+                          captionLength === id ? "bg-white text-primary-deep shadow-sm" : "text-muted hover:text-ink"
+                        }`}
+                        title={`AI Auto-fill writes a ${label.toLowerCase()} caption`}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
               {selectedPlatforms.size === 0 ? (
-                <p className="mt-2 text-sm text-muted">Select accounts under Post To to write a description for each platform.</p>
+                <p className="mt-2 text-sm text-muted">Select accounts under Post To to write a caption for each platform.</p>
               ) : (
                 <div className="mt-2 flex flex-col gap-3">
                   {[...selectedPlatforms].map((id) => {
@@ -2469,74 +3300,236 @@ export function SlideshowStudio({
                   onSourceChange={(id) => updateSlideSource(i, id)}
                   uploadedImage={slideUploads[i]}
                   aspect={aspect}
-                  showText={showSlideText}
-                  text={slideTexts[i] ?? ""}
-                  onTextChange={(t) => updateSlideText(i, t)}
-                  textPos={slideTextPos[i] ?? { x: 50, y: 82 }}
-                  onTextPosChange={(p) => updateSlideTextPos(i, p)}
-                  textConfig={slideTextConfig}
+                  show={showSlideText}
+                  layers={slideLayers[i] ?? []}
+                  selectedLayerId={selectedLayer?.slide === i ? selectedLayer.id : null}
+                  onSelectLayer={(id) => setSelectedLayer(id ? { slide: i, id } : null)}
+                  onChangeLayer={(id, patch) => updateLayer(i, id, patch)}
+                  onAddLayer={() => addLayer(i)}
+                  onDeleteLayer={(id) => deleteLayer(i, id)}
                 />
               ))}
             </div>
           </div>
         )}
 
-        {isReviewStep && (
-          <>
-            <div className="mt-5 grid gap-3 sm:grid-cols-2">
-              {[
-                ["Campaign", campaignName || "Untitled campaign"],
-                ["Publishing", publishedLabel],
-                ["Slides per show", `${slideCount} slides`],
-                ["Category", selectedCategory.name],
-                ["Aspect", `${selectedAspect.name} · ${selectedAspect.hint}`],
-                ["Overlays", selectedOverlay.name],
-                ["Text style", `${selectedTextStyle.name} · ${selectedTextSize.name} · ${selectedTextWidth.name}`],
-                ["Language", `${selectedLanguage.flag} ${selectedLanguage.name}`],
-                ["AI model", `${selectedModel.name} (${selectedModel.credits}cr/image)`],
-                ["Translation", translationMode === "same" ? "Same as primary" : selectedTranslationLanguage.name],
-                ["Estimated cost", `~${creditEstimate.toLocaleString()} credits`],
-              ].map(([label, value]) => (
-                <div key={label} className="rounded-xl border border-line bg-page/60 p-4">
-                  <p className="text-xs font-black uppercase tracking-[0.12em] text-muted">{label}</p>
-                  <p className="mt-1 font-bold text-ink">{value}</p>
-                </div>
-              ))}
-            </div>
-
-            <div className="mt-4 rounded-xl border border-line bg-white p-4">
-              <FieldLabel>Context</FieldLabel>
-              <p className="mt-2 whitespace-pre-wrap text-sm text-ink">{context}</p>
-            </div>
-            {[...selectedPlatforms].some((id) => platformCaptions[id]?.trim()) && (
-              <div className="mt-4 flex flex-col gap-3 rounded-xl border border-line bg-white p-4">
-                <FieldLabel>Platform Descriptions</FieldLabel>
-                {[...selectedPlatforms]
-                  .filter((id) => platformCaptions[id]?.trim())
-                  .map((id) => (
-                    <div key={id}>
-                      <p className="flex items-center gap-1.5 text-xs font-black uppercase tracking-[0.1em] text-muted">
-                        <PlatformIcon id={id} size={12} /> {platformOf(id)?.name ?? id}
-                      </p>
-                      <p className="mt-1 whitespace-pre-wrap text-sm text-ink">{platformCaptions[id]}</p>
+        {isReviewStep &&
+          (() => {
+            const activeTab = slidesActiveTab;
+            const activeAccounts = activeTab
+              ? accounts.filter((a) => selectedAccountIds.has(a.id) && a.platform === activeTab)
+              : [];
+            const activePlatformInfo = activeTab ? platformOf(activeTab) : undefined;
+            const activeCaption = activeTab ? platformCaptions[activeTab] ?? "" : "";
+            const activeMax = activeTab
+              ? CAPTION_MAX_BY_PLATFORM[activeTab as keyof typeof CAPTION_MAX_BY_PLATFORM] ?? CAPTION_MAX
+              : CAPTION_MAX;
+            const activeAspectInfo = ASPECTS.find((a) => a.id === slidesActiveAspect) ?? selectedAspect;
+            const reviewSlideData = activeSlideData;
+            return (
+              <>
+                {/* Campaign + schedule header */}
+                <div className="mt-5 flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <p className="text-xs font-black uppercase tracking-[0.12em] text-muted">Campaign</p>
+                    <h3 className="text-xl font-black text-ink">{campaignName || "Untitled campaign"}</h3>
+                  </div>
+                  <div className="flex items-center gap-2 rounded-xl border border-line bg-page/60 px-3 py-2">
+                    <Icon name="calendar" size={16} className="text-primary-deep" />
+                    <div>
+                      <p className="text-[10px] font-black uppercase tracking-[0.12em] text-muted">Scheduled</p>
+                      <p className="text-sm font-bold text-ink">{publishedLabel}</p>
                     </div>
+                  </div>
+                </div>
+
+                {/* Quick facts */}
+                <div className="mt-3 flex flex-wrap gap-1.5 text-xs font-semibold text-muted">
+                  {[
+                    `${previewPlatforms.length} platform${previewPlatforms.length === 1 ? "" : "s"}`,
+                    `${slideCount} slides`,
+                    selectedCategory.name,
+                  ].map((fact) => (
+                    <span key={fact} className="rounded-full border border-line bg-white px-3 py-1">
+                      {fact}
+                    </span>
                   ))}
-              </div>
-            )}
-            {draftStatus !== "idle" && (
-              <div className="mt-6 flex justify-center">
-                <button
-                  type="button"
-                  onClick={() => setConfirmDeleteDraft(true)}
-                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-red-600 transition-colors hover:text-red-700"
-                >
-                  <Icon name="trash" size={14} />
-                  Delete draft
-                </button>
-              </div>
-            )}
-          </>
-        )}
+                </div>
+
+                {previewPlatforms.length === 0 ? (
+                  <div className="mt-5 rounded-2xl border border-dashed border-line bg-page/40 p-8 text-center">
+                    <p className="text-sm font-semibold text-muted">
+                      No accounts selected. Go back to Settings and choose where to post under{" "}
+                      <span className="font-bold text-ink">Post To</span>.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-5">
+                    {/* Platform tabs */}
+                    <div className="flex gap-1.5 overflow-x-auto pb-1">
+                      {previewPlatforms.map((pid) => {
+                        const isActive = pid === activeTab;
+                        return (
+                          <button
+                            key={pid}
+                            type="button"
+                            onClick={() => setPreviewPlatform(pid)}
+                            className={`flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-bold transition-colors ${
+                              isActive
+                                ? "border-primary bg-primary-soft/50 text-primary-deep"
+                                : "border-line bg-white text-muted hover:text-ink"
+                            }`}
+                          >
+                            <PlatformIcon id={pid} size={16} />
+                            {platformOf(pid)?.name ?? pid}
+                          </button>
+                        );
+                      })}
+                    </div>
+
+                    {/* Post preview */}
+                    <div className="mt-3 overflow-hidden rounded-2xl border border-line bg-white shadow-sm">
+                      {/* Account + time header */}
+                      <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-3">
+                        <div className="flex items-center gap-2.5">
+                          {activeAccounts.length > 0 ? (
+                            <>
+                              <AccountAvatar
+                                username={activeAccounts[0].username}
+                                platformId={activeTab}
+                                avatarUrl={activeAccounts[0].avatar_url}
+                                size={38}
+                              />
+                              <div className="min-w-0">
+                                <p className="truncate text-sm font-bold text-ink">{activeAccounts[0].username}</p>
+                                <p className="text-xs text-muted">
+                                  {activeAccounts.length > 1 ? `+${activeAccounts.length - 1} more · ` : ""}
+                                  {activePlatformInfo?.name}
+                                </p>
+                              </div>
+                            </>
+                          ) : (
+                            <>
+                              <PlatformIcon id={activeTab} size={28} />
+                              <p className="text-sm font-bold text-ink">{activePlatformInfo?.name}</p>
+                            </>
+                          )}
+                        </div>
+                        <span className="flex shrink-0 items-center gap-1 text-xs font-semibold text-muted">
+                          <Icon name="clock" size={13} /> {publishedLabel}
+                        </span>
+                      </div>
+
+                      {/* Slide carousel — reformatted to this platform's native aspect,
+                          regardless of the editing aspect picked back in Settings. */}
+                      <div className="flex items-center justify-between gap-2 px-4 pt-3">
+                        <span className="flex items-center gap-1 text-xs font-semibold text-muted">
+                          <Icon name="image" size={13} />
+                          Formatted for {activePlatformInfo?.name ?? "this platform"}
+                        </span>
+                        <span className="text-xs font-semibold text-muted">
+                          {activeAspectInfo.name} · {activeAspectInfo.px}
+                        </span>
+                      </div>
+                      <div className="flex snap-x gap-2.5 overflow-x-auto px-4 py-3">
+                        {reviewSlideData.sources.map((source, i) => (
+                          <div key={i} className="relative w-36 shrink-0 snap-start">
+                            <SlidePreviewFrame
+                              index={i}
+                              source={source ?? "auto"}
+                              uploadedImage={reviewSlideData.uploads[i]}
+                              aspect={slidesActiveAspect}
+                              show={showSlideText}
+                              layers={reviewSlideData.layers[i] ?? []}
+                            />
+                            <button
+                              type="button"
+                              onClick={() => downloadSlide(i)}
+                              disabled={downloadingSlide !== null}
+                              title={`Download slide ${i + 1} (${activeAspectInfo.name}, ${activeAspectInfo.px})`}
+                              aria-label={`Download slide ${i + 1}`}
+                              className="absolute right-1.5 top-1.5 flex h-7 w-7 items-center justify-center rounded-md bg-ink/70 text-white transition-colors hover:bg-ink/90 disabled:opacity-50"
+                            >
+                              {downloadingSlide === i ? (
+                                <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-transparent" />
+                              ) : (
+                                <Icon name="download" size={14} />
+                              )}
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* Caption for this platform */}
+                      <div className="border-t border-line px-4 py-3">
+                        <div className="flex items-center justify-between">
+                          <p className="flex items-center gap-1.5 text-xs font-black uppercase tracking-[0.1em] text-muted">
+                            <Icon name="type" size={12} /> Caption
+                          </p>
+                          <span
+                            className={`text-xs font-semibold ${
+                              activeCaption.length > activeMax ? "text-red-600" : "text-muted"
+                            }`}
+                          >
+                            {activeCaption.length}/{activeMax}
+                          </span>
+                        </div>
+                        {activeCaption.trim() ? (
+                          <p className="mt-1.5 whitespace-pre-wrap text-sm text-ink">{activeCaption}</p>
+                        ) : (
+                          <p className="mt-1.5 text-sm italic text-muted">
+                            No caption yet — add one back in Platform Captions.
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Collapsible post details */}
+                <details className="group mt-4 rounded-xl border border-line bg-white">
+                  <summary className="flex cursor-pointer list-none items-center justify-between px-4 py-3 text-sm font-bold text-ink">
+                    <span className="flex items-center gap-1.5">
+                      <Icon name="type" size={14} /> Post details
+                    </span>
+                    <Icon name="chevronDown" size={16} className="text-muted transition-transform group-open:rotate-180" />
+                  </summary>
+                  <div className="grid gap-3 px-4 pb-4 sm:grid-cols-2">
+                    {[
+                      ["Category", selectedCategory.name],
+                      ["Aspect", `${selectedAspect.name} · ${selectedAspect.hint}`],
+                      ["Overlays", selectedOverlay.name],
+                      ["Language", `${selectedLanguage.flag} ${selectedLanguage.name}`],
+                      ["Translation", translationMode === "same" ? "Same as primary" : selectedTranslationLanguage.name],
+                      ["AI model", selectedModel.name],
+                    ].map(([label, value]) => (
+                      <div key={label} className="rounded-xl border border-line bg-page/60 p-3">
+                        <p className="text-[11px] font-black uppercase tracking-[0.12em] text-muted">{label}</p>
+                        <p className="mt-0.5 text-sm font-bold text-ink">{value}</p>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="border-t border-line px-4 py-3">
+                    <p className="text-[11px] font-black uppercase tracking-[0.12em] text-muted">Context</p>
+                    <p className="mt-1 whitespace-pre-wrap text-sm text-ink">{context}</p>
+                  </div>
+                </details>
+
+                {draftStatus !== "idle" && (
+                  <div className="mt-6 flex justify-center">
+                    <button
+                      type="button"
+                      onClick={() => setConfirmDeleteDraft(true)}
+                      className="inline-flex items-center gap-1.5 text-sm font-semibold text-red-600 transition-colors hover:text-red-700"
+                    >
+                      <Icon name="trash" size={14} />
+                      Delete draft
+                    </button>
+                  </div>
+                )}
+              </>
+            );
+          })()}
       </div>
 
       {draftStatusPill && <div className="mt-4 flex justify-center">{draftStatusPill}</div>}
