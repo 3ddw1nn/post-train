@@ -222,6 +222,24 @@ export default defineSchema({
     .index("by_workspace", ["workspace_id"])
     .index("by_status", ["status"]),
 
+  // Saved Content Studio drafts — lets a user leave the wizard mid-edit
+  // (Templates, Custom, or a copied IG/TikTok post) and resume later.
+  studio_drafts: defineTable({
+    id: v.string(),
+    workspace_id: v.string(),
+    created_by: v.string(),
+    template: v.string(), // "slideshow" (matches STUDIO_TEMPLATES)
+    mode: v.string(), // "templates" | "custom" | "copy" — drives the origin tag
+    source_platform: nullableString, // "Instagram" | "TikTok" — only set when mode === "copy"
+    title: v.string(),
+    cover_image_url: nullableString,
+    state: v.string(), // JSON blob of resumable wizard fields
+    created_at: v.string(),
+    updated_at: v.string(),
+  })
+    .index("by_legacy_id", ["id"])
+    .index("by_workspace", ["workspace_id"]),
+
   // Curated "trending post" library shown on the Explore page. Global/shared
   // across all workspaces (like support_messages) — not workspace-scoped.
   // v1 is seeded with original placeholder content; a real ingestion source

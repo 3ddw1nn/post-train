@@ -644,6 +644,40 @@ export function StudioWizardSkeleton() {
   );
 }
 
+// Matches the Slideshow Studio mode chooser (Templates / Custom / Copy from IG-TikTok).
+export function SlideshowStudioSkeleton() {
+  return (
+    <div className="fade-up mx-auto w-full max-w-5xl pb-10">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <SkeletonBlock className="h-4 w-32" />
+          <div className="mt-2 flex items-center gap-2">
+            <SkeletonBlock className="h-8 w-8 rounded-lg" />
+            <SkeletonBlock className="h-7 w-48" />
+          </div>
+        </div>
+      </div>
+
+      <div className="card mt-5 p-6 sm:p-8">
+        <SkeletonBlock className="h-6 w-64" />
+        <SkeletonBlock className="mt-2 h-4 w-80 max-w-full" />
+
+        <div className="mt-6 grid gap-4 md:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="rounded-2xl border border-line bg-white p-6">
+              <SkeletonBlock className="h-14 w-14 rounded-2xl" />
+              <SkeletonBlock className="mt-4 h-5 w-28" />
+              <SkeletonBlock className="mt-2 h-4 w-full" />
+              <SkeletonBlock className="mt-1 h-4 w-3/4" />
+              <SkeletonBlock className="mt-5 h-4 w-24" />
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function BulkCreationSkeleton() {
   return (
     <div className="fade-up mx-auto max-w-xl">

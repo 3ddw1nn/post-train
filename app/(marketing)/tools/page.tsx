@@ -1,10 +1,10 @@
-import { TOOL_LIST } from "@/lib/tools-registry";
+import { PUBLIC_TOOL_LIST } from "@/lib/tools-registry";
 import { ToolCardGrid, type ToolCardItem } from "@/components/tool-card-grid";
 
 export const metadata = { title: "Free tools" };
 
 export default function ToolsIndexPage() {
-  const tools: ToolCardItem[] = TOOL_LIST.map((t) => ({ ...t, href: `/tools/${t.slug}` }));
+  const tools: ToolCardItem[] = PUBLIC_TOOL_LIST.map((t) => ({ ...t, href: `/tools/${t.slug}` }));
 
   return (
     <section className="mx-auto max-w-5xl px-6 py-16">

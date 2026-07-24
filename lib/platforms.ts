@@ -190,9 +190,56 @@ export const platformsForType = (type: PostType) =>
 /** Platforms that only take the first 4 images of a carousel. */
 export const FOUR_IMAGE_PLATFORMS: PlatformId[] = ["twitter", "bluesky", "threads", "mastodon"];
 
+/**
+ * Max images/videos supported in a single multi-image post, per each
+ * platform's own docs (checked 2026): X/Bluesky/Mastodon cap at 4 (standard
+ * default for Mastodon), Pinterest carousels at 5 (2-5 per Pinterest's ad
+ * specs), Instagram/Threads/LinkedIn at 20, TikTok photo mode at 35 (min 4).
+ * Facebook has no officially documented hard cap for Graph API multi-photo
+ * posts, and Google Business Profile posts aren't a carousel format at all
+ * (single image/video only) — both intentionally omitted here.
+ */
+export const CAROUSEL_MAX: Partial<Record<PlatformId, number>> = {
+  twitter: 4,
+  bluesky: 4,
+  mastodon: 4,
+  pinterest: 5,
+  instagram: 20,
+  threads: 20,
+  linkedin: 20,
+  tiktok: 35,
+};
+
 export const ANALYTICS_PLATFORMS: PlatformId[] = ["tiktok", "youtube", "instagram"];
 
 export const CAPTION_MAX = 2200;
+
+/**
+ * Each platform's own hard cap on a single post's text (checked 2026):
+ * X 280, Bluesky 300, Mastodon/Threads 500, Pinterest pin description 800,
+ * Instagram/TikTok 2,200, LinkedIn 3,000, Facebook 63,206. Google Business
+ * isn't included — not relevant to the carousel-style posts this powers.
+ */
+export const CAPTION_MAX_BY_PLATFORM: Partial<Record<PlatformId, number>> = {
+  twitter: 280,
+  bluesky: 300,
+  mastodon: 500,
+  threads: 500,
+  pinterest: 800,
+  instagram: 2200,
+  tiktok: 2200,
+  linkedin: 3000,
+  facebook: 63206,
+};
+
+/**
+ * Platforms where hashtags are a meaningful discovery mechanism, so AI
+ * auto-fill should append a few. Mastodon is included deliberately — most
+ * instances have no full-text search, so hashtags are often the only way a
+ * post gets found. Pinterest and Facebook are excluded: both platforms'
+ * own guidance favors plain descriptive text over hashtags for reach.
+ */
+export const HASHTAG_PLATFORMS: PlatformId[] = ["instagram", "tiktok", "threads", "twitter", "linkedin", "mastodon"];
 
 /** Shared across the dashboard + onboarding connect pages — both are valid `return` targets after a real OAuth flow. */
 export const CONNECT_ERRORS: Record<string, string> = {

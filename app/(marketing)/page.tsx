@@ -5,7 +5,7 @@ import { PlatformIcon, PlatformIconRow } from "@/components/platform-icon";
 import { PlanPicker } from "@/components/plan-picker";
 import { Icon } from "@/components/icons";
 import { UserAvatar } from "@/components/avatar-menu";
-import { ShaderGradientBg } from "@/components/shader-gradient-bg";
+import { ShaderGradientBg, StaticGradientBg } from "@/components/shader-gradient-bg";
 
 export const metadata = {
   title: "Post Train — schedule and cross-post to 10 platforms",
@@ -233,6 +233,7 @@ export default function LandingPage() {
 
       {/* ── Stats band ───────────────────────────────────── */}
       <section className="relative overflow-hidden border-y border-line bg-primary-dark py-12 text-white">
+        <StaticGradientBg className="pointer-events-none absolute inset-0" />
         <ShaderGradientBg className="pointer-events-none absolute inset-0" />
         <div className="relative z-10 mx-auto grid max-w-4xl grid-cols-1 gap-8 px-6 text-center sm:grid-cols-3">
           {[
@@ -380,6 +381,7 @@ export default function LandingPage() {
 
       {/* ── Final CTA ────────────────────────────────────── */}
       <section className="relative overflow-hidden border-t border-line bg-primary-dark py-16 text-center text-white">
+        <StaticGradientBg className="pointer-events-none absolute inset-0" />
         <ShaderGradientBg className="pointer-events-none absolute inset-0" />
         <div className="relative z-10">
           <h2 className="text-3xl font-extrabold">All aboard.</h2>

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { Logo } from "@/components/logo";
 import { PLATFORMS } from "@/lib/platforms";
-import { TOOL_LIST } from "@/lib/tools-registry";
+import { PUBLIC_TOOL_LIST } from "@/lib/tools-registry";
 
 export function MarketingFooter() {
   return (
@@ -41,7 +41,7 @@ export function MarketingFooter() {
         <div>
           <p className="text-xs font-bold uppercase tracking-wide text-muted">Free tools</p>
           <ul className="mt-3 flex flex-col gap-2 text-sm">
-            {TOOL_LIST.map((t) => (
+            {PUBLIC_TOOL_LIST.map((t) => (
               <li key={t.slug}>
                 <Link href={`/tools/${t.slug}`} className="hover:underline">
                   {t.name}

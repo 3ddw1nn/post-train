@@ -20,6 +20,7 @@ import type * as posts from "../posts.js";
 import type * as publish from "../publish.js";
 import type * as queue from "../queue.js";
 import type * as records from "../records.js";
+import type * as studioDrafts from "../studioDrafts.js";
 import type * as studioJobs from "../studioJobs.js";
 import type * as supportChat from "../supportChat.js";
 import type * as teams from "../teams.js";
@@ -46,6 +47,7 @@ declare const fullApi: ApiFromModules<{
   publish: typeof publish;
   queue: typeof queue;
   records: typeof records;
+  studioDrafts: typeof studioDrafts;
   studioJobs: typeof studioJobs;
   supportChat: typeof supportChat;
   teams: typeof teams;

@@ -3,6 +3,7 @@ import { requireOnboardedUser } from "@/lib/auth";
 import { getSubscription } from "@/lib/billing";
 import { studioAccess } from "@/lib/entitlements";
 import { currentWorkspace } from "@/lib/workspaces";
+import { accountsForWorkspace } from "@/lib/accounts";
 import { aiUsageThisMonth, STUDIO_TEMPLATES, type StudioTemplate } from "@/lib/studio";
 import { FAL_AVATAR_PER_SECOND } from "@/lib/fal";
 import { getExploreItem, listExploreSlides } from "@/lib/explore";
@@ -39,10 +40,17 @@ export default async function StudioTemplatePage({
   }
 
   if (template === "slideshow") {
+    const accounts = await accountsForWorkspace(ws.id);
     return (
       <SlideshowStudio
         initialSlideTexts={initialSlideTexts}
         sourceExploreItemId={sourceExploreItemId}
+        accounts={accounts.map((a) => ({
+          id: a.id,
+          platform: a.platform,
+          username: a.username,
+          avatar_url: a.avatar_url,
+        }))}
       />
     );
   }

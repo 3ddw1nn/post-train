@@ -65,8 +65,12 @@ export async function createR2UploadUrl(opts: {
 }
 
 export async function createR2DownloadUrl(key: string) {
-  const publicBase = r2PublicBaseUrl();
-  if (publicBase) return `${publicBase}/${key}`;
+  // R2_PUBLIC_BASE_URL would be preferable (no per-request signing), but the
+  // bucket's public dev URL currently fails the TLS handshake outright —
+  // "Public Development URL" access looks disabled on the bucket. Presigned
+  // GetObject requests go through R2's normal S3 API instead, which works
+  // regardless of that setting. Re-enable the branch above once public
+  // access is confirmed working.
   return await getSignedUrl(
     r2Client(),
     new GetObjectCommand({

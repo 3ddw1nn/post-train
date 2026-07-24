@@ -35,6 +35,12 @@ ${context}`,
   ];
 
   const result = await generateWithFreeAi(messages, 300);
-  if (result) return Response.json({ text: result.text, provider: result.provider });
+  if (result.text) return Response.json({ text: result.text, provider: result.provider });
+  if (result.rateLimited) {
+    return Response.json(
+      { error: { message: "You've used up today's free AI generations — try again later." } },
+      { status: 429 }
+    );
+  }
   return Response.json({ text: fallbackRewrite(context, category, language, slideCount), provider: "fallback" });
 }

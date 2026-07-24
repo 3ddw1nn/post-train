@@ -4,20 +4,28 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
 import { Icon } from "./icons";
-import { PlatformIcon } from "./platform-icon";
+import { PlatformIcon, AccountAvatar } from "./platform-icon";
+import { platform as platformOf, CAROUSEL_MAX, CAPTION_MAX, CAPTION_MAX_BY_PLATFORM } from "@/lib/platforms";
+import { checkAiTone, type AiToneResult } from "@/lib/ai-tone";
+import type { StudioDraftMode, StudioDraftRow } from "@/lib/studio-drafts";
 
 const CUSTOM_STEPS = ["Settings", "Review & Launch"] as const;
 const TEMPLATE_STEPS = ["Templates", "Settings", "Images", "Launch"] as const;
 const REFERENCE_MAX = 5;
 const CONTEXT_MAX = 1200;
-const STYLE_PROMPT_MAX = 1200;
-const SLIDE_MIN = 1;
-const SLIDE_MAX = 10;
+// Cap per-slide overlay text so it can't overflow the image. A short headline
+// wraps and stays inside the safe area; longer copy belongs in the caption.
+const SLIDE_TEXT_MAX = 150;
+const SLIDE_MIN = 2;
+// TikTok's photo mode (35) is the highest of any platform's carousel cap
+// (see CAROUSEL_MAX in lib/platforms.ts), so it's the app-wide ceiling —
+// lower per-platform caps are surfaced as a heads-up instead of enforced.
+const SLIDE_MAX = 35;
 
 const SLIDE_SOURCES = [
   { id: "auto", name: "Auto", short: "Auto", icon: "sparkles", desc: "Let Post Train pick the best source." },
   { id: "ai", name: "AI Generated", short: "AI", icon: "sparkles", desc: "Generate images from your prompt." },
-  { id: "upload", name: "Uploaded Images", short: "Uploaded", icon: "upload", desc: "Use your own photos." },
+  { id: "upload", name: "Upload Image", short: "Upload", icon: "upload", desc: "Use your own photo." },
   { id: "pack", name: "Image Pack", short: "Pack", icon: "image", desc: "Start from a saved image set." },
   { id: "character", name: "Consistent Character", short: "Character", icon: "users", desc: "Keep the same person/object style.", credits: 2 },
 ] as const;
@@ -31,10 +39,12 @@ const AI_MODELS = [
 ] as const;
 
 const ASPECTS = [
-  { id: "9:16", name: "9:16", hint: "Portrait (TikTok, Reels)" },
-  { id: "3:4", name: "3:4", hint: "Portrait (Pinterest, Threads)" },
-  { id: "4:5", name: "4:5", hint: "Portrait (Instagram Feed)" },
-  { id: "1:1", name: "1:1", hint: "Square (Instagram)" },
+  { id: "9:16", name: "9:16", hint: "Portrait (TikTok, Reels)", px: "1080×1920px" },
+  { id: "2:3", name: "2:3", hint: "Portrait (Pinterest)", px: "1000×1500px" },
+  { id: "3:4", name: "3:4", hint: "Portrait (Threads, LinkedIn)", px: "1080×1440px" },
+  { id: "4:5", name: "4:5", hint: "Portrait (Instagram Feed)", px: "1080×1350px" },
+  { id: "1:1", name: "1:1", hint: "Square (Instagram, X, Bluesky)", px: "1080×1080px" },
+  { id: "16:9", name: "16:9", hint: "Landscape (X, Facebook, LinkedIn)", px: "1920×1080px" },
 ] as const;
 
 const OVERLAYS = [
@@ -64,13 +74,13 @@ const SLIDE_CATEGORIES = [
   { id: "case_study", name: "Case Study", icon: "chart" },
 ] as const;
 
+// Text color/shadow only — whether the text sits on a background chip (and
+// what color that chip is) is a separate control (see textBgEnabled/textBgColor),
+// so any of these can be paired with any background.
 const TEXT_STYLES = [
   { id: "shadow", name: "Shadow", className: "text-white [text-shadow:0_2px_0_rgba(0,0,0,0.85)]" },
-  { id: "boxed", name: "Boxed", className: "bg-ink px-2 py-0.5 text-white" },
-  { id: "pill", name: "Pill", className: "rounded-md bg-white px-2 py-0.5 text-ink shadow-sm" },
-  { id: "plain", name: "Plain", className: "text-white" },
-  { id: "dark_pill", name: "Dark pill", className: "rounded-md bg-black px-2 py-0.5 text-white" },
-  { id: "minimal", name: "Minimal", className: "text-ink" },
+  { id: "light", name: "Light text", className: "text-white" },
+  { id: "dark", name: "Dark text", className: "text-ink" },
 ] as const;
 
 const TEXT_SIZES = [
@@ -270,14 +280,25 @@ function platformFromSlideshowUrl(value: string) {
   return "TikTok or Instagram";
 }
 
+function referencePlatformIconId(value: string) {
+  const lower = value.toLowerCase();
+  if (lower.includes("instagram.com")) return "instagram";
+  if (lower.includes("tiktok.com")) return "tiktok";
+  return null;
+}
+
 function aspectClass(aspect: (typeof ASPECTS)[number]["id"]) {
   switch (aspect) {
     case "1:1":
       return "aspect-square";
+    case "2:3":
+      return "aspect-[2/3]";
     case "3:4":
       return "aspect-[3/4]";
     case "4:5":
       return "aspect-[4/5]";
+    case "16:9":
+      return "aspect-[16/9]";
     case "9:16":
     default:
       return "aspect-[9/16]";
@@ -291,7 +312,16 @@ function aspectClass(aspect: (typeof ASPECTS)[number]["id"]) {
 // menu inside `overflow-x-auto` gets clipped (overflow-x set also computes
 // overflow-y to auto). Closes itself if that row scrolls so it never drifts
 // away from its trigger.
-function SlideSourceControl({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+function SlideSourceControl({
+  value,
+  onChange,
+  aspect,
+}: {
+  value: string;
+  onChange: (id: string) => void;
+  aspect: (typeof ASPECTS)[number]["id"];
+}) {
+  const recommendedPx = ASPECTS.find((a) => a.id === aspect)?.px;
   const [open, setOpen] = useState(false);
   const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -333,7 +363,7 @@ function SlideSourceControl({ value, onChange }: { value: string; onChange: (id:
         ref={triggerRef}
         type="button"
         onClick={toggle}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-line bg-white/95 px-2.5 py-1.5 text-xs font-extrabold text-primary-deep shadow-sm backdrop-blur transition-colors hover:border-primary"
+        className="flex w-full items-center justify-center gap-1.5 rounded-lg border border-line bg-white px-2.5 py-1.5 text-xs font-extrabold text-primary-deep transition-colors hover:border-primary"
       >
         <Icon name={selected.icon} size={13} />
         {selected.short}
@@ -360,7 +390,9 @@ function SlideSourceControl({ value, onChange }: { value: string; onChange: (id:
                 <Icon name={s.icon} size={16} className={s.id === value ? "text-primary-deep" : "text-muted"} />
                 <span className="min-w-0 flex-1">
                   <span className="block font-semibold">{s.name}</span>
-                  <span className="block truncate text-xs text-muted">{s.desc}</span>
+                  <span className="block truncate text-xs text-muted">
+                    {s.id === "upload" && recommendedPx ? `Recommended: ${recommendedPx}` : s.desc}
+                  </span>
                 </span>
                 <span className="ml-auto flex shrink-0 items-center gap-2">
                   {"credits" in s && <CreditBadge credits={s.credits} active={s.id === value} />}
@@ -375,42 +407,130 @@ function SlideSourceControl({ value, onChange }: { value: string; onChange: (id:
   );
 }
 
+type SlideTextConfig = {
+  className: string; // color/shadow treatment from TEXT_STYLES
+  bgEnabled: boolean;
+  bgColor: string;
+  size: (typeof TEXT_SIZES)[number]["id"];
+  width: (typeof TEXT_WIDTHS)[number]["id"];
+};
+
+const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+
 function SlideStructureCard({
   index,
   source,
   onSourceChange,
-  referenceImage,
+  uploadedImage,
   aspect,
+  showText,
+  text,
+  onTextChange,
+  textPos,
+  onTextPosChange,
+  textConfig,
 }: {
   index: number;
   source: string;
   onSourceChange: (id: string) => void;
-  referenceImage?: RefImage;
+  uploadedImage?: RefImage;
   aspect: (typeof ASPECTS)[number]["id"];
+  showText: boolean;
+  text: string;
+  onTextChange: (t: string) => void;
+  textPos: { x: number; y: number };
+  onTextPosChange: (p: { x: number; y: number }) => void;
+  textConfig: SlideTextConfig;
 }) {
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  // Drag the overlay anywhere in the image, clamped to a safe inset so the
+  // block (centered on this point) can't run off the edge.
+  function startDrag(e: React.PointerEvent) {
+    e.preventDefault();
+    const box = boxRef.current;
+    if (!box) return;
+    const move = (ev: PointerEvent) => {
+      const rect = box.getBoundingClientRect();
+      onTextPosChange({
+        x: clamp(((ev.clientX - rect.left) / rect.width) * 100, 14, 86),
+        y: clamp(((ev.clientY - rect.top) / rect.height) * 100, 8, 92),
+      });
+    };
+    const up = () => {
+      window.removeEventListener("pointermove", move);
+      window.removeEventListener("pointerup", up);
+    };
+    window.addEventListener("pointermove", move);
+    window.addEventListener("pointerup", up);
+  }
+
+  const sizeClass = textConfig.size === "normal" ? "text-[13px]" : "text-[10px]";
+  const widthClass = textConfig.width === "wide" ? "max-w-[92%]" : "max-w-[64%]";
+
   return (
-    <div
-      className={`group relative min-w-[165px] flex-1 overflow-hidden rounded-xl border border-primary/25 bg-gradient-to-br from-primary-soft/70 via-white to-page shadow-sm ${aspectClass(aspect)}`}
-    >
-      {referenceImage ? (
-        // eslint-disable-next-line @next/next/no-img-element -- local object URL preview.
-        <img src={referenceImage.url} alt={referenceImage.name} className="h-full w-full object-cover" />
-      ) : (
-        <div className="flex h-full flex-col items-center justify-center gap-3 p-4">
-          <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(16,139,128,0.2),transparent_35%),linear-gradient(145deg,rgba(16,139,128,0.12),rgba(255,255,255,0.72))]" />
-          <span className="relative z-10 rotate-[-8deg] text-2xl font-black leading-[0.82] text-primary-deep/35">
-            POST<br />TRAIN
+    // Sizing comes entirely from the parent grid's column count (see
+    // slideGridColumns) — this just fills its grid cell.
+    <div className="flex flex-col gap-2">
+      <div
+        ref={boxRef}
+        className={`group relative w-full overflow-hidden rounded-xl border border-primary/25 bg-gradient-to-br from-primary-soft/70 via-white to-page shadow-sm ${aspectClass(aspect)}`}
+      >
+        {/* Only a photo picked specifically for this slide is shown as-is —
+            reference images (uploaded or pulled from a copied post) are just
+            inspiration for a new AI-generated image, never the literal output. */}
+        {source === "upload" && uploadedImage ? (
+          // eslint-disable-next-line @next/next/no-img-element -- local object URL preview.
+          <img src={uploadedImage.url} alt={uploadedImage.name} className="h-full w-full object-cover" />
+        ) : (
+          <div className="flex h-full flex-col items-center justify-center gap-3 p-4">
+            <div className="absolute inset-0 bg-[radial-gradient(circle_at_30%_20%,rgba(16,139,128,0.2),transparent_35%),linear-gradient(145deg,rgba(16,139,128,0.12),rgba(255,255,255,0.72))]" />
+            <span className="relative z-10 rotate-[-8deg] text-2xl font-black leading-[0.82] text-primary-deep/35">
+              POST<br />TRAIN
+            </span>
+          </div>
+        )}
+        {showText && text.trim() && (
+          <div
+            role="button"
+            tabIndex={0}
+            aria-label="Drag to reposition overlay text"
+            onPointerDown={startDrag}
+            style={{ left: `${textPos.x}%`, top: `${textPos.y}%`, transform: "translate(-50%, -50%)" }}
+            className={`absolute z-20 cursor-grab touch-none select-none rounded ${widthClass} px-1 text-center active:cursor-grabbing`}
+          >
+            <span
+              style={textConfig.bgEnabled ? { backgroundColor: textConfig.bgColor } : undefined}
+              className={`inline-block whitespace-pre-wrap break-words rounded px-1 py-0.5 font-black leading-tight ${sizeClass} ${textConfig.className}`}
+            >
+              {text}
+            </span>
+          </div>
+        )}
+        <div className="absolute bottom-3 right-3 flex items-end justify-between text-white">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-ink/80 text-sm font-black">
+            {index + 1}
           </span>
         </div>
+      </div>
+      <SlideSourceControl value={source} onChange={onSourceChange} aspect={aspect} />
+      {showText && (
+        <div>
+          <textarea
+            value={text}
+            maxLength={SLIDE_TEXT_MAX}
+            onChange={(e) => onTextChange(e.target.value)}
+            placeholder={`Slide ${index + 1} text…`}
+            rows={2}
+            className="w-full resize-none rounded-lg border border-line bg-white px-2 py-1.5 text-xs text-ink outline-none placeholder:text-muted focus:border-primary focus:ring-2 focus:ring-primary/20"
+          />
+          <div className="mt-0.5 flex justify-end">
+            <span className={`text-[10px] font-semibold ${text.length >= SLIDE_TEXT_MAX ? "text-red-600" : "text-muted"}`}>
+              {text.length}/{SLIDE_TEXT_MAX}
+            </span>
+          </div>
+        </div>
       )}
-      <div className="absolute left-3 top-3">
-        <SlideSourceControl value={source} onChange={onSourceChange} />
-      </div>
-      <div className="absolute bottom-3 right-3 flex items-end justify-between text-white">
-        <span className="flex h-7 w-7 items-center justify-center rounded-md bg-ink/80 text-sm font-black">
-          {index + 1}
-        </span>
-      </div>
     </div>
   );
 }
@@ -498,6 +618,157 @@ function ModeChooser({
           desc="Paste a photo-post link and recreate its structure as a new slideshow."
         />
       </div>
+    </div>
+  );
+}
+
+/* --------------------------------- drafts ------------------------------------- */
+
+function relativeTime(iso: string) {
+  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.round(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.round(hours / 24)}d ago`;
+}
+
+function DraftOriginTag({ mode, platform }: { mode: StudioDraftMode; platform: string | null }) {
+  if (mode === "copy") {
+    const iconId = platform === "Instagram" ? "instagram" : platform === "TikTok" ? "tiktok" : null;
+    return (
+      <span className="inline-flex items-center gap-1 rounded-full bg-primary-soft px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-primary-deep">
+        {iconId && <PlatformIcon id={iconId} size={11} />}
+        Template
+      </span>
+    );
+  }
+  return (
+    <span className="inline-flex items-center gap-1 rounded-full bg-page px-2 py-0.5 text-[10px] font-black uppercase tracking-wide text-muted">
+      <Icon name={mode === "templates" ? "stack" : "pencil"} size={11} />
+      {mode === "templates" ? "Template" : "Custom"}
+    </span>
+  );
+}
+
+function ConfirmDialog({
+  open,
+  title,
+  message,
+  confirmLabel,
+  onConfirm,
+  onCancel,
+}: {
+  open: boolean;
+  title: string;
+  message: string;
+  confirmLabel: string;
+  onConfirm: () => void;
+  onCancel: () => void;
+}) {
+  if (!open) return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[130] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
+      <div className="w-full max-w-sm rounded-2xl border border-line bg-white p-6 shadow-[0_30px_90px_rgba(0,0,0,0.35)]">
+        <h2 className="text-lg font-black text-ink">{title}</h2>
+        <p className="mt-2 text-sm text-muted">{message}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" onClick={onCancel} className="btn-subtle !py-1.5 text-sm">
+            Cancel
+          </button>
+          <button
+            type="button"
+            onClick={onConfirm}
+            className="rounded-xl bg-red-600 px-4 py-1.5 text-sm font-bold text-white transition-colors hover:bg-red-700"
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function DraftsSection({
+  drafts,
+  loading,
+  onResume,
+  onDelete,
+}: {
+  drafts: StudioDraftRow[];
+  loading: boolean;
+  onResume: (draft: StudioDraftRow) => void;
+  onDelete: (id: string) => void;
+}) {
+  const [pendingDelete, setPendingDelete] = useState<StudioDraftRow | null>(null);
+  return (
+    <div className="card mt-5 p-6 sm:p-8">
+      <h3 className="text-xs font-black uppercase tracking-[0.1em] text-muted">Drafts</h3>
+      {loading ? (
+        <div className="mt-4 flex items-center gap-2 text-sm font-semibold text-muted">
+          <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted/40 border-t-transparent" />
+          Loading drafts…
+        </div>
+      ) : !drafts.length ? (
+        <p className="mt-4 text-sm font-semibold text-muted">No saved drafts.</p>
+      ) : (
+      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+        {drafts.map((draft) => (
+          <div
+            key={draft.id}
+            role="button"
+            tabIndex={0}
+            onClick={() => onResume(draft)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onResume(draft);
+              }
+            }}
+            className="group relative flex cursor-pointer items-center gap-3 rounded-xl border border-line bg-white p-3 text-left transition-colors hover:border-primary hover:bg-primary-soft/30"
+          >
+            <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-page">
+              {draft.cover_image_url ? (
+                // eslint-disable-next-line @next/next/no-img-element -- external reference-photo preview
+                <img src={draft.cover_image_url} alt="" className="h-full w-full object-cover" />
+              ) : (
+                <Icon name="stack" size={18} className="text-muted" />
+              )}
+            </span>
+            <span className="min-w-0 flex-1">
+              <span className="block truncate text-sm font-bold text-ink">{draft.title}</span>
+              <span className="mt-1 flex items-center gap-2">
+                <DraftOriginTag mode={draft.mode} platform={draft.source_platform} />
+                <span className="text-xs font-semibold text-muted">{relativeTime(draft.updated_at)}</span>
+              </span>
+            </span>
+            <button
+              type="button"
+              onClick={(e) => {
+                e.stopPropagation();
+                setPendingDelete(draft);
+              }}
+              aria-label={`Delete draft ${draft.title}`}
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted opacity-0 transition-opacity hover:bg-ink/10 hover:text-ink group-hover:opacity-100"
+            >
+              <Icon name="x" size={13} />
+            </button>
+          </div>
+        ))}
+      </div>
+      )}
+      <ConfirmDialog
+        open={!!pendingDelete}
+        title="Delete this draft?"
+        message={`"${pendingDelete?.title || "Untitled draft"}" will be permanently deleted. This can't be undone.`}
+        confirmLabel="Delete"
+        onConfirm={() => {
+          if (pendingDelete) onDelete(pendingDelete.id);
+          setPendingDelete(null);
+        }}
+        onCancel={() => setPendingDelete(null)}
+      />
     </div>
   );
 }
@@ -693,16 +964,24 @@ function CopySlideshowModal({
   onLinkChange,
   onClose,
   onFetch,
+  busy,
+  error,
+  acknowledged,
+  onAcknowledgedChange,
 }: {
   open: boolean;
   link: string;
   onLinkChange: (value: string) => void;
   onClose: () => void;
   onFetch: () => void;
+  busy: boolean;
+  error: string;
+  acknowledged: boolean;
+  onAcknowledgedChange: (value: boolean) => void;
 }) {
   if (!open) return null;
   const platform = platformFromSlideshowUrl(link);
-  const canFetch = /^https?:\/\/.+/i.test(link.trim());
+  const canFetch = /^https?:\/\/.+/i.test(link.trim()) && acknowledged && !busy;
 
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/55 p-4 backdrop-blur-sm">
@@ -715,7 +994,7 @@ function CopySlideshowModal({
             <div>
               <h2 className="text-xl font-black text-ink">Copy {platform} Slideshow</h2>
               <p className="mt-0.5 text-xs font-black uppercase tracking-[0.18em] text-muted">
-                Paste link, preview slides, choose backgrounds
+                Paste a public link — we read the caption &amp; cover, then draft your context
               </p>
             </div>
           </div>
@@ -731,8 +1010,8 @@ function CopySlideshowModal({
 
         <div className="px-6 py-6">
           <p className="max-w-2xl text-lg font-medium leading-relaxed text-muted">
-            Paste a TikTok or Instagram photo/slideshow link. We’ll create a draft slideshow structure
-            with matched style context and reusable backgrounds.
+            Paste a <span className="font-bold text-ink">public</span> TikTok or Instagram photo/slideshow link.
+            We’ll pull the caption and cover image and turn them into an editable context brief.
           </p>
           <div className="mt-5 flex flex-col gap-3 sm:flex-row">
             <div className="relative flex-1">
@@ -744,6 +1023,7 @@ function CopySlideshowModal({
               <input
                 className="input h-14 !rounded-xl !pl-11 text-lg"
                 autoFocus
+                disabled={busy}
                 placeholder="https://www.tiktok.com/... or https://www.instagram.com/..."
                 value={link}
                 onChange={(e) => onLinkChange(e.target.value)}
@@ -758,12 +1038,44 @@ function CopySlideshowModal({
               onClick={onFetch}
               className="btn-primary h-14 min-w-[120px] justify-center text-base disabled:opacity-50"
             >
-              Fetch
+              {busy ? (
+                <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/60 border-t-transparent" />
+              ) : (
+                "Fetch"
+              )}
             </button>
           </div>
+
+          {error && (
+            <div className="mt-3 flex items-start gap-2 rounded-xl border border-red-200 bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">
+              <Icon name="warningTriangle" size={16} className="mt-0.5 shrink-0" />
+              {error}
+            </div>
+          )}
+
+          {/* Content-responsibility acknowledgment — required before fetching. */}
+          <label className="mt-4 flex cursor-pointer items-start gap-3 rounded-xl border border-line bg-page/50 px-4 py-3">
+            <input
+              type="checkbox"
+              checked={acknowledged}
+              disabled={busy}
+              onChange={(e) => onAcknowledgedChange(e.target.checked)}
+              className="mt-0.5 h-4 w-4 shrink-0 rounded border-line text-primary focus:ring-primary"
+            />
+            <span className="text-sm leading-relaxed text-muted">
+              I confirm the post is public, that I will not reuse the caption or cover image copied from this post
+              as-is (only as reference for my own original content), and I agree to Post Train’s{" "}
+              <a href="/tos" target="_blank" rel="noreferrer" className="font-bold text-primary-deep underline">
+                Terms &amp; Content Policy
+              </a>
+              . Post Train isn’t responsible for third-party content. Copying private, infringing, or inappropriate
+              content may result in suspension or permanent account removal.
+            </span>
+          </label>
+
           <p className="mt-3 text-xs font-semibold text-muted">
-            Note: true automatic slide extraction needs a compliant data provider. This creates the draft structure now,
-            and the extraction hook can plug in later.
+            Only public posts can be copied — private posts are blocked. We read publicly available data only;
+            full multi-slide extraction may require a connected data provider.
           </p>
         </div>
       </div>
@@ -772,11 +1084,15 @@ function CopySlideshowModal({
   );
 }
 
+export type SlideshowAccount = { id: number; platform: string; username: string; avatar_url: string | null };
+
 export function SlideshowStudio({
   initialSlideTexts,
+  accounts = [],
 }: {
   initialSlideTexts?: string[];
   sourceExploreItemId?: string;
+  accounts?: SlideshowAccount[];
 }) {
   // Arriving from Explore "recreate" jumps straight into the Custom editor.
   const [mode, setMode] = useState<StudioMode>(initialSlideTexts ? "custom" : "choose");
@@ -795,10 +1111,28 @@ export function SlideshowStudio({
   const [slideSources, setSlideSources] = useState<string[]>(() =>
     Array(initialSlideTexts?.length || 5).fill("auto"),
   );
+  // Per-slide photos picked via the "Uploaded Images" source — distinct from
+  // refImages, which are style/context references and must never be posted as-is.
+  const [slideUploads, setSlideUploads] = useState<(RefImage | undefined)[]>(() =>
+    Array(initialSlideTexts?.length || 5).fill(undefined),
+  );
+  // Per-slide overlay text + its position (percent of the image, center of the
+  // text block). Prefilled from Explore "recreate" when arriving with slides.
+  const [slideTexts, setSlideTexts] = useState<string[]>(() =>
+    initialSlideTexts?.map((t) => t.slice(0, SLIDE_TEXT_MAX)) ?? Array(5).fill(""),
+  );
+  const [slideTextPos, setSlideTextPos] = useState<{ x: number; y: number }[]>(() =>
+    Array(initialSlideTexts?.length || 5).fill({ x: 50, y: 82 }),
+  );
+  const [uploadTargetIndex, setUploadTargetIndex] = useState<number | null>(null);
+  const slideUploadInput = useRef<HTMLInputElement>(null);
   const [refImages, setRefImages] = useState<RefImage[]>([]);
-  const [stylePrompt, setStylePrompt] = useState("");
-  const [styleBusy, setStyleBusy] = useState(false);
-  const [styleError, setStyleError] = useState("");
+  const [platformCaptions, setPlatformCaptions] = useState<Record<string, string>>({});
+  const [captionBusy, setCaptionBusy] = useState<Record<string, boolean>>({});
+  const [captionError, setCaptionError] = useState<Record<string, string>>({});
+  const [toneResults, setToneResults] = useState<Record<string, AiToneResult>>({});
+  const [improveBusy, setImproveBusy] = useState<Record<string, boolean>>({});
+  const [improveError, setImproveError] = useState<Record<string, string>>({});
   const [aiModel, setAiModel] = useState<(typeof AI_MODELS)[number]["id"]>("nano-banana-2");
   const [aspect, setAspect] = useState<(typeof ASPECTS)[number]["id"]>("9:16");
   const [overlays, setOverlays] = useState<(typeof OVERLAYS)[number]["id"]>("none");
@@ -806,16 +1140,51 @@ export function SlideshowStudio({
   const [slideCategory, setSlideCategory] = useState<SlideCategoryId>("educational");
   const [advancedTextOpen, setAdvancedTextOpen] = useState(true);
   const [textStyle, setTextStyle] = useState<(typeof TEXT_STYLES)[number]["id"]>("shadow");
+  const [textBgEnabled, setTextBgEnabled] = useState(false);
+  const [textBgColor, setTextBgColor] = useState("#000000");
   const [textSize, setTextSize] = useState<(typeof TEXT_SIZES)[number]["id"]>("small");
   const [textWidth, setTextWidth] = useState<(typeof TEXT_WIDTHS)[number]["id"]>("narrow");
   const [translationMode, setTranslationMode] = useState<"same" | (typeof LANGUAGES)[number]["id"]>("same");
   const [slideshowReference, setSlideshowReference] = useState("");
   const [copyModalOpen, setCopyModalOpen] = useState(false);
+  const [copyBusy, setCopyBusy] = useState(false);
+  const [copyError, setCopyError] = useState("");
+  const [copyAcknowledged, setCopyAcknowledged] = useState(false);
   const fileInput = useRef<HTMLInputElement>(null);
 
+  // Saved drafts — shown on the "choose" screen, autosaved while editing.
+  const [drafts, setDrafts] = useState<StudioDraftRow[]>([]);
+  const [draftsLoading, setDraftsLoading] = useState(true);
+  const [draftOrigin, setDraftOrigin] = useState<StudioDraftMode>("custom");
+  const [draftPlatform, setDraftPlatform] = useState<string | null>(null);
+  const [draftStatus, setDraftStatus] = useState<"idle" | "saving" | "saved">("idle");
+  const [confirmDeleteDraft, setConfirmDeleteDraft] = useState(false);
+  const [selectedAccountIds, setSelectedAccountIds] = useState<Set<number>>(new Set());
+  const draftIdRef = useRef<string | undefined>(undefined);
+
   useEffect(() => {
-    return () => refImages.forEach((r) => URL.revokeObjectURL(r.url));
+    // Only local object URLs need revoking; copied posts use remote CDN URLs.
+    return () => {
+      refImages.forEach((r) => r.url.startsWith("blob:") && URL.revokeObjectURL(r.url));
+      slideUploads.forEach((r) => r?.url.startsWith("blob:") && URL.revokeObjectURL(r.url));
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch("/api/app/studio/drafts")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { data?: StudioDraftRow[] } | null) => {
+        if (!cancelled && data?.data) setDrafts(data.data);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setDraftsLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const selectedAspect = ASPECTS.find((a) => a.id === aspect) ?? ASPECTS[0];
@@ -826,6 +1195,14 @@ export function SlideshowStudio({
   const selectedTextStyle = TEXT_STYLES.find((s) => s.id === textStyle) ?? TEXT_STYLES[0];
   const selectedTextSize = TEXT_SIZES.find((s) => s.id === textSize) ?? TEXT_SIZES[0];
   const selectedTextWidth = TEXT_WIDTHS.find((w) => w.id === textWidth) ?? TEXT_WIDTHS[0];
+  const showSlideText = overlays === "text";
+  const slideTextConfig: SlideTextConfig = {
+    className: selectedTextStyle.className,
+    bgEnabled: textBgEnabled,
+    bgColor: textBgColor,
+    size: textSize,
+    width: textWidth,
+  };
   const selectedTranslationLanguage =
     translationMode === "same"
       ? selectedLanguage
@@ -841,12 +1218,45 @@ export function SlideshowStudio({
   }, [publishDate, publishTime, isPublishToday]);
   // Rough placeholder estimate: one generation per slide, at the selected model's per-image credit cost.
   const creditEstimate = slideCount * selectedModel.credits;
+  // Slide cards stay at their 4-per-row max size up to 4 slides, shrink to
+  // fit 5 or 6 per row, then hold at the 6-per-row size and wrap any more
+  // onto additional rows. CSS flex-wrap can't do this on its own — it
+  // decides line breaks using each item's un-shrunk basis size, so it would
+  // wrap after 4 full-size cards regardless of shrink room. A grid with the
+  // column count computed from the actual slide count sidesteps that.
+  const slideGridColumns = Math.min(Math.max(slideCount, 4), 6);
+
+  // Every platform with a known carousel cap, regardless of which accounts
+  // are connected or selected to post to — always shown as a heads-up.
+  const exceededPlatforms = Object.entries(CAROUSEL_MAX)
+    .filter(([, max]) => slideCount > max)
+    .map(([id, max]) => ({ id, max }))
+    .sort((a, b) => a.max - b.max);
+
+  // Platforms the selected accounts belong to, deduped — drives the
+  // per-platform description inputs below.
+  const selectedPlatforms = useMemo(() => {
+    const set = new Set<string>();
+    for (const id of selectedAccountIds) {
+      const a = accounts.find((acc) => acc.id === id);
+      if (a) set.add(a.platform);
+    }
+    return set;
+  }, [selectedAccountIds, accounts]);
 
   const steps = mode === "templates" ? TEMPLATE_STEPS : CUSTOM_STEPS;
+  // "Type" (the mode-chooser screen) is already done by the time this wizard
+  // is showing, so it's displayed as a completed leading step rather than
+  // being folded into `step`/`goBack`'s own indexing, which stays untouched.
+  const displaySteps = ["Type", ...steps] as const;
+  const displayStep = step + 1;
   const isSettingsStep = (mode === "custom" && step === 0) || (mode === "templates" && step === 1);
   const isImagesStep = mode === "templates" && step === 2;
   const isReviewStep = (mode === "custom" && step === 1) || (mode === "templates" && step === 3);
   const isTemplatesStep = mode === "templates" && step === 0;
+  // Visual Style only makes sense when a real template supplied a look to
+  // match — not for "Start from Scratch" or the Custom flow.
+  const startedFromTemplate = mode === "templates" && !!selectedTemplate && selectedTemplate !== "scratch";
 
   function addFiles(files: FileList | null) {
     if (!files) return;
@@ -862,63 +1272,56 @@ export function SlideshowStudio({
   function removeRef(id: string) {
     setRefImages((cur) => {
       const gone = cur.find((r) => r.id === id);
-      if (gone) URL.revokeObjectURL(gone.url);
+      if (gone?.url.startsWith("blob:")) URL.revokeObjectURL(gone.url);
       return cur.filter((r) => r.id !== id);
     });
   }
 
+  // Clamps to [SLIDE_MIN, SLIDE_MAX] and resizes the per-slide arrays to
+  // match — shared by the +/- buttons and direct number entry.
+  function setSlides(target: number) {
+    if (!Number.isFinite(target)) return;
+    const next = Math.min(SLIDE_MAX, Math.max(SLIDE_MIN, Math.round(target)));
+    setSlideCount(next);
+    setSlideSources((s) => (s.length >= next ? s.slice(0, next) : [...s, ...Array(next - s.length).fill("auto")]));
+    setSlideUploads((s) => (s.length >= next ? s.slice(0, next) : [...s, ...Array(next - s.length).fill(undefined)]));
+    setSlideTexts((s) => (s.length >= next ? s.slice(0, next) : [...s, ...Array(next - s.length).fill("")]));
+    setSlideTextPos((s) => (s.length >= next ? s.slice(0, next) : [...s, ...Array(next - s.length).fill({ x: 50, y: 82 })]));
+  }
+  function updateSlideText(index: number, text: string) {
+    setSlideTexts((s) => s.map((v, i) => (i === index ? text.slice(0, SLIDE_TEXT_MAX) : v)));
+  }
+  function updateSlideTextPos(index: number, pos: { x: number; y: number }) {
+    setSlideTextPos((s) => s.map((v, i) => (i === index ? pos : v)));
+  }
   function growSlides() {
-    setSlideCount((n) => {
-      const next = Math.min(SLIDE_MAX, n + 1);
-      setSlideSources((s) => (s.length >= next ? s : [...s, ...Array(next - s.length).fill("auto")]));
-      return next;
-    });
+    setSlides(slideCount + 1);
   }
   function shrinkSlides() {
-    setSlideCount((n) => {
-      const next = Math.max(SLIDE_MIN, n - 1);
-      setSlideSources((s) => s.slice(0, next));
-      return next;
-    });
+    setSlides(slideCount - 1);
   }
   function updateSlideSource(index: number, id: string) {
     setSlideSources((s) => s.map((v, i) => (i === index ? id : v)));
+    // "Uploaded Images" needs an actual photo for this slide — never borrow
+    // one from the reference pool, so prompt a file picker right away.
+    if (id === "upload") {
+      setUploadTargetIndex(index);
+      slideUploadInput.current?.click();
+    }
   }
 
-  async function generateStylePrompt() {
-    if (styleBusy) return;
-    setStyleBusy(true);
-    setStyleError("");
-    try {
-      const response = await fetch("/api/app/studio/style-prompt", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          campaignName,
-          context,
-          aspect,
-          overlays,
-          language: selectedLanguage.name,
-          category: selectedCategory.name,
-          textStyle: selectedTextStyle.name,
-          textSize: selectedTextSize.name,
-          textWidth: selectedTextWidth.name,
-          translationLanguage: selectedTranslationLanguage.name,
-          referenceImageCount: refImages.length,
-          referenceImageNames: refImages.map((r) => r.name),
-          slideshowReference,
-        }),
-      });
-      const data = (await response.json()) as { prompt?: string; error?: { message?: string } };
-      if (!response.ok || !data.prompt) {
-        throw new Error(data.error?.message ?? "Couldn't generate a style prompt.");
-      }
-      setStylePrompt(data.prompt.slice(0, STYLE_PROMPT_MAX));
-    } catch (e) {
-      setStyleError(e instanceof Error ? e.message : "Couldn't generate a style prompt.");
-    } finally {
-      setStyleBusy(false);
-    }
+  function pickSlideUpload(files: FileList | null) {
+    const file = files?.[0];
+    const targetIndex = uploadTargetIndex;
+    setUploadTargetIndex(null);
+    if (!file || targetIndex === null) return;
+    setSlideUploads((cur) => {
+      const prev = cur[targetIndex];
+      if (prev?.url.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+      const next = [...cur];
+      next[targetIndex] = { id: crypto.randomUUID(), url: URL.createObjectURL(file), name: file.name };
+      return next;
+    });
   }
 
   // Selecting a template pre-fills the settings step, then advances.
@@ -928,6 +1331,9 @@ export function SlideshowStudio({
       setSlideCategory(template.category);
       setSlideCount(template.slides);
       setSlideSources(Array(template.slides).fill("auto"));
+      setSlideUploads(Array(template.slides).fill(undefined));
+      setSlideTexts(Array(template.slides).fill(""));
+      setSlideTextPos(Array(template.slides).fill({ x: 50, y: 82 }));
       if (!campaignName.trim()) setCampaignName(template.title);
       if (!context.trim()) setContext(`${template.title}\n\n${template.desc}`);
     }
@@ -956,33 +1362,224 @@ export function SlideshowStudio({
     setMode(next);
     setStep(0);
     setSelectedTemplate(null);
+    setDraftOrigin(next === "templates" ? "templates" : "custom");
+    setDraftPlatform(null);
   }
 
-  function applyCopiedSlideshow() {
+  // Pulls the real post (caption + cover image) server-side, evaluates it into
+  // an editable context brief, and lands the user in the Custom editor.
+  async function applyCopiedSlideshow() {
     const link = slideshowReference.trim();
-    if (!link) return;
-    const platform = platformFromSlideshowUrl(link);
-    setSlideCount((current) => {
-      const next = Math.min(SLIDE_MAX, Math.max(current, 5));
-      setSlideSources((s) => (s.length >= next ? s.slice(0, next) : [...s, ...Array(next - s.length).fill("auto")]));
-      return next;
-    });
-    setAspect(platform === "Instagram" ? "4:5" : "9:16");
-    setOverlays("text");
-    setContext((current) => {
-      const line = `Copy structure from ${platform} slideshow: ${link}`;
-      return current.trim() ? `${current.trim()}\n\n${line}` : line;
-    });
-    setStylePrompt((current) =>
-      current.trim()
-        ? current
-        : `Match the visual rhythm of the referenced ${platform} slideshow: bold hook-first composition, cohesive slide-to-slide pacing, creator-style mobile framing, clear text-safe negative space, and background imagery that supports the same story arc without directly copying the original assets.`,
-    );
-    setCopyModalOpen(false);
-    // Land in the Custom editor with the copied draft applied.
-    setMode("custom");
+    if (!link || copyBusy) return;
+    if (!copyAcknowledged) {
+      setCopyError("Please accept the content policy to continue.");
+      return;
+    }
+    setCopyBusy(true);
+    setCopyError("");
+    try {
+      const response = await fetch("/api/app/studio/copy-slideshow", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ url: link, acknowledged: copyAcknowledged }),
+      });
+      const data = (await response.json()) as {
+        platform?: string;
+        images?: string[];
+        context?: string;
+        error?: { message?: string };
+      };
+      if (!response.ok || !data.context) {
+        throw new Error(data.error?.message ?? "Couldn't copy that post.");
+      }
+
+      setContext(data.context);
+      setAspect(data.platform === "Instagram" ? "4:5" : "9:16");
+      setOverlays("text");
+
+      const pulled = (data.images ?? []).slice(0, REFERENCE_MAX);
+      if (pulled.length) {
+        // These are reference-only: inspiration for new AI-generated slides,
+        // never the literal images we post — hence "ai", not "upload".
+        setRefImages(pulled.map((url, i) => ({ id: crypto.randomUUID(), url, name: `Reference ${i + 1}` })));
+        const next = Math.min(SLIDE_MAX, Math.max(pulled.length, 3));
+        setSlideCount(next);
+        setSlideSources(Array(next).fill("ai"));
+        setSlideUploads(Array(next).fill(undefined));
+        setSlideTexts(Array(next).fill(""));
+        setSlideTextPos(Array(next).fill({ x: 50, y: 82 }));
+      }
+
+      setCopyModalOpen(false);
+      setCopyAcknowledged(false);
+      setDraftOrigin("copy");
+      setDraftPlatform(data.platform ?? null);
+      setMode("custom");
+      setStep(0);
+    } catch (e) {
+      setCopyError(e instanceof Error ? e.message : "Couldn't copy that post.");
+    } finally {
+      setCopyBusy(false);
+    }
+  }
+
+  // Best-effort autosave — saves what's already the source of truth for the
+  // wizard, so a failure here just means the user re-enters it next time.
+  // Context alone (e.g. right after a TikTok/Instagram copy) is enough to
+  // save — don't make the user type a campaign name first.
+  async function persistDraft() {
+    if (mode === "choose" || (!campaignName.trim() && !context.trim())) return;
+    setDraftStatus("saving");
+    const remoteRefImages = refImages.filter((r) => !r.url.startsWith("blob:"));
+    const remoteSlideUploads = slideUploads.map((r) => (r && !r.url.startsWith("blob:") ? r : undefined));
+    const snapshot = {
+      mode,
+      selectedTemplate,
+      campaignName,
+      publishDate,
+      publishTime,
+      context,
+      slideCount,
+      slideSources,
+      slideUploads: remoteSlideUploads,
+      slideTexts,
+      slideTextPos,
+      refImages: remoteRefImages,
+      platformCaptions,
+      aiModel,
+      aspect,
+      overlays,
+      language,
+      slideCategory,
+      textStyle,
+      textBgEnabled,
+      textBgColor,
+      textSize,
+      textWidth,
+      translationMode,
+      slideshowReference,
+      selectedAccountIds: [...selectedAccountIds],
+    };
+    try {
+      const response = await fetch("/api/app/studio/drafts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: draftIdRef.current,
+          template: "slideshow",
+          mode: draftOrigin,
+          source_platform: draftPlatform,
+          title: campaignName,
+          cover_image_url: remoteRefImages[0]?.url ?? remoteSlideUploads.find(Boolean)?.url ?? null,
+          state: snapshot,
+        }),
+      });
+      if (!response.ok) {
+        setDraftStatus("idle");
+        return;
+      }
+      const saved = (await response.json()) as StudioDraftRow;
+      draftIdRef.current = saved.id;
+      setDrafts((cur) => [saved, ...cur.filter((d) => d.id !== saved.id)]);
+      setDraftStatus("saved");
+    } catch {
+      // Drafts are a convenience — a failed autosave shouldn't interrupt editing.
+      setDraftStatus("idle");
+    }
+  }
+
+  // Rehydrate a saved draft's wizard state and jump straight back into the editor.
+  function resumeDraft(draft: StudioDraftRow) {
+    let parsed: Record<string, unknown> | undefined;
+    try {
+      parsed = JSON.parse(draft.state);
+    } catch {
+      return;
+    }
+    if (!parsed) return;
+    const p = parsed as Record<string, never>;
+    draftIdRef.current = draft.id;
+    setDraftOrigin(draft.mode);
+    setDraftPlatform(draft.source_platform);
+    setSelectedTemplate(p.selectedTemplate ?? null);
+    setCampaignName(p.campaignName ?? "");
+    setPublishDate(p.publishDate ?? publishDate);
+    setPublishTime(p.publishTime ?? publishTime);
+    setContext(p.context ?? "");
+    setSlideCount(p.slideCount ?? 5);
+    setSlideSources(p.slideSources ?? []);
+    setSlideUploads(p.slideUploads ?? []);
+    setSlideTexts(p.slideTexts ?? []);
+    setSlideTextPos(p.slideTextPos ?? []);
+    setRefImages(p.refImages ?? []);
+    setPlatformCaptions(p.platformCaptions ?? {});
+    setAiModel(p.aiModel ?? "nano-banana-2");
+    setAspect(p.aspect ?? "9:16");
+    setOverlays(p.overlays ?? "none");
+    setLanguage(p.language ?? "en");
+    setSlideCategory(p.slideCategory ?? "educational");
+    setTextStyle(p.textStyle ?? "shadow");
+    setTextBgEnabled(p.textBgEnabled ?? false);
+    setTextBgColor(p.textBgColor ?? "#000000");
+    setTextSize(p.textSize ?? "small");
+    setTextWidth(p.textWidth ?? "narrow");
+    setTranslationMode(p.translationMode ?? "same");
+    setSlideshowReference(p.slideshowReference ?? "");
+    setSelectedAccountIds(new Set(p.selectedAccountIds ?? []));
+    setDraftStatus("saved");
+    setMode(draft.mode === "templates" ? "templates" : "custom");
     setStep(0);
   }
+
+  async function deleteDraft(id: string) {
+    setDrafts((cur) => cur.filter((d) => d.id !== id));
+    if (draftIdRef.current === id) {
+      draftIdRef.current = undefined;
+      setDraftStatus("idle");
+    }
+    try {
+      await fetch(`/api/app/studio/drafts/${id}`, { method: "DELETE" });
+    } catch {
+      // best-effort
+    }
+  }
+
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void persistDraft();
+    }, 1200);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    mode,
+    draftOrigin,
+    draftPlatform,
+    selectedTemplate,
+    campaignName,
+    publishDate,
+    publishTime,
+    context,
+    slideCount,
+    slideSources,
+    slideUploads,
+    slideTexts,
+    slideTextPos,
+    refImages,
+    platformCaptions,
+    aiModel,
+    aspect,
+    overlays,
+    language,
+    slideCategory,
+    textStyle,
+    textBgEnabled,
+    textBgColor,
+    textSize,
+    textWidth,
+    translationMode,
+    slideshowReference,
+    selectedAccountIds,
+  ]);
 
   async function rewriteContext() {
     const trimmed = context.trim();
@@ -1013,15 +1610,103 @@ export function SlideshowStudio({
     }
   }
 
+  async function generatePlatformCaption(platformId: string) {
+    if (captionBusy[platformId] || !context.trim()) return;
+    setCaptionBusy((c) => ({ ...c, [platformId]: true }));
+    setCaptionError((c) => ({ ...c, [platformId]: "" }));
+    try {
+      const response = await fetch("/api/app/studio/platform-caption", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: platformId, context, campaignName }),
+      });
+      const data = (await response.json()) as { text?: string; error?: { message?: string } };
+      if (!response.ok || !data.text) {
+        throw new Error(data.error?.message ?? "Couldn't generate a caption.");
+      }
+      setPlatformCaptions((c) => ({ ...c, [platformId]: data.text as string }));
+    } catch (e) {
+      setCaptionError((c) => ({
+        ...c,
+        [platformId]: e instanceof Error ? e.message : "Couldn't generate a caption.",
+      }));
+    } finally {
+      setCaptionBusy((c) => ({ ...c, [platformId]: false }));
+    }
+  }
+
+  function checkCaptionTone(platformId: string) {
+    const text = platformCaptions[platformId] ?? "";
+    if (!text.trim()) return;
+    setToneResults((r) => ({ ...r, [platformId]: checkAiTone(text) }));
+  }
+
+  async function improveCaption(platformId: string) {
+    const text = platformCaptions[platformId] ?? "";
+    if (improveBusy[platformId] || !text.trim()) return;
+    setImproveBusy((c) => ({ ...c, [platformId]: true }));
+    setImproveError((c) => ({ ...c, [platformId]: "" }));
+    try {
+      const response = await fetch("/api/app/studio/improve-caption", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          platform: platformId,
+          text,
+          flagged: toneResults[platformId]?.matches ?? [],
+        }),
+      });
+      const data = (await response.json()) as { text?: string; error?: { message?: string } };
+      if (!response.ok || !data.text) {
+        throw new Error(data.error?.message ?? "Couldn't improve this caption.");
+      }
+      setPlatformCaptions((c) => ({ ...c, [platformId]: data.text as string }));
+      setToneResults((r) => ({ ...r, [platformId]: checkAiTone(data.text as string) }));
+    } catch (e) {
+      setImproveError((c) => ({
+        ...c,
+        [platformId]: e instanceof Error ? e.message : "Couldn't improve this caption.",
+      }));
+    } finally {
+      setImproveBusy((c) => ({ ...c, [platformId]: false }));
+    }
+  }
+
+  // Show this the instant there's something worth saving, not just once the
+  // debounced save has actually round-tripped — otherwise there's a dead
+  // window (up to the debounce delay, or right after page load) where a
+  // draft that's clearly about to be saved shows no feedback at all.
+  const hasDraftableContent = mode !== "choose" && (campaignName.trim().length > 0 || context.trim().length > 0);
+  const draftStatusPill = !hasDraftableContent ? null : (
+    <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted">
+      {draftStatus === "saved" ? (
+        <Icon name="check" size={13} className="text-primary-deep" />
+      ) : (
+        <span className="h-3 w-3 animate-spin rounded-full border-2 border-muted/40 border-t-transparent" />
+      )}
+      {draftStatus === "saved" ? "Saved as draft" : "Saving draft…"}
+    </span>
+  );
+
   const header = (
     <div className="flex flex-wrap items-center justify-between gap-3">
       <div>
-        <Link
-          href="/dashboard/content-studio"
-          className="inline-flex items-center gap-1 text-sm font-medium text-muted transition-colors hover:text-primary-deep"
-        >
-          <Icon name="chevronLeft" size={15} /> Content Studio
-        </Link>
+        {mode === "choose" ? (
+          <Link
+            href="/dashboard/content-studio"
+            className="inline-flex items-center gap-1 text-sm font-medium text-muted transition-colors hover:text-primary-deep"
+          >
+            <Icon name="chevronLeft" size={15} /> Content Studio
+          </Link>
+        ) : (
+          <button
+            type="button"
+            onClick={() => enterMode("choose")}
+            className="inline-flex items-center gap-1 text-sm font-medium text-muted transition-colors hover:text-primary-deep"
+          >
+            <Icon name="chevronLeft" size={15} /> Back to Slide Types
+          </button>
+        )}
         <h1 className="mt-1 flex items-center gap-2 text-2xl font-bold text-ink">
           <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-primary-contrast">
             <Icon name="stack" size={18} />
@@ -1029,11 +1714,7 @@ export function SlideshowStudio({
           Slide Show Studio
         </h1>
       </div>
-      {mode !== "choose" && (
-        <button type="button" onClick={() => enterMode("choose")} className="btn-subtle !py-1.5 text-sm">
-          <Icon name="refresh" size={15} /> Change type
-        </button>
-      )}
+      {mode !== "choose" && draftStatusPill}
     </div>
   );
 
@@ -1046,12 +1727,20 @@ export function SlideshowStudio({
           onCustom={() => enterMode("custom")}
           onCopy={() => setCopyModalOpen(true)}
         />
+        <DraftsSection drafts={drafts} loading={draftsLoading} onResume={resumeDraft} onDelete={deleteDraft} />
         <CopySlideshowModal
           open={copyModalOpen}
           link={slideshowReference}
           onLinkChange={setSlideshowReference}
-          onClose={() => setCopyModalOpen(false)}
+          onClose={() => {
+            setCopyModalOpen(false);
+            setCopyError("");
+          }}
           onFetch={applyCopiedSlideshow}
+          busy={copyBusy}
+          error={copyError}
+          acknowledged={copyAcknowledged}
+          onAcknowledgedChange={setCopyAcknowledged}
         />
       </div>
     );
@@ -1061,7 +1750,7 @@ export function SlideshowStudio({
     <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
       <div>
         <p className="text-xs font-bold uppercase tracking-[0.12em] text-muted">
-          Step {step + 1} of {steps.length}
+          Step {displayStep + 1} of {displaySteps.length}
         </p>
         <h2 className="text-lg font-bold text-ink">{steps[step]}</h2>
       </div>
@@ -1115,11 +1804,22 @@ export function SlideshowStudio({
       {header}
 
       <div className="card mt-5 px-6 py-5">
-        <Stepper steps={steps} current={step} />
+        <Stepper steps={displaySteps} current={displayStep} />
       </div>
 
       <div className="card mt-4 p-5 sm:p-6">
         {stepBar}
+
+        <input
+          ref={slideUploadInput}
+          type="file"
+          accept="image/*"
+          className="hidden"
+          onChange={(e) => {
+            pickSlideUpload(e.target.files);
+            e.target.value = "";
+          }}
+        />
 
         {isTemplatesStep && (
           <TemplatesStep
@@ -1161,7 +1861,100 @@ export function SlideshowStudio({
             </div>
 
             <section className="mt-6">
-              <FieldLabel icon="cube">Context</FieldLabel>
+              <FieldLabel icon="users">Post To</FieldLabel>
+              {accounts.length === 0 ? (
+                <p className="mt-2 text-sm text-muted">No accounts connected yet — connect some under Connections.</p>
+              ) : (
+                <div className="mt-2 flex flex-wrap gap-3">
+                  {accounts.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      title={a.username}
+                      onClick={() =>
+                        setSelectedAccountIds((cur) => {
+                          const next = new Set(cur);
+                          if (next.has(a.id)) next.delete(a.id);
+                          else next.add(a.id);
+                          return next;
+                        })
+                      }
+                      className="flex flex-col items-center gap-1"
+                    >
+                      <AccountAvatar
+                        username={a.username}
+                        platformId={a.platform}
+                        avatarUrl={a.avatar_url}
+                        selected={selectedAccountIds.has(a.id)}
+                      />
+                      <span className="max-w-[64px] truncate text-xs font-semibold text-muted">{a.username}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {(startedFromTemplate || refImages.length > 0) && (
+              <section className="mt-6">
+                <div className="flex items-center justify-between">
+                  <FieldLabel>Reference Images</FieldLabel>
+                  <span className="text-xs font-semibold text-muted">
+                    {refImages.length}/{REFERENCE_MAX}
+                  </span>
+                </div>
+                {slideshowReference && (
+                  <div className="mt-2 flex items-center gap-1.5 rounded-xl border border-line bg-page/50 px-3 py-2 text-sm font-semibold text-muted">
+                    {referencePlatformIconId(slideshowReference) && (
+                      <PlatformIcon id={referencePlatformIconId(slideshowReference)!} size={14} />
+                    )}
+                    Reference: {platformFromSlideshowUrl(slideshowReference)} slideshow
+                  </div>
+                )}
+                <div className="mt-2 grid grid-cols-4 gap-2 sm:grid-cols-8">
+                  {refImages.map((r) => (
+                    <div key={r.id} className="group relative aspect-square overflow-hidden rounded-lg border border-line">
+                      {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
+                      <img src={r.url} alt={r.name} className="h-full w-full object-cover" />
+                      <button
+                        type="button"
+                        onClick={() => removeRef(r.id)}
+                        aria-label={`Remove ${r.name}`}
+                        className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-ink/70 text-white opacity-0 transition-opacity hover:bg-ink group-hover:opacity-100"
+                      >
+                        <Icon name="x" size={12} />
+                      </button>
+                    </div>
+                  ))}
+                  {refImages.length < REFERENCE_MAX && (
+                    <button
+                      type="button"
+                      onClick={() => fileInput.current?.click()}
+                      className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line text-muted transition-colors hover:border-primary hover:text-primary-deep"
+                    >
+                      <Icon name="upload" size={16} />
+                      <span className="text-[10px] font-semibold">Add</span>
+                    </button>
+                  )}
+                </div>
+                <input
+                  ref={fileInput}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  className="hidden"
+                  onChange={(e) => {
+                    addFiles(e.target.files);
+                    e.target.value = "";
+                  }}
+                />
+              </section>
+            )}
+
+            <section className="mt-6">
+              <div className="flex items-center gap-2">
+                <FieldLabel icon="cube">Context</FieldLabel>
+                <span className="text-xs font-semibold text-muted">— drives the AI image generation for the slides below</span>
+              </div>
               <div className="mt-2 overflow-hidden rounded-xl border border-line bg-white shadow-sm">
                 <textarea
                   className="min-h-[130px] w-full resize-y border-0 bg-white px-4 py-4 text-ink outline-none placeholder:text-muted focus:ring-0"
@@ -1192,7 +1985,7 @@ export function SlideshowStudio({
 
             <section className="mt-6">
               <div className="flex flex-wrap items-center justify-between gap-3">
-                <FieldLabel icon="filter">Slide Structure</FieldLabel>
+                <FieldLabel icon="filter">Slides</FieldLabel>
                 <div className="flex flex-wrap items-center gap-2">
                   <Popover
                     width="min-w-[18rem]"
@@ -1235,7 +2028,16 @@ export function SlideshowStudio({
                   >
                     <span className="h-0.5 w-4 rounded-full bg-current" />
                   </button>
-                  <span className="min-w-6 text-center text-lg font-black text-ink">{slideCount}</span>
+                  <input
+                    type="number"
+                    inputMode="numeric"
+                    min={SLIDE_MIN}
+                    max={SLIDE_MAX}
+                    value={slideCount}
+                    onChange={(e) => setSlides(Number(e.target.value))}
+                    aria-label="Number of slides"
+                    className="h-10 w-14 rounded-xl border border-line bg-white text-center text-lg font-black text-ink outline-none [appearance:textfield] focus:border-primary focus:ring-2 focus:ring-primary/25 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  />
                   <button
                     type="button"
                     onClick={growSlides}
@@ -1247,34 +2049,145 @@ export function SlideshowStudio({
                   </button>
                 </div>
               </div>
-              <div className="mt-4 flex gap-4 overflow-x-auto pb-2">
+
+              {/* Generation settings — model, aspect, overlays, language — apply to
+                  every slide in this section, so they live right under its title. */}
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Popover
+                  width="min-w-[17rem]"
+                  trigger={(open) => (
+                    <ToolbarButton open={open} icon="sparkles">
+                      {selectedModel.name}
+                      <CreditBadge credits={selectedModel.credits} />
+                    </ToolbarButton>
+                  )}
+                >
+                  {(close) => (
+                    <>
+                      <p className="px-2.5 py-1.5 text-xs font-bold uppercase tracking-wide text-muted">AI Image Model</p>
+                      {AI_MODELS.map((m) => (
+                        <MenuRow key={m.id} active={m.id === aiModel} onClick={() => { setAiModel(m.id); close(); }}>
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-bold">{m.name}</span>
+                            <span className="block truncate text-xs text-muted">{m.desc}</span>
+                          </span>
+                          <CreditBadge credits={m.credits} active={m.id === aiModel} />
+                        </MenuRow>
+                      ))}
+                    </>
+                  )}
+                </Popover>
+
+                <Popover
+                  width="min-w-[18rem]"
+                  trigger={(open) => (
+                    <ToolbarButton open={open} icon="image" muted>
+                      {aspect}
+                    </ToolbarButton>
+                  )}
+                >
+                  {(close) => (
+                    <>
+                      {ASPECTS.map((a) => (
+                        <MenuRow key={a.id} active={a.id === aspect} onClick={() => { setAspect(a.id); close(); }}>
+                          <span className="w-12 text-lg font-bold">{a.name}</span>
+                          <span className="min-w-0 flex-1">
+                            <span className="block text-sm text-muted">{a.hint}</span>
+                            <span className="block text-xs text-muted/70">{a.px}</span>
+                          </span>
+                          {a.id === aspect && <Icon name="check" size={15} className="ml-auto text-primary-deep" />}
+                        </MenuRow>
+                      ))}
+                    </>
+                  )}
+                </Popover>
+
+                <Popover
+                  width="min-w-[20rem]"
+                  trigger={(open) => (
+                    <ToolbarButton open={open} icon="type" muted>
+                      <span className="hidden sm:inline">{selectedOverlay.name}</span>
+                      <span className="sm:hidden">Overlay</span>
+                    </ToolbarButton>
+                  )}
+                >
+                  {(close) => (
+                    <>
+                      {OVERLAYS.map((o) => (
+                        <MenuRow key={o.id} active={o.id === overlays} onClick={() => { setOverlays(o.id); close(); }}>
+                          <Icon name={o.icon} size={16} className={o.id === overlays ? "text-primary-deep" : "text-muted"} />
+                          <span className="min-w-0 flex-1">
+                            <span className="block font-bold">{o.name}</span>
+                            <span className="block text-xs text-muted">{o.desc}</span>
+                          </span>
+                          {o.id === overlays && <Icon name="check" size={15} className="text-primary-deep" />}
+                        </MenuRow>
+                      ))}
+                    </>
+                  )}
+                </Popover>
+
+                <Popover
+                  width="min-w-[13rem]"
+                  trigger={(open) => (
+                    <ToolbarButton open={open} icon="megaphone" muted>
+                      <span>{flagForLanguage(language)}</span>
+                      <span className="hidden sm:inline">{selectedLanguage.name}</span>
+                    </ToolbarButton>
+                  )}
+                >
+                  {(close) => (
+                    <>
+                      {LANGUAGES.map((l) => (
+                        <MenuRow key={l.id} active={l.id === language} onClick={() => { setLanguage(l.id); close(); }}>
+                          <span className="text-base">{l.flag}</span>
+                          <span className="font-semibold">{l.name}</span>
+                          {l.id === language && <Icon name="check" size={15} className="ml-auto text-primary-deep" />}
+                        </MenuRow>
+                      ))}
+                    </>
+                  )}
+                </Popover>
+              </div>
+
+              <div
+                className="mt-4 grid gap-4"
+                style={{ gridTemplateColumns: `repeat(${slideGridColumns}, minmax(0, 1fr))` }}
+              >
                 {slideSources.map((source, i) => (
                   <SlideStructureCard
                     key={i}
                     index={i}
                     source={source}
                     onSourceChange={(id) => updateSlideSource(i, id)}
-                    referenceImage={refImages[i % Math.max(1, refImages.length)]}
+                    uploadedImage={slideUploads[i]}
                     aspect={aspect}
+                    showText={showSlideText}
+                    text={slideTexts[i] ?? ""}
+                    onTextChange={(t) => updateSlideText(i, t)}
+                    textPos={slideTextPos[i] ?? { x: 50, y: 82 }}
+                    onTextPosChange={(p) => updateSlideTextPos(i, p)}
+                    textConfig={slideTextConfig}
                   />
                 ))}
               </div>
-              <div className="mt-3 flex flex-wrap items-center gap-3 text-sm font-semibold text-muted">
-                <span>{aspect}</span>
-                <span className="text-line">·</span>
-                <span
-                  className={
-                    overlays !== "none"
-                      ? "inline-flex items-center gap-1.5 rounded-full bg-primary-soft px-2.5 py-1 font-bold text-primary-deep"
-                      : "inline-flex items-center gap-1.5"
-                  }
-                >
-                  <Icon name="type" size={14} />
-                  {selectedOverlay.name}
-                </span>
-                <span className="text-line">·</span>
-                <span>{selectedLanguage.flag} {selectedLanguage.name}</span>
-              </div>
+              {showSlideText && (
+                <p className="mt-2 text-xs text-muted">
+                  Drag the text on a slide to reposition it. Styling applies to every slide.
+                </p>
+              )}
+              {exceededPlatforms.length > 0 && (
+                <p className="mt-3 rounded-lg bg-warning-bg px-2.5 py-2 text-xs font-medium text-warning-ink">
+                  Heads up: at {slideCount} slides, this won't be able to post to{" "}
+                  {exceededPlatforms.map((p, i) => (
+                    <span key={p.id}>
+                      {i > 0 && (i === exceededPlatforms.length - 1 ? " or " : ", ")}
+                      {platformOf(p.id)?.name ?? p.id} (max {p.max})
+                    </span>
+                  ))}
+                  .
+                </p>
+              )}
             </section>
 
             <section className="mt-6">
@@ -1289,7 +2202,7 @@ export function SlideshowStudio({
               </button>
 
               {advancedTextOpen && (
-                <div className="mt-4 grid gap-6 rounded-xl border border-line bg-page/50 p-4 sm:grid-cols-3">
+                <div className="mt-4 grid gap-6 rounded-xl border border-line bg-page/50 p-4 sm:grid-cols-2 lg:grid-cols-4">
                   <div>
                     <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Font Size</p>
                     <div className="flex flex-wrap gap-1">
@@ -1348,16 +2261,65 @@ export function SlideshowStudio({
                             setOverlays("text");
                           }}
                           aria-pressed={textStyle === style.id}
-                          className={`flex h-10 items-center justify-center rounded-lg border bg-slate-700 text-sm font-black transition-all ${
+                          className={`flex h-12 items-center justify-center rounded-lg border p-1.5 transition-colors ${
                             textStyle === style.id
-                              ? "border-primary ring-2 ring-primary/40"
-                              : "border-line hover:border-primary/60"
+                              ? "border-primary ring-2 ring-primary/30"
+                              : "border-line hover:border-primary/50"
                           }`}
                           title={style.name}
                         >
-                          <span className={style.className}>Aa</span>
+                          {/* Neutral gradient stands in for a photo backdrop, so
+                              white-text styles stay legible in the preview. */}
+                          <span className="flex h-full w-full items-center justify-center rounded-md bg-gradient-to-br from-slate-300 via-slate-400 to-slate-600">
+                            <span
+                              className={`rounded px-1.5 py-0.5 text-sm font-black ${style.className}`}
+                              style={textBgEnabled ? { backgroundColor: textBgColor } : undefined}
+                            >
+                              Aa
+                            </span>
+                          </span>
                         </button>
                       ))}
+                    </div>
+                  </div>
+
+                  <div>
+                    <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Text Background</p>
+                    <div className="flex flex-wrap items-center gap-1">
+                      <button
+                        type="button"
+                        onClick={() => setTextBgEnabled(false)}
+                        className={`rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${
+                          !textBgEnabled
+                            ? "border border-primary bg-white text-primary-deep"
+                            : "border border-transparent text-muted hover:text-ink"
+                        }`}
+                      >
+                        None
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTextBgEnabled(true)}
+                        className={`rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${
+                          textBgEnabled
+                            ? "border border-primary bg-white text-primary-deep"
+                            : "border border-transparent text-muted hover:text-ink"
+                        }`}
+                      >
+                        Color
+                      </button>
+                      {textBgEnabled && (
+                        <label className="flex items-center gap-1.5 rounded-lg border border-line bg-white px-2 py-1">
+                          <input
+                            type="color"
+                            value={textBgColor}
+                            onChange={(e) => setTextBgColor(e.target.value)}
+                            className="h-6 w-6 cursor-pointer border-0 bg-transparent p-0"
+                            aria-label="Text background color"
+                          />
+                          <span className="font-mono text-xs text-muted">{textBgColor}</span>
+                        </label>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -1365,268 +2327,118 @@ export function SlideshowStudio({
             </section>
 
             <section className="mt-6">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.1em] text-muted">
-                    <Icon name="image" size={14} />
-                    Visual Style
-                    <span className="normal-case font-semibold text-muted/70">· for AI-generated images</span>
-                  </p>
-                </div>
-                <Popover
-                  width="min-w-[21rem]"
-                  align="right"
-                  trigger={(open) => (
-                    <span
-                      className={`inline-flex items-center gap-2 rounded-xl border border-dashed px-4 py-2 text-sm font-extrabold transition-colors ${
-                        open
-                          ? "border-primary bg-primary-soft text-primary-deep"
-                          : "border-primary/60 bg-white text-primary-deep hover:bg-primary-soft/60"
-                      }`}
-                    >
-                      <Icon name="plus" size={16} /> New Style
-                    </span>
-                  )}
-                >
-                  {(close) => (
-                    <>
-                      <p className="px-3 py-2 text-xs font-black uppercase tracking-[0.14em] text-muted">
-                        New Visual Style
-                      </p>
-                      <MenuRow
-                        onClick={() => {
-                          fileInput.current?.click();
-                          close();
-                        }}
-                      >
-                        <Icon name="upload" size={20} className="text-primary" />
-                        <span>
-                          <span className="block font-bold">Upload images</span>
-                          <span className="block text-sm text-muted">Up to 5 reference shots from your device</span>
-                        </span>
-                      </MenuRow>
-                      <MenuRow
-                        onClick={() => {
-                          setCopyModalOpen(true);
-                          close();
-                        }}
-                      >
-                        <Icon name="link" size={20} className="text-primary" />
-                        <span>
-                          <span className="block font-bold">Copy slideshow from TikTok or Instagram</span>
-                          <span className="block text-sm text-muted">Paste a photo-post link and create a draft</span>
-                        </span>
-                      </MenuRow>
-                    </>
-                  )}
-                </Popover>
-              </div>
-
-              <div className="mt-3 flex items-center gap-1 border-b border-line">
-                {(["mine", "public"] as const).map((tab) => (
-                  <span
-                    key={tab}
-                    className={`-mb-px border-b-2 px-3 py-2 text-sm font-bold ${
-                      tab === "mine" ? "border-primary text-primary-deep" : "border-transparent text-muted"
-                    }`}
-                  >
-                    {tab === "mine" ? "My Styles" : "Public"}
-                    {tab === "public" && (
-                      <span className="ml-1.5 rounded-full bg-page px-1.5 py-0.5 text-xs text-muted">17</span>
-                    )}
-                  </span>
-                ))}
-              </div>
-              <div className="flex flex-col items-center justify-center gap-2 rounded-xl border border-dashed border-line bg-page/30 px-4 py-6 text-center">
-                <p className="text-sm text-muted">
-                  No styles yet — create one with the button below or upload references under Visual Style
-                </p>
-                <button type="button" className="btn-subtle !py-1.5 text-sm">
-                  <Icon name="plus" size={15} /> New Style
-                </button>
-              </div>
-
-              <div className="mt-4 grid gap-5 lg:grid-cols-2">
-                <div>
-                  <div className="flex items-center justify-between">
-                    <FieldLabel>Reference Images</FieldLabel>
-                    <span className="text-xs font-semibold text-muted">
-                      {refImages.length}/{REFERENCE_MAX}
-                    </span>
-                  </div>
-                  <div className="mt-2 grid grid-cols-4 gap-2">
-                    {refImages.map((r) => (
-                      <div key={r.id} className="group relative aspect-square overflow-hidden rounded-lg border border-line">
-                        {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
-                        <img src={r.url} alt={r.name} className="h-full w-full object-cover" />
-                        <button
-                          type="button"
-                          onClick={() => removeRef(r.id)}
-                          aria-label={`Remove ${r.name}`}
-                          className="absolute right-1 top-1 flex h-5 w-5 items-center justify-center rounded-full bg-ink/70 text-white opacity-0 transition-opacity hover:bg-ink group-hover:opacity-100"
-                        >
-                          <Icon name="x" size={12} />
-                        </button>
+              <FieldLabel icon="type">Platform Descriptions</FieldLabel>
+              {selectedPlatforms.size === 0 ? (
+                <p className="mt-2 text-sm text-muted">Select accounts under Post To to write a description for each platform.</p>
+              ) : (
+                <div className="mt-2 flex flex-col gap-3">
+                  {[...selectedPlatforms].map((id) => {
+                    const max = CAPTION_MAX_BY_PLATFORM[id as keyof typeof CAPTION_MAX_BY_PLATFORM] ?? CAPTION_MAX;
+                    const value = platformCaptions[id] ?? "";
+                    const tone = toneResults[id];
+                    return (
+                      <div key={id}>
+                        <div className="flex items-center justify-between">
+                          <label className="flex items-center gap-1.5 text-sm font-bold text-ink">
+                            <PlatformIcon id={id} size={14} /> {platformOf(id)?.name ?? id}
+                          </label>
+                          <span className={`text-xs font-semibold ${value.length >= max ? "text-red-600" : "text-muted"}`}>
+                            {value.length}/{max}
+                          </span>
+                        </div>
+                        <div className="mt-1 overflow-hidden rounded-xl border border-line bg-white shadow-sm">
+                          <textarea
+                            className="h-20 w-full resize-y border-0 bg-white px-3 py-2 text-sm text-ink outline-none placeholder:text-muted focus:ring-0"
+                            maxLength={max}
+                            value={value}
+                            onChange={(e) => {
+                              setPlatformCaptions((c) => ({ ...c, [id]: e.target.value }));
+                              // Edited by hand — the last check no longer reflects this text.
+                              setToneResults((r) => {
+                                if (!(id in r)) return r;
+                                const next = { ...r };
+                                delete next[id];
+                                return next;
+                              });
+                            }}
+                            placeholder={`Description for ${platformOf(id)?.name ?? id}…`}
+                          />
+                          <div className="flex flex-wrap items-center gap-2 border-t border-line bg-white px-3 py-2">
+                            <button
+                              type="button"
+                              onClick={() => generatePlatformCaption(id)}
+                              disabled={captionBusy[id] || !context.trim()}
+                              title={!context.trim() ? "Add context above first" : undefined}
+                              className="btn-subtle !py-1 text-xs disabled:opacity-50"
+                            >
+                              {captionBusy[id] ? (
+                                <span className="h-3 w-3 animate-spin rounded-full border-2 border-muted/40 border-t-transparent" />
+                              ) : (
+                                <Icon name="sparkles" size={12} />
+                              )}
+                              {captionBusy[id] ? "Writing…" : "AI Auto-fill"}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => checkCaptionTone(id)}
+                              disabled={!value.trim()}
+                              className="btn-subtle !py-1 text-xs disabled:opacity-50"
+                            >
+                              <Icon name="search" size={12} />
+                              Check Tone
+                            </button>
+                            {tone && tone.level !== "natural" && (
+                              <button
+                                type="button"
+                                onClick={() => improveCaption(id)}
+                                disabled={improveBusy[id]}
+                                className="btn-subtle !py-1 text-xs disabled:opacity-50"
+                              >
+                                {improveBusy[id] ? (
+                                  <span className="h-3 w-3 animate-spin rounded-full border-2 border-muted/40 border-t-transparent" />
+                                ) : (
+                                  <Icon name="sparkles" size={12} />
+                                )}
+                                {improveBusy[id] ? "Improving…" : "Make it sound less AI"}
+                              </button>
+                            )}
+                          </div>
+                          {tone && (
+                            <div className="border-t border-line bg-page/50 px-3 py-2">
+                              <p
+                                className={`text-xs font-bold ${
+                                  tone.level === "high"
+                                    ? "text-red-600"
+                                    : tone.level === "some"
+                                      ? "text-amber-700"
+                                      : "text-emerald-700"
+                                }`}
+                              >
+                                {tone.level === "high"
+                                  ? "Sounds very AI-generated"
+                                  : tone.level === "some"
+                                    ? "A little AI-ish"
+                                    : "Sounds natural"}
+                              </p>
+                              {tone.matches.length > 0 && (
+                                <p className="mt-0.5 text-xs text-muted">
+                                  Flagged: &ldquo;{tone.matches.join("”, “")}&rdquo;
+                                </p>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                        {captionError[id] && (
+                          <p className="mt-1 text-xs font-semibold text-red-600">{captionError[id]}</p>
+                        )}
+                        {improveError[id] && (
+                          <p className="mt-1 text-xs font-semibold text-red-600">{improveError[id]}</p>
+                        )}
                       </div>
-                    ))}
-                    {refImages.length < REFERENCE_MAX && (
-                      <button
-                        type="button"
-                        onClick={() => fileInput.current?.click()}
-                        className="flex aspect-square flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-line text-muted transition-colors hover:border-primary hover:text-primary-deep"
-                      >
-                        <Icon name="upload" size={16} />
-                        <span className="text-[10px] font-semibold">Add</span>
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    ref={fileInput}
-                    type="file"
-                    accept="image/*"
-                    multiple
-                    className="hidden"
-                    onChange={(e) => {
-                      addFiles(e.target.files);
-                      e.target.value = "";
-                    }}
-                  />
-                  {slideshowReference && (
-                    <div className="mt-3 rounded-xl border border-line bg-page/50 px-3 py-2 text-sm font-semibold text-muted">
-                      Reference: {platformFromSlideshowUrl(slideshowReference)} slideshow
-                    </div>
-                  )}
+                    );
+                  })}
                 </div>
-
-                <div>
-                  <FieldLabel>Style Prompt</FieldLabel>
-                  <textarea
-                    className="input mt-2 min-h-[100px] resize-y"
-                    maxLength={STYLE_PROMPT_MAX}
-                    value={stylePrompt}
-                    onChange={(e) => setStylePrompt(e.target.value)}
-                    placeholder="Describe the visual style you want (or analyze images to auto-generate)…"
-                  />
-                  <div className="mt-2 flex flex-wrap items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={generateStylePrompt}
-                      disabled={styleBusy || (!context.trim() && !refImages.length && !slideshowReference.trim())}
-                      className="btn-primary !py-1.5 text-sm disabled:opacity-50"
-                    >
-                      {styleBusy ? (
-                        <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/60 border-t-transparent" />
-                      ) : (
-                        <Icon name="sparkles" size={14} />
-                      )}
-                      {styleBusy ? "Analyzing…" : "Analyze Images"}
-                    </button>
-                    <button type="button" className="btn-subtle !py-1.5 text-sm">
-                      <Icon name="file" size={14} /> Generate template prompt
-                    </button>
-                  </div>
-                  {styleError && <p className="mt-2 text-sm font-semibold text-red-600">{styleError}</p>}
-                </div>
-              </div>
-            </section>
-
-            {/* Generation settings — model, aspect, overlays, language. */}
-            <section className="mt-6">
-              <FieldLabel icon="sparkles">Generation Settings</FieldLabel>
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                <Popover
-                  width="min-w-[17rem]"
-                  trigger={(open) => (
-                    <ToolbarButton open={open} icon="sparkles">
-                      {selectedModel.name}
-                      <CreditBadge credits={selectedModel.credits} />
-                    </ToolbarButton>
-                  )}
-                >
-                  {(close) => (
-                    <>
-                      <p className="px-2.5 py-1.5 text-xs font-bold uppercase tracking-wide text-muted">AI Image Model</p>
-                      {AI_MODELS.map((m) => (
-                        <MenuRow key={m.id} active={m.id === aiModel} onClick={() => { setAiModel(m.id); close(); }}>
-                          <span className="min-w-0 flex-1">
-                            <span className="block font-bold">{m.name}</span>
-                            <span className="block truncate text-xs text-muted">{m.desc}</span>
-                          </span>
-                          <CreditBadge credits={m.credits} active={m.id === aiModel} />
-                        </MenuRow>
-                      ))}
-                    </>
-                  )}
-                </Popover>
-
-                <Popover
-                  width="min-w-[18rem]"
-                  trigger={(open) => (
-                    <ToolbarButton open={open} icon="image" muted>
-                      {aspect}
-                    </ToolbarButton>
-                  )}
-                >
-                  {(close) => (
-                    <>
-                      {ASPECTS.map((a) => (
-                        <MenuRow key={a.id} active={a.id === aspect} onClick={() => { setAspect(a.id); close(); }}>
-                          <span className="w-12 text-lg font-bold">{a.name}</span>
-                          <span className="text-sm text-muted">{a.hint}</span>
-                          {a.id === aspect && <Icon name="check" size={15} className="ml-auto text-primary-deep" />}
-                        </MenuRow>
-                      ))}
-                    </>
-                  )}
-                </Popover>
-
-                <Popover
-                  width="min-w-[20rem]"
-                  trigger={(open) => (
-                    <ToolbarButton open={open} icon="type" muted>
-                      <span className="hidden sm:inline">{selectedOverlay.name}</span>
-                      <span className="sm:hidden">Overlay</span>
-                    </ToolbarButton>
-                  )}
-                >
-                  {(close) => (
-                    <>
-                      {OVERLAYS.map((o) => (
-                        <MenuRow key={o.id} active={o.id === overlays} onClick={() => { setOverlays(o.id); close(); }}>
-                          <Icon name={o.icon} size={16} className={o.id === overlays ? "text-primary-deep" : "text-muted"} />
-                          <span className="min-w-0 flex-1">
-                            <span className="block font-bold">{o.name}</span>
-                            <span className="block text-xs text-muted">{o.desc}</span>
-                          </span>
-                          {o.id === overlays && <Icon name="check" size={15} className="text-primary-deep" />}
-                        </MenuRow>
-                      ))}
-                    </>
-                  )}
-                </Popover>
-
-                <Popover
-                  width="min-w-[13rem]"
-                  trigger={(open) => (
-                    <ToolbarButton open={open} icon="megaphone" muted>
-                      <span>{flagForLanguage(language)}</span>
-                      <span className="hidden sm:inline">{selectedLanguage.name}</span>
-                    </ToolbarButton>
-                  )}
-                >
-                  {(close) => (
-                    <>
-                      {LANGUAGES.map((l) => (
-                        <MenuRow key={l.id} active={l.id === language} onClick={() => { setLanguage(l.id); close(); }}>
-                          <span className="text-base">{l.flag}</span>
-                          <span className="font-semibold">{l.name}</span>
-                          {l.id === language && <Icon name="check" size={15} className="ml-auto text-primary-deep" />}
-                        </MenuRow>
-                      ))}
-                    </>
-                  )}
-                </Popover>
-              </div>
+              )}
             </section>
           </>
         )}
@@ -1645,15 +2457,24 @@ export function SlideshowStudio({
                 </p>
               </div>
             </div>
-            <div className="mt-5 flex gap-4 overflow-x-auto pb-2">
+            <div
+              className="mt-5 grid gap-4"
+              style={{ gridTemplateColumns: `repeat(${slideGridColumns}, minmax(0, 1fr))` }}
+            >
               {slideSources.map((source, i) => (
                 <SlideStructureCard
                   key={i}
                   index={i}
                   source={source}
                   onSourceChange={(id) => updateSlideSource(i, id)}
-                  referenceImage={refImages[i % Math.max(1, refImages.length)]}
+                  uploadedImage={slideUploads[i]}
                   aspect={aspect}
+                  showText={showSlideText}
+                  text={slideTexts[i] ?? ""}
+                  onTextChange={(t) => updateSlideText(i, t)}
+                  textPos={slideTextPos[i] ?? { x: 50, y: 82 }}
+                  onTextPosChange={(p) => updateSlideTextPos(i, p)}
+                  textConfig={slideTextConfig}
                 />
               ))}
             </div>
@@ -1687,22 +2508,65 @@ export function SlideshowStudio({
               <FieldLabel>Context</FieldLabel>
               <p className="mt-2 whitespace-pre-wrap text-sm text-ink">{context}</p>
             </div>
-            {stylePrompt.trim() && (
-              <div className="mt-4 rounded-xl border border-line bg-white p-4">
-                <FieldLabel>Style Prompt</FieldLabel>
-                <p className="mt-2 whitespace-pre-wrap text-sm text-ink">{stylePrompt}</p>
+            {[...selectedPlatforms].some((id) => platformCaptions[id]?.trim()) && (
+              <div className="mt-4 flex flex-col gap-3 rounded-xl border border-line bg-white p-4">
+                <FieldLabel>Platform Descriptions</FieldLabel>
+                {[...selectedPlatforms]
+                  .filter((id) => platformCaptions[id]?.trim())
+                  .map((id) => (
+                    <div key={id}>
+                      <p className="flex items-center gap-1.5 text-xs font-black uppercase tracking-[0.1em] text-muted">
+                        <PlatformIcon id={id} size={12} /> {platformOf(id)?.name ?? id}
+                      </p>
+                      <p className="mt-1 whitespace-pre-wrap text-sm text-ink">{platformCaptions[id]}</p>
+                    </div>
+                  ))}
+              </div>
+            )}
+            {draftStatus !== "idle" && (
+              <div className="mt-6 flex justify-center">
+                <button
+                  type="button"
+                  onClick={() => setConfirmDeleteDraft(true)}
+                  className="inline-flex items-center gap-1.5 text-sm font-semibold text-red-600 transition-colors hover:text-red-700"
+                >
+                  <Icon name="trash" size={14} />
+                  Delete draft
+                </button>
               </div>
             )}
           </>
         )}
       </div>
 
+      {draftStatusPill && <div className="mt-4 flex justify-center">{draftStatusPill}</div>}
+
+      <ConfirmDialog
+        open={confirmDeleteDraft}
+        title="Delete this draft?"
+        message="This slideshow draft will be permanently deleted and you'll be sent back to the type picker. This can't be undone."
+        confirmLabel="Delete"
+        onConfirm={() => {
+          setConfirmDeleteDraft(false);
+          if (draftIdRef.current) void deleteDraft(draftIdRef.current);
+          enterMode("choose");
+        }}
+        onCancel={() => setConfirmDeleteDraft(false)}
+      />
+
       <CopySlideshowModal
         open={copyModalOpen}
         link={slideshowReference}
         onLinkChange={setSlideshowReference}
-        onClose={() => setCopyModalOpen(false)}
+        onClose={() => {
+          setCopyModalOpen(false);
+          setCopyError("");
+        }}
         onFetch={applyCopiedSlideshow}
+        busy={copyBusy}
+        error={copyError}
+        acknowledged={copyAcknowledged}
+        onAcknowledgedChange={setCopyAcknowledged}
       />
     </div>
   );
