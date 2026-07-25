@@ -582,17 +582,17 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
   const rendering = jobStatus === "queued" || jobStatus === "generating" || jobStatus === "compositing";
   const activePreset = videoPresetById(activePresetId) ?? VIDEO_PRESETS[0];
   const activeAspect = activePreset.aspect;
-  const previewMaxWidth = activeAspect.id === "16:9" ? 520 : activeAspect.id === "1:1" ? 380 : 320;
-  const selectedPlatforms = new Set(
-    [...selectedAccountIds].map((id) => accounts.find((a) => a.id === id)?.platform).filter((p): p is string => !!p)
-  );
 
   // Which platform tab is active in the build step
   const slidesActiveTab = (VIDEO_PREVIEW_PLATFORM_TABS as readonly string[]).includes(previewPlatform) ? previewPlatform : VIDEO_PREVIEW_PLATFORM_TABS[0];
   const slidesActiveFormat = slidesActiveTab ? selectedVideoFormatForPlatform(slidesActiveTab, platformVideoFormatIds) : null;
   const slidesActiveAspect = slidesActiveFormat?.aspect.id ?? activeAspect.id;
-
   const slidesActiveAspectInfo = VIDEO_ASPECTS.find((a) => a.id === slidesActiveAspect) ?? activeAspect;
+
+  const previewMaxWidth = slidesActiveAspectInfo.id === "16:9" ? 800 : slidesActiveAspectInfo.id === "1:1" ? 380 : 320;
+  const selectedPlatforms = new Set(
+    [...selectedAccountIds].map((id) => accounts.find((a) => a.id === id)?.platform).filter((p): p is string => !!p)
+  );
 
   /* ----------------------------- data effects ----------------------------- */
 
@@ -1131,9 +1131,9 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
               <AspectLegendPopover />
             </div>
 
-            <div className="grid gap-6 lg:grid-cols-[minmax(0,360px)_1fr]">
-              <div>
-                <div className="mx-auto w-full" style={{ maxWidth: previewMaxWidth }}>
+            <div className={slidesActiveAspectInfo.id === "16:9" ? "flex flex-col gap-6" : "grid gap-6 lg:grid-cols-[minmax(0,360px)_1fr]"}>
+              <div className={slidesActiveAspectInfo.id === "16:9" ? "flex justify-center" : ""}>
+                <div className={slidesActiveAspectInfo.id === "16:9" ? "w-full" : "mx-auto w-full"} style={{ maxWidth: `${previewMaxWidth}px` }}>
                   <div
                     className="relative overflow-hidden rounded-2xl ring-1 ring-line"
                     style={{ aspectRatio: `${slidesActiveAspectInfo.width} / ${slidesActiveAspectInfo.height}` }}
