@@ -294,6 +294,23 @@ export default defineSchema({
     .index("by_hash", ["key_hash"])
     .index("by_workspace", ["workspace_id"]),
 
+  // Workspace-supplied ("bring your own key") credentials for third-party AI
+  // image providers, one row per workspace+provider. Mirrors the
+  // social_accounts.credentials pattern: AES-256-GCM-encrypted JSON via
+  // lib/secretbox.ts, never returned by list/get queries — only the
+  // server-side resolver in lib/image-gen-keys.ts decrypts it.
+  image_gen_keys: defineTable({
+    id: v.string(),
+    workspace_id: v.string(),
+    provider: v.string(), // "openai" | "gemini" | "ark"
+    credentials: v.string(),
+    last4: v.string(),
+    created_at: v.string(),
+  })
+    .index("by_legacy_id", ["id"])
+    .index("by_workspace", ["workspace_id"])
+    .index("by_workspace_provider", ["workspace_id", "provider"]),
+
   teams: defineTable({
     id: v.string(),
     name: v.string(),

@@ -23,7 +23,7 @@ export type MediaRow = {
   name: string;
   mime_type: string;
   size_bytes: number;
-  kind: "image" | "video" | "pdf";
+  kind: "image" | "video" | "pdf" | "audio";
   duration_s: number | null;
   width: number | null;
   height: number | null;
@@ -41,6 +41,7 @@ export const MAX_MEDIA_BYTES = 250 * 1024 * 1024; // bulk video cap, used as glo
 
 export function kindFromMime(mime: string): MediaRow["kind"] {
   if (mime.startsWith("video/")) return "video";
+  if (mime.startsWith("audio/")) return "audio";
   if (mime === "application/pdf") return "pdf";
   return "image";
 }
@@ -64,23 +65,11 @@ export async function createUploadUrl(
     upload_status: "pending",
   });
   const complete_url = `${origin}/api/uploads/${id}?sig=${sign(`complete:${id}`)}`;
-  if (r2Enabled()) {
-    return {
-      media_id: id,
-      upload_url: await createR2UploadUrl({
-        key: mediaObjectKey(workspaceId, id),
-        contentType: opts.mime_type,
-        contentLength: opts.size_bytes,
-      }),
-      complete_url,
-      storage: "r2",
-    };
-  }
   return {
     media_id: id,
     upload_url: `${origin}/api/uploads/${id}?sig=${sign(`upload:${id}`)}`,
     complete_url,
-    storage: "local",
+    storage: r2Enabled() ? "r2" : "local",
   };
 }
 
@@ -89,8 +78,22 @@ export async function storeUpload(mediaId: string, sig: string, body: Buffer): P
   const row = await convexQuery<MediaRow | null>(api.media.getById, { id: mediaId });
   if (!row) throw new Error("Unknown media id.");
   if (body.byteLength > MAX_MEDIA_BYTES) throw new Error("File exceeds the 250MB limit.");
-  ensureMediaDir();
-  writeFileSync(path.join(MEDIA_DIR, mediaId), body);
+  if (r2Enabled()) {
+    const uploadUrl = await createR2UploadUrl({
+      key: mediaObjectKey(row.workspace_id, mediaId),
+      contentType: row.mime_type,
+      contentLength: body.byteLength,
+    });
+    const put = await fetch(uploadUrl, {
+      method: "PUT",
+      headers: { "Content-Type": row.mime_type },
+      body: new Uint8Array(body),
+    });
+    if (!put.ok) throw new Error(`Could not upload media to storage (${put.status}).`);
+  } else {
+    ensureMediaDir();
+    writeFileSync(path.join(MEDIA_DIR, mediaId), body);
+  }
   return await convexMutation<MediaRow>(api.media.markUploaded, {
     id: mediaId,
     size_bytes: body.byteLength,

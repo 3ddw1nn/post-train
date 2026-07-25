@@ -6,10 +6,12 @@ import { currentWorkspace } from "@/lib/workspaces";
 import { accountsForWorkspace } from "@/lib/accounts";
 import { aiUsageThisMonth, STUDIO_TEMPLATES, type StudioTemplate } from "@/lib/studio";
 import { FAL_AVATAR_PER_SECOND } from "@/lib/fal";
+import { PROVIDERS, providerConfigured } from "@/lib/image-gen-keys";
 import { getExploreItem, listExploreSlides } from "@/lib/explore";
 import { PaywallCard } from "@/components/paywall-card";
 import { StudioWizard } from "@/components/studio";
 import { SlideshowStudio } from "@/components/slideshow-studio";
+import { GridStudio } from "@/components/grid-studio";
 
 export const metadata = { title: "Content Studio" };
 
@@ -28,6 +30,15 @@ export default async function StudioTemplatePage({
   const ws = await currentWorkspace(user);
   const usage = await aiUsageThisMonth(ws.id);
 
+  if (template === "grid-2x2") {
+    const accounts = await accountsForWorkspace(ws.id);
+    return (
+      <GridStudio
+        accounts={accounts.map((a) => ({ id: a.id, platform: a.platform, username: a.username, avatar_url: a.avatar_url }))}
+      />
+    );
+  }
+
   let initialSlideTexts: string[] | undefined;
   let sourceExploreItemId: string | undefined;
   if (template === "slideshow" && from) {
@@ -41,6 +52,9 @@ export default async function StudioTemplatePage({
 
   if (template === "slideshow") {
     const accounts = await accountsForWorkspace(ws.id);
+    const configuredEntries = await Promise.all(
+      PROVIDERS.map(async (p) => [p.id, await providerConfigured(ws.id, p.id)] as const)
+    );
     return (
       <SlideshowStudio
         initialSlideTexts={initialSlideTexts}
@@ -51,6 +65,7 @@ export default async function StudioTemplatePage({
           username: a.username,
           avatar_url: a.avatar_url,
         }))}
+        configuredProviders={Object.fromEntries(configuredEntries)}
       />
     );
   }

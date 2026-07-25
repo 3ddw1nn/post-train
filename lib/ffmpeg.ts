@@ -12,9 +12,9 @@ import path from "node:path";
 const FFMPEG = () => process.env.FFMPEG_PATH ?? "ffmpeg";
 const FFPROBE = () => process.env.FFPROBE_PATH ?? "ffprobe";
 
-// Output format shared by all templates: 1080x1920 vertical, 30fps, h264+aac.
+// Output format: h264+aac. Single-clip templates still use the legacy
+// 1080x1920/30fps path; grid accepts explicit dimensions/fps from the editor.
 const SCALE_FULL = "scale=1080:1920:force_original_aspect_ratio=increase,crop=1080:1920,fps=30,setsar=1";
-const SCALE_QUAD = "scale=540:960:force_original_aspect_ratio=increase,crop=540:960,fps=30,setsar=1";
 const ENCODE = ["-c:v", "libx264", "-preset", "veryfast", "-crf", "23", "-pix_fmt", "yuv420p", "-movflags", "+faststart", "-c:a", "aac", "-ar", "44100"];
 const SILENCE = ["-f", "lavfi", "-i", "anullsrc=channel_layout=stereo:sample_rate=44100"];
 
@@ -96,15 +96,88 @@ async function renderOne(input: string, out: string, videoFilters: string[], ove
 /** Re-encode to the shared 1080x1920/30fps format, adding silent audio when a clip has none. */
 export const normalizeClip = (input: string, out: string) => renderOne(input, out, [SCALE_FULL]);
 
-/** 2x2 grid of four clips; audio comes from the first clip; ends with the shortest clip. */
-export async function renderGrid(inputs: [string, string, string, string], out: string): Promise<void> {
-  const { has_audio } = await probe(inputs[0]);
-  const scaled = inputs.map((_, i) => `[${i}:v]${SCALE_QUAD}[v${i}]`).join(";");
+export type GridBorder = { width: number; color: string; opacity: number };
+export type GridOptions = {
+  width?: number;
+  height?: number;
+  fps?: number;
+  // Which clips' audio to keep (0-3) — multiple are mixed together — plus an
+  // optional external track mixed in on top. Empty/none renders silent.
+  audioClips?: number[];
+  audioPath?: string;
+  border?: GridBorder;
+};
+
+// Interior "+" separators drawn over the packed grid with drawbox, so the color
+// blends over the video underneath (opacity is meaningful). No outer frame —
+// borders sit only between the quadrants. Returns a chain suffix ("" when off).
+function gridScaleFilter(width: number, height: number, fps: number): string {
+  return `scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},fps=${fps},setsar=1`;
+}
+
+function gridBorderChain(outputWidth: number, outputHeight: number, border?: GridBorder): string {
+  if (!border || border.width <= 0) return "";
+  const w = Math.round(Math.min(40, Math.max(1, border.width)));
+  const hex = /^#?[0-9a-fA-F]{6}$/.test(border.color) ? border.color.replace("#", "") : "ffffff";
+  const alpha = Math.min(1, Math.max(0, border.opacity));
+  const color = `0x${hex}@${alpha}`;
+  const vx = Math.round(outputWidth / 2 - w / 2);
+  const hy = Math.round(outputHeight / 2 - w / 2);
+  return `,drawbox=x=${vx}:y=0:w=${w}:h=${outputHeight}:color=${color}:t=fill,drawbox=x=0:y=${hy}:w=${outputWidth}:h=${w}:color=${color}:t=fill`;
+}
+
+/**
+ * 2x2 grid of four clips, ending with the shortest input. Audio is mixed from
+ * any subset of the clips (`audioClips`, default the top-left clip) plus an
+ * optional uploaded track (`audioPath`); an empty selection renders silent.
+ * Optional colored separators are drawn between the quadrants.
+ */
+export async function renderGrid(
+  inputs: [string, string, string, string],
+  out: string,
+  opts: GridOptions = {}
+): Promise<void> {
+  const outputWidth = Math.max(2, Math.round(opts.width ?? 1080));
+  const outputHeight = Math.max(2, Math.round(opts.height ?? 1920));
+  const quadWidth = Math.round(outputWidth / 2);
+  const quadHeight = Math.round(outputHeight / 2);
+  const fps = Math.round(opts.fps ?? 60);
+  const scaled = inputs.map((_, i) => `[${i}:v]${gridScaleFilter(quadWidth, quadHeight, fps)}[v${i}]`).join(";");
+  const border = gridBorderChain(outputWidth, outputHeight, opts.border);
+  const videoGraph = `${scaled};[v0][v1][v2][v3]xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0${border}[v]`;
+  const args = [...inputs.flatMap((f) => ["-i", f])]; // clip inputs occupy 0-3
+
+  // Collect every audio stream to mix: each selected clip that actually has
+  // audio, then the uploaded track (appended as the next input). A silence
+  // source is only needed when nothing else contributes.
+  const wantClips = [...new Set(opts.audioClips ?? [0])].filter((i) => i >= 0 && i <= 3);
+  const sources: string[] = [];
+  for (const idx of wantClips) {
+    if ((await probe(inputs[idx])).has_audio) sources.push(`${idx}:a`);
+  }
+  if (opts.audioPath) {
+    args.push("-i", opts.audioPath);
+    sources.push("4:a"); // next input index after the four clips
+  }
+
+  let audioGraph = "";
+  let audioMap: string;
+  if (sources.length === 0) {
+    args.push(...SILENCE);
+    audioMap = `${inputs.length}:a`; // the anullsrc input
+  } else if (sources.length === 1) {
+    audioMap = sources[0];
+  } else {
+    // normalize=0 keeps each source at its own level so layered instruments
+    // stay balanced instead of being divided down by the input count.
+    audioGraph = `;${sources.map((s) => `[${s}]`).join("")}amix=inputs=${sources.length}:duration=shortest:normalize=0[aout]`;
+    audioMap = "[aout]";
+  }
+
   await runFfmpeg([
-    ...inputs.flatMap((f) => ["-i", f]),
-    ...(has_audio ? [] : SILENCE),
-    "-filter_complex", `${scaled};[v0][v1][v2][v3]xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0[v]`,
-    "-map", "[v]", "-map", has_audio ? "0:a" : "4:a", "-shortest",
+    ...args,
+    "-filter_complex", `${videoGraph}${audioGraph}`,
+    "-map", "[v]", "-map", audioMap, "-shortest",
     ...ENCODE, out,
   ]);
 }

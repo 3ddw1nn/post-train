@@ -101,7 +101,7 @@ export const PLATFORMS: Platform[] = [
     slug: "youtube",
     hex: `#${siYoutube.hex}`,
     path: siYoutube.path,
-    supports: ["video"],
+    supports: ["image", "video"],
     analytics: true,
     onboardingGrid: true,
     shareUrl: (_u, id) => `https://www.youtube.com/shorts/${id}`,

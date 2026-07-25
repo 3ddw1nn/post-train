@@ -5,9 +5,11 @@ import { createPortal } from "react-dom";
 import Link from "next/link";
 import { Icon } from "./icons";
 import { PlatformIcon, AccountAvatar } from "./platform-icon";
+import { uploadOneFile } from "./media";
 import { platform as platformOf, CAROUSEL_MAX, CAPTION_MAX, CAPTION_MAX_BY_PLATFORM } from "@/lib/platforms";
 import { checkAiTone, type AiToneResult } from "@/lib/ai-tone";
 import type { StudioDraftMode, StudioDraftRow } from "@/lib/studio-drafts";
+import { MODEL_PROVIDER, type ImageGenProvider } from "@/lib/image-gen";
 
 const CUSTOM_STEPS = ["Settings", "Review & Launch"] as const;
 const TEMPLATE_STEPS = ["Templates", "Settings", "Images", "Launch"] as const;
@@ -30,8 +32,9 @@ const SLIDE_SOURCES = [
   { id: "character", name: "Consistent Character", short: "Character", icon: "users", desc: "Keep the same person/object style.", credits: 2 },
 ] as const;
 
-// AI image providers for the Visual Style / generation step. Placeholder list —
-// no provider is wired yet (see AiModelPopover usage below).
+// AI image providers for the Visual Style / generation step. The backend
+// calls live in lib/image-gen.ts; nothing in this screen invokes them yet —
+// the Launch button below has no handler for any Studio job type yet.
 const AI_MODELS = [
   { id: "gpt-image-2", name: "GPT Image 2", desc: "Sharp layouts, text, and references", credits: 2 },
   { id: "nano-banana-2", name: "Nano Banana 2", desc: "Fast, high quality, and reference-aware", credits: 1 },
@@ -41,41 +44,141 @@ const AI_MODELS = [
 const ASPECTS = [
   { id: "9:16", name: "9:16", hint: "Portrait", px: "1080×1920px" },
   { id: "2:3", name: "2:3", hint: "Portrait", px: "1000×1500px" },
-  { id: "3:4", name: "3:4", hint: "Portrait", px: "1080×1440px" },
   { id: "4:5", name: "4:5", hint: "Portrait", px: "1080×1350px" },
   { id: "1:1", name: "1:1", hint: "Square", px: "1080×1080px" },
   { id: "16:9", name: "16:9", hint: "Landscape", px: "1920×1080px" },
 ] as const;
 
-// The aspect each platform actually crops/displays images at, so the launch
-// preview shows what a post really looks like there regardless of the
-// editing aspect chosen in Settings. Falls back to 9:16 for anything unlisted.
+type PhotoPreset = {
+  id: string;
+  name: string;
+  aspect: (typeof ASPECTS)[number];
+  placement: string;
+  targets: { platformId: string; label: string }[];
+};
+type PhotoFormatOption = {
+  id: string;
+  label: string;
+  presetName: string;
+  placement: string;
+  aspect: (typeof ASPECTS)[number];
+};
+
+const aspectInfo = (id: (typeof ASPECTS)[number]["id"]) => ASPECTS.find((a) => a.id === id)!;
+
+const PHOTO_PRESETS: PhotoPreset[] = [
+  {
+    id: "vertical-full-screen",
+    name: "Vertical Full Screen",
+    aspect: aspectInfo("9:16"),
+    placement: "Full-screen photo posts and Stories",
+    targets: [
+      { platformId: "tiktok", label: "TikTok Photo Posts" },
+      { platformId: "instagram", label: "Instagram Stories" },
+      { platformId: "facebook", label: "Facebook Stories" },
+    ],
+  },
+  {
+    id: "pinterest-portrait",
+    name: "Pinterest Portrait",
+    aspect: aspectInfo("2:3"),
+    placement: "Standard Pinterest Pins",
+    targets: [{ platformId: "pinterest", label: "Pinterest Pins" }],
+  },
+  {
+    id: "portrait-feed",
+    name: "Portrait Feed",
+    aspect: aspectInfo("4:5"),
+    placement: "Mobile feed photo posts",
+    targets: [
+      { platformId: "instagram", label: "Instagram Feed" },
+      { platformId: "threads", label: "Threads" },
+      { platformId: "linkedin", label: "LinkedIn" },
+      { platformId: "facebook", label: "Facebook Feed" },
+    ],
+  },
+  {
+    id: "square-feed",
+    name: "Square Feed",
+    aspect: aspectInfo("1:1"),
+    placement: "Safe general-purpose feed images",
+    targets: [
+      { platformId: "youtube", label: "YouTube Community Posts" },
+      { platformId: "twitter", label: "X" },
+      { platformId: "bluesky", label: "Bluesky" },
+      { platformId: "mastodon", label: "Mastodon" },
+      { platformId: "google_business", label: "Google Business Profile" },
+    ],
+  },
+  {
+    id: "landscape",
+    name: "Landscape",
+    aspect: aspectInfo("16:9"),
+    placement: "Optional landscape photo posts",
+    targets: [
+      { platformId: "twitter", label: "X" },
+      { platformId: "bluesky", label: "Bluesky" },
+      { platformId: "mastodon", label: "Mastodon" },
+      { platformId: "linkedin", label: "LinkedIn" },
+      { platformId: "facebook", label: "Facebook landscape posts" },
+    ],
+  },
+];
+// TEMP preview mode: show every photo-capable destination tab even before the
+// user connects/selects accounts, so the formatting UI can be reviewed.
+const PHOTO_PREVIEW_PLATFORM_TABS = Array.from(
+  new Set(PHOTO_PRESETS.flatMap((preset) => preset.targets.map((target) => target.platformId))),
+);
+
+// Recommended photo aspect for each platform's default slideshow/feed tab.
+// The guide below carries the richer placement presets, including Story and
+// optional landscape variants where the same platform can appear more than once.
 const PLATFORM_ASPECT: Record<string, (typeof ASPECTS)[number]["id"]> = {
   tiktok: "9:16",
-  youtube: "9:16",
+  youtube: "1:1",
   pinterest: "2:3",
-  threads: "3:4",
-  linkedin: "3:4",
+  threads: "4:5",
+  linkedin: "4:5",
   instagram: "4:5",
   twitter: "1:1",
   bluesky: "1:1",
   mastodon: "1:1",
-  facebook: "16:9",
+  facebook: "4:5",
   google_business: "1:1",
 };
 function platformAspect(platformId: string): (typeof ASPECTS)[number]["id"] {
   return PLATFORM_ASPECT[platformId] ?? "9:16";
 }
 
-// Every platform that can post a carousel/slideshow here (source of truth:
-// CAROUSEL_MAX), grouped by the aspect it natively displays at — drives the
-// platform-logo hints in the editing-preview aspect picker. Google Business
-// doesn't support carousel posts, so it's excluded even though it isn't in
-// CAROUSEL_MAX anyway.
-const CAROUSEL_ASPECT_PLATFORMS: Record<string, string[]> = {};
-for (const id of Object.keys(CAROUSEL_MAX)) {
-  if (id === "google_business") continue;
-  (CAROUSEL_ASPECT_PLATFORMS[platformAspect(id)] ??= []).push(id);
+function photoFormatOptionsForPlatform(platformId: string): PhotoFormatOption[] {
+  return PHOTO_PRESETS.flatMap((preset) =>
+    preset.targets
+      .filter((target) => target.platformId === platformId)
+      .map((target) => ({
+        id: `${preset.id}:${target.label}`,
+        label: target.label,
+        presetName: preset.name,
+        placement: preset.placement,
+        aspect: preset.aspect,
+      })),
+  );
+}
+
+function defaultPhotoFormatForPlatform(platformId: string): PhotoFormatOption {
+  const options = photoFormatOptionsForPlatform(platformId);
+  const preferredAspect = platformAspect(platformId);
+  return options.find((option) => option.aspect.id === preferredAspect) ?? options[0] ?? {
+    id: `${platformId}:default`,
+    label: platformOf(platformId)?.name ?? platformId,
+    presetName: "Default",
+    placement: "Recommended photo format",
+    aspect: ASPECTS[0],
+  };
+}
+
+function selectedPhotoFormatForPlatform(platformId: string, selected: Record<string, string>): PhotoFormatOption {
+  const options = photoFormatOptionsForPlatform(platformId);
+  return options.find((option) => option.id === selected[platformId]) ?? defaultPhotoFormatForPlatform(platformId);
 }
 
 const OVERLAYS = [
@@ -146,6 +249,8 @@ const TEXT_SIZE_PRESETS = [
 const TEXT_SCALE_MIN = 4;
 const TEXT_SCALE_MAX = 14;
 const TEXT_SCALE_DEFAULT = 8;
+const TEXT_BG_COLOR_DEFAULT = "#000000";
+const TEXT_BG_OPACITY_DEFAULT = 100;
 
 // A single draggable/resizable text box on a slide. x/y are the CENTER as a
 // percent of the frame; width is a percent of the frame width (text wraps to a
@@ -161,21 +266,27 @@ type TextLayer = {
   style: string;
   bgEnabled: boolean;
   bgColor: string;
+  bgOpacity: number; // 0-100
 };
+type TextLayerDefaults = Pick<TextLayer, "width" | "scale" | "font" | "style" | "bgEnabled" | "bgColor" | "bgOpacity">;
+const DEFAULT_TEXT_LAYER_SETTINGS = {
+  x: 50,
+  y: 50,
+  width: 64,
+  scale: TEXT_SCALE_DEFAULT,
+  font: "sans",
+  style: "shadow",
+  bgEnabled: true,
+  bgColor: TEXT_BG_COLOR_DEFAULT,
+  bgOpacity: TEXT_BG_OPACITY_DEFAULT,
+} satisfies Pick<TextLayer, "x" | "y"> & TextLayerDefaults;
 const LAYER_WIDTH_MIN = 15;
 const LAYER_WIDTH_MAX = 96;
 function makeLayer(text = "", overrides: Partial<TextLayer> = {}): TextLayer {
   return {
     id: crypto.randomUUID(),
     text,
-    x: 50,
-    y: 50,
-    width: 64,
-    scale: TEXT_SCALE_DEFAULT,
-    font: "sans",
-    style: "shadow",
-    bgEnabled: false,
-    bgColor: "#000000",
+    ...DEFAULT_TEXT_LAYER_SETTINGS,
     ...overrides,
   };
 }
@@ -184,6 +295,17 @@ function layerFont(layer: TextLayer) {
 }
 function layerStyle(layer: TextLayer) {
   return TEXT_STYLES.find((s) => s.id === layer.style) ?? TEXT_STYLES[0];
+}
+// hex -> "rgba(r, g, b, a)" so the background chip can be translucent without
+// the CSS `opacity` property also fading the text drawn on top of it.
+function hexToRgba(hex: string, opacityPercent: number): string {
+  const clean = hex.replace("#", "");
+  const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
+  const n = parseInt(full, 16) || 0;
+  const r = (n >> 16) & 255;
+  const g = (n >> 8) & 255;
+  const b = n & 255;
+  return `rgba(${r}, ${g}, ${b}, ${clamp(opacityPercent, 0, 100) / 100})`;
 }
 
 // Quick-start templates for the Templates wizard grid. Thumbnails are branded
@@ -210,7 +332,7 @@ const QUICK_TEMPLATES: QuickTemplate[] = [
   { id: "budget-travel", title: "Travel on a Budget", desc: "Destination tips that feel aspirational.", category: "listicle", slides: 5, emoji: "🌍", tone: "from-cyan-100 via-white to-primary-soft" },
 ];
 
-type RefImage = { id: string; url: string; name: string };
+type RefImage = { id: string; url: string; name: string; mediaId?: string };
 type PlatformSlideData = {
   sources: string[];
   uploads: (RefImage | undefined)[];
@@ -253,7 +375,10 @@ function Popover({
       {open && (
         <div
           role="menu"
-          className={`absolute z-30 ${width} overflow-hidden rounded-xl border border-line bg-white p-1.5 shadow-[0_18px_40px_rgba(6,63,59,0.16)] ${
+          // z-50: must clear the slide grid's own absolutely-positioned buttons
+          // (z-30) — same z-index would fall back to DOM order, and this
+          // popover's trigger sits above the grid in markup, so it'd lose.
+          className={`absolute z-50 ${width} overflow-hidden rounded-xl border border-line bg-white p-1.5 shadow-[0_18px_40px_rgba(6,63,59,0.16)] ${
             up ? "bottom-[calc(100%+0.5rem)]" : "top-[calc(100%+0.5rem)]"
           } ${align === "right" ? "right-0" : "left-0"}`}
         >
@@ -391,8 +516,6 @@ function aspectClass(aspect: (typeof ASPECTS)[number]["id"]) {
       return "aspect-square";
     case "2:3":
       return "aspect-[2/3]";
-    case "3:4":
-      return "aspect-[3/4]";
     case "4:5":
       return "aspect-[4/5]";
     case "16:9":
@@ -408,6 +531,99 @@ function aspectClass(aspect: (typeof ASPECTS)[number]["id"]) {
 function aspectRatioValue(aspect: (typeof ASPECTS)[number]["id"]) {
   const [w, h] = aspect.split(":").map(Number);
   return h ? w / h : 1;
+}
+
+// Anchored via a portal (fixed position), same as SlideSourceControl — the
+// generic Popover's absolutely-positioned panel can end up painted behind the
+// slide grid's own absolutely-positioned (z-30) +/expand buttons depending on
+// stacking context, since it isn't a sibling of what it needs to sit above. A
+// portal to <body> sidesteps that entirely instead of chasing z-index values.
+function AspectLegendPopover() {
+  const [open, setOpen] = useState(false);
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    function onDown(e: MouseEvent) {
+      if (menuRef.current?.contains(e.target as Node) || triggerRef.current?.contains(e.target as Node)) return;
+      setOpen(false);
+    }
+    function onDismiss() {
+      setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", onDismiss, true);
+    window.addEventListener("resize", onDismiss);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", onDismiss, true);
+      window.removeEventListener("resize", onDismiss);
+    };
+  }, [open]);
+
+  function toggle() {
+    if (!open && triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect();
+      setPos({ top: r.bottom + 6, left: Math.max(8, Math.min(r.left, window.innerWidth - 320)) });
+    }
+    setOpen((v) => !v);
+  }
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        onClick={toggle}
+        className={`flex h-8 w-8 items-center justify-center rounded-full border transition-colors ${
+          open ? "border-primary text-primary-deep" : "border-line text-muted hover:text-ink"
+        }`}
+      >
+        <Icon name="info" size={14} />
+      </button>
+      {open &&
+        pos &&
+        createPortal(
+          <div
+            ref={menuRef}
+            role="menu"
+            style={{ position: "fixed", top: pos.top, left: pos.left }}
+            className="z-40 w-[20rem] max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-line bg-white p-2 shadow-[0_18px_40px_rgba(6,63,59,0.16)]"
+          >
+            <p className="px-1.5 py-1 text-xs font-bold uppercase tracking-wide text-muted">Recommended photo format by placement</p>
+            {PHOTO_PRESETS.map((preset) => (
+              <div key={preset.id} className="rounded-lg px-1.5 py-1.5 text-xs hover:bg-page/70">
+                <div className="flex items-start gap-2">
+                  <span className="min-w-0 flex-1">
+                    <span className="block font-bold text-ink">{preset.name}</span>
+                    <span className="block text-muted">{preset.placement}</span>
+                  </span>
+                  <span className="shrink-0 text-right font-bold text-ink">
+                    {preset.aspect.name}
+                    <span className="block font-medium text-muted/70">{preset.aspect.px}</span>
+                  </span>
+                </div>
+                <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                  {preset.targets.map((target) => (
+                    <span
+                      key={`${preset.id}-${target.label}`}
+                      title={target.label}
+                      aria-label={target.label}
+                      className="inline-flex items-center text-muted"
+                    >
+                      <PlatformIcon id={target.platformId} size={17} />
+                    </span>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>,
+          document.body,
+        )}
+    </>
+  );
 }
 
 /* ------------------------- per-slide source control ------------------------ */
@@ -662,13 +878,13 @@ function LayerView({
         style={{
           fontSize: `${layer.scale}cqw`,
           fontFamily: font.stack,
-          ...(layer.bgEnabled ? { backgroundColor: layer.bgColor } : {}),
+          ...(layer.bgEnabled ? { backgroundColor: hexToRgba(layer.bgColor, layer.bgOpacity ?? 100) } : {}),
         }}
         className={`inline-block whitespace-pre-wrap break-words rounded px-[0.3em] py-[0.12em] font-black leading-tight outline-none ${st.className} ${
-          hasText || editing ? "" : "italic opacity-50"
+          hasText || editing ? "" : "italic"
         } ${editing ? "cursor-text" : editable ? "cursor-grab select-none active:cursor-grabbing" : "select-none"}`}
       >
-        {editing ? undefined : hasText ? layer.text : editable ? "Double-click to edit" : ""}
+        {editing ? undefined : hasText ? layer.text : editable ? "Double click to edit text" : ""}
       </div>
       {selected && editable && !editing && (
         <>
@@ -712,7 +928,6 @@ function LayeredSlideFrame({
   onSelect,
   onChangeLayer,
   onDeleteLayer,
-  overridden,
   className,
 }: {
   index: number;
@@ -726,7 +941,6 @@ function LayeredSlideFrame({
   onSelect?: (id: string | null) => void;
   onChangeLayer?: (id: string, patch: Partial<TextLayer>) => void;
   onDeleteLayer?: (id: string) => void;
-  overridden?: boolean;
   className?: string;
 }) {
   const frameRef = useRef<HTMLDivElement>(null);
@@ -737,7 +951,7 @@ function LayeredSlideFrame({
       // layer's cqw font-size scales with the frame width (same relative size
       // small or expanded).
       onPointerDown={editable ? () => onSelect?.(null) : undefined}
-      className={`group relative w-full overflow-hidden rounded-xl border border-primary/25 bg-primary-dark [container-type:inline-size] ${aspectClass(
+      className={`group relative w-full overflow-hidden rounded-xl border border-primary/15 bg-white [container-type:inline-size] ${aspectClass(
         aspect,
       )} ${className ?? ""}`}
     >
@@ -745,12 +959,18 @@ function LayeredSlideFrame({
         // eslint-disable-next-line @next/next/no-img-element -- local object URL preview.
         <img src={uploadedImage.url} alt={uploadedImage.name} className="h-full w-full object-cover" />
       ) : (
-        // Dark placeholder (vs a real photo) so light overlay text stays legible
-        // while editing and it reads as an image slot rather than an empty card.
-        <div className="flex h-full flex-col items-center justify-center p-4">
-          <div className="absolute inset-0 bg-gradient-to-br from-primary-deep via-primary-dark to-primary-deep" />
-          <span className="relative z-10 rotate-[-8deg] text-2xl font-black leading-[0.82] text-white/25">
-            POST<br />TRAIN
+        // Light, modern "empty slot" placeholder: soft mint gradient + a small
+        // centered icon mark, rather than a heavy dark fill. The "shadow" text
+        // style (default) stays legible on light backgrounds too — the drop
+        // shadow provides its own contrast edge independent of the backdrop.
+        <div className="flex h-full flex-col items-center justify-center gap-2 p-4">
+          <div className="absolute inset-0 bg-gradient-to-br from-primary-soft via-white to-[#dcefe9]" />
+          <div className="absolute inset-0 bg-[radial-gradient(circle_at_25%_18%,rgba(14,129,119,0.12),transparent_45%)]" />
+          <span className="relative z-10 flex h-10 w-10 items-center justify-center rounded-full bg-white/80 text-primary shadow-sm ring-1 ring-primary/10">
+            <Icon name="image" size={18} />
+          </span>
+          <span className="relative z-10 text-[10px] font-black uppercase tracking-[0.25em] text-primary-deep/40">
+            Post Train
           </span>
         </div>
       )}
@@ -770,11 +990,6 @@ function LayeredSlideFrame({
       <span className="absolute bottom-2 right-2 z-30 flex h-6 w-6 items-center justify-center rounded-md bg-ink/70 text-xs font-black text-white">
         {index + 1}
       </span>
-      {overridden && (
-        <span className="absolute left-2 top-2 z-30 rounded-md bg-ink/80 px-1.5 py-0.5 text-[10px] font-bold text-white">
-          Independent
-        </span>
-      )}
     </div>
   );
 }
@@ -883,8 +1098,8 @@ function SlideStructureCard({
   onChangeLayer,
   onAddLayer,
   onDeleteLayer,
-  overridden,
   onApplyToAll,
+  uploading,
 }: {
   index: number;
   source: string;
@@ -898,10 +1113,10 @@ function SlideStructureCard({
   onChangeLayer: (id: string, patch: Partial<TextLayer>) => void;
   onAddLayer: () => void;
   onDeleteLayer: (id: string) => void;
-  /** True when this slide diverges from what other platforms show. */
-  overridden?: boolean;
   /** Present only when there's more than one platform to sync this slide's layers to. */
   onApplyToAll?: () => void;
+  /** True while this slide's uploaded photo is being saved to storage. */
+  uploading?: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
 
@@ -922,8 +1137,13 @@ function SlideStructureCard({
           onSelect={onSelectLayer}
           onChangeLayer={onChangeLayer}
           onDeleteLayer={onDeleteLayer}
-          overridden={overridden}
         />
+        {uploading && (
+          <div className="absolute inset-0 z-40 flex flex-col items-center justify-center gap-1.5 rounded-xl bg-ink/50 text-white">
+            <span className="h-5 w-5 animate-spin rounded-full border-2 border-white/50 border-t-transparent" />
+            <span className="text-[11px] font-bold">Saving photo…</span>
+          </div>
+        )}
         {show && (
           <div className="absolute right-2 top-2 z-30 flex gap-1">
             <button
@@ -1032,24 +1252,54 @@ function loadImage(url: string): Promise<HTMLImageElement> {
   });
 }
 
+// Matches the DOM placeholder: light mint gradient + a small centered image-
+// icon mark (the same path as the "image" glyph in icons.tsx) + a subtle
+// wordmark, instead of the old dark rotated "POST TRAIN" fill.
 function drawSlidePlaceholder(ctx: CanvasRenderingContext2D, w: number, h: number) {
   const g = ctx.createLinearGradient(0, 0, w, h);
-  g.addColorStop(0, "#0a5f59"); // primary-deep
-  g.addColorStop(0.5, "#063f3b"); // primary-dark
-  g.addColorStop(1, "#0a5f59");
+  g.addColorStop(0, "#e7f6f4"); // primary-soft
+  g.addColorStop(0.55, "#ffffff");
+  g.addColorStop(1, "#dcefe9");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, w, h);
+
+  const glow = ctx.createRadialGradient(w * 0.25, h * 0.18, 0, w * 0.25, h * 0.18, w * 0.55);
+  glow.addColorStop(0, "rgba(14,129,119,0.12)");
+  glow.addColorStop(1, "rgba(14,129,119,0)");
+  ctx.fillStyle = glow;
+  ctx.fillRect(0, 0, w, h);
+
+  const iconSize = w * 0.13;
+  const cx = w / 2;
+  const cy = h / 2 - iconSize * 0.35;
   ctx.save();
-  ctx.translate(w / 2, h / 2);
-  ctx.rotate((-8 * Math.PI) / 180);
-  ctx.fillStyle = "rgba(255,255,255,0.25)";
+  ctx.beginPath();
+  ctx.arc(cx, cy, iconSize * 0.62, 0, Math.PI * 2);
+  ctx.fillStyle = "rgba(255,255,255,0.8)";
+  ctx.fill();
+  ctx.lineWidth = Math.max(1, w * 0.0015);
+  ctx.strokeStyle = "rgba(14,129,119,0.12)";
+  ctx.stroke();
+
+  const iconPath = new Path2D(
+    "M5 3h14a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2ZM9.5 8.5a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM21 15l-5-5L5 21",
+  );
+  const scale = (iconSize * 0.6) / 24;
+  ctx.translate(cx - 12 * scale, cy - 12 * scale);
+  ctx.scale(scale, scale);
+  ctx.strokeStyle = "#0e8177"; // primary
+  ctx.globalAlpha = 0.55;
+  ctx.lineWidth = 1.8 / scale;
+  ctx.lineJoin = "round";
+  ctx.lineCap = "round";
+  ctx.stroke(iconPath);
+  ctx.restore();
+
+  ctx.fillStyle = "rgba(10,95,89,0.4)"; // primary-deep
   ctx.textAlign = "center";
   ctx.textBaseline = "middle";
-  const fs = w * 0.14;
-  ctx.font = `900 ${fs}px -apple-system, 'Segoe UI', Roboto, sans-serif`;
-  ctx.fillText("POST", 0, -fs * 0.41);
-  ctx.fillText("TRAIN", 0, fs * 0.41);
-  ctx.restore();
+  ctx.font = `900 ${w * 0.028}px -apple-system, 'Segoe UI', Roboto, sans-serif`;
+  ctx.fillText("P O S T   T R A I N", cx, cy + iconSize * 0.62 + w * 0.05);
 }
 
 // Draw one text layer, matching the DOM: cqw font size, per-layer width wrap,
@@ -1089,7 +1339,7 @@ function drawLayer(ctx: CanvasRenderingContext2D, w: number, h: number, layer: T
     for (const ln of lines) maxLineW = Math.max(maxLineW, ctx.measureText(ln).width);
     const boxW = maxLineW + pad * 2;
     const boxH = blockH + pad * 0.4;
-    ctx.fillStyle = layer.bgColor;
+    ctx.fillStyle = hexToRgba(layer.bgColor, layer.bgOpacity ?? 100);
     ctx.beginPath();
     ctx.roundRect(cx - boxW / 2, topY - pad * 0.2, boxW, boxH, fontSize * 0.15);
     ctx.fill();
@@ -1701,10 +1951,12 @@ export type SlideshowAccount = { id: number; platform: string; username: string;
 export function SlideshowStudio({
   initialSlideTexts,
   accounts = [],
+  configuredProviders = {},
 }: {
   initialSlideTexts?: string[];
   sourceExploreItemId?: string;
   accounts?: SlideshowAccount[];
+  configuredProviders?: Partial<Record<ImageGenProvider, boolean>>;
 }) {
   // Arriving from Explore "recreate" jumps straight into the Custom editor.
   const [mode, setMode] = useState<StudioMode>(initialSlideTexts ? "custom" : "choose");
@@ -1736,7 +1988,7 @@ export function SlideshowStudio({
   const [slideLayers, setSlideLayers] = useState<TextLayer[][]>(() =>
     Array.from({ length: initialSlideCount }, (_, i) => {
       const t = initialSlideTexts?.[i]?.slice(0, SLIDE_TEXT_MAX) ?? "";
-      return t.trim() ? [makeLayer(t, { y: 82 })] : [];
+      return t.trim() ? [makeLayer(t)] : [];
     }),
   );
   // Which text layer is selected for styling/deletion: { slide index, layer id }.
@@ -1750,13 +2002,37 @@ export function SlideshowStudio({
   const [uploadTargetIndex, setUploadTargetIndex] = useState<number | null>(null);
   const [uploadTargetPlatform, setUploadTargetPlatform] = useState<string | null>(null);
   const slideUploadInput = useRef<HTMLInputElement>(null);
+  // Which slide (for which platform, null = base) is mid-upload to R2, so the
+  // grid can show a spinner over it; and the last upload failure, if any.
+  const [slideUploadBusy, setSlideUploadBusy] = useState<{ index: number; platform: string | null } | null>(null);
+  const [slideUploadError, setSlideUploadError] = useState("");
+  // Guards against an older upload finishing after a newer one for the same
+  // slide+platform and clobbering it — only the latest token's result commits.
+  const uploadTokens = useRef<Record<string, number>>({});
   const [refImages, setRefImages] = useState<RefImage[]>([]);
+  const refImagesRef = useRef<RefImage[]>([]);
+  const [refUploadingIds, setRefUploadingIds] = useState<Set<string>>(new Set());
+  const [refUploadError, setRefUploadError] = useState("");
   const [platformCaptions, setPlatformCaptions] = useState<Record<string, string>>({});
   const [captionLength, setCaptionLength] = useState<"short" | "medium" | "long">("medium");
   const [previewPlatform, setPreviewPlatform] = useState<string>("");
+  const [platformPhotoFormatIds, setPlatformPhotoFormatIds] = useState<Record<string, string>>({});
+  const textLayerDefaults = useRef<TextLayerDefaults>({
+    width: DEFAULT_TEXT_LAYER_SETTINGS.width,
+    scale: DEFAULT_TEXT_LAYER_SETTINGS.scale,
+    font: DEFAULT_TEXT_LAYER_SETTINGS.font,
+    style: DEFAULT_TEXT_LAYER_SETTINGS.style,
+    bgEnabled: DEFAULT_TEXT_LAYER_SETTINGS.bgEnabled,
+    bgColor: DEFAULT_TEXT_LAYER_SETTINGS.bgColor,
+    bgOpacity: DEFAULT_TEXT_LAYER_SETTINGS.bgOpacity,
+  });
   const [downloadingSlide, setDownloadingSlide] = useState<number | null>(null);
   const [captionBusy, setCaptionBusy] = useState<Record<string, boolean>>({});
   const [captionError, setCaptionError] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    refImagesRef.current = refImages;
+  }, [refImages]);
   const [toneResults, setToneResults] = useState<Record<string, AiToneResult>>({});
   const [improveBusy, setImproveBusy] = useState<Record<string, boolean>>({});
   const [improveError, setImproveError] = useState<Record<string, string>>({});
@@ -1814,7 +2090,8 @@ export function SlideshowStudio({
     fetch("/api/app/studio/drafts")
       .then((r) => (r.ok ? r.json() : null))
       .then((data: { data?: StudioDraftRow[] } | null) => {
-        if (!cancelled && data?.data) setDrafts(data.data);
+        // Studio drafts are shared across templates; only surface slideshow ones.
+        if (!cancelled && data?.data) setDrafts(data.data.filter((d) => d.template === "slideshow"));
       })
       .catch(() => {})
       .finally(() => {
@@ -1869,14 +2146,39 @@ export function SlideshowStudio({
     }
     return set;
   }, [selectedAccountIds, accounts]);
-  const previewPlatforms = useMemo(() => [...selectedPlatforms], [selectedPlatforms]);
+  const previewPlatforms = useMemo(() => PHOTO_PREVIEW_PLATFORM_TABS, []);
   // The first selected platform's slides ARE the shared arrays (slideSources
   // etc) — every other platform inherits them until it gets its own override.
   const primaryPlatform = previewPlatforms[0];
   const baseSlideData = (): PlatformSlideData => ({ sources: slideSources, uploads: slideUploads, layers: slideLayers });
+  function uploadIdentity(image: RefImage | undefined) {
+    if (!image) return "";
+    return image.mediaId ? `media:${image.mediaId}` : `url:${image.url}`;
+  }
+  function slideDataDiffers(a: PlatformSlideData, b: PlatformSlideData) {
+    const count = Math.max(slideCount, a.sources.length, b.sources.length, a.uploads.length, b.uploads.length, a.layers.length, b.layers.length);
+    for (let i = 0; i < count; i++) {
+      if ((a.sources[i] ?? "auto") !== (b.sources[i] ?? "auto")) return true;
+      if (uploadIdentity(a.uploads[i]) !== uploadIdentity(b.uploads[i])) return true;
+      if (JSON.stringify(a.layers[i] ?? []) !== JSON.stringify(b.layers[i] ?? [])) return true;
+    }
+    return false;
+  }
+  function setPlatformOverrideOrPrune(
+    cur: Record<string, PlatformSlideData>,
+    platformId: string,
+    nextData: PlatformSlideData,
+  ) {
+    if (!slideDataDiffers(nextData, baseSlideData())) {
+      const { [platformId]: _gone, ...rest } = cur;
+      return rest;
+    }
+    return { ...cur, [platformId]: nextData };
+  }
   function effectiveSlideData(platformId: string): PlatformSlideData {
-    if (platformId !== primaryPlatform && platformSlideOverrides[platformId]) {
-      return platformSlideOverrides[platformId];
+    const override = platformId !== primaryPlatform ? platformSlideOverrides[platformId] : undefined;
+    if (override && slideDataDiffers(override, baseSlideData())) {
+      return override;
     }
     return baseSlideData();
   }
@@ -1885,15 +2187,57 @@ export function SlideshowStudio({
   // back to the base arrays/editing aspect when no platform is selected yet.
   const slidesActiveTab = previewPlatforms.includes(previewPlatform) ? previewPlatform : previewPlatforms[0];
   const activeSlideData = slidesActiveTab ? effectiveSlideData(slidesActiveTab) : baseSlideData();
-  const slidesActiveAspect = slidesActiveTab ? platformAspect(slidesActiveTab) : aspect;
+  const slidesActiveFormat = slidesActiveTab ? selectedPhotoFormatForPlatform(slidesActiveTab, platformPhotoFormatIds) : null;
+  const slidesActiveAspect = slidesActiveFormat?.aspect.id ?? aspect;
 
   // The layer the Advanced Text Settings panel styles, and a patch helper that
   // writes to whichever platform is active.
   const selectedLayerData = selectedLayer
     ? (activeSlideData.layers[selectedLayer.slide] ?? []).find((l) => l.id === selectedLayer.id) ?? null
     : null;
+  function rememberTextDefaults(patch: Partial<TextLayer>) {
+    const next = { ...textLayerDefaults.current };
+    if (typeof patch.width === "number") next.width = clamp(patch.width, LAYER_WIDTH_MIN, LAYER_WIDTH_MAX);
+    if (typeof patch.scale === "number") next.scale = clamp(patch.scale, TEXT_SCALE_MIN, TEXT_SCALE_MAX);
+    if (typeof patch.font === "string") next.font = patch.font;
+    if (typeof patch.style === "string") next.style = patch.style;
+    if (typeof patch.bgEnabled === "boolean") next.bgEnabled = patch.bgEnabled;
+    if (typeof patch.bgColor === "string") next.bgColor = patch.bgColor;
+    if (typeof patch.bgOpacity === "number") next.bgOpacity = Math.round(clamp(patch.bgOpacity, 0, 100));
+    textLayerDefaults.current = next;
+  }
   function patchSelectedLayer(patch: Partial<TextLayer>) {
+    rememberTextDefaults(patch);
     if (selectedLayer) updateLayer(selectedLayer.slide, selectedLayer.id, patch, slidesActiveTab);
+  }
+  function resetSelectedLayer() {
+    textLayerDefaults.current = {
+      width: DEFAULT_TEXT_LAYER_SETTINGS.width,
+      scale: DEFAULT_TEXT_LAYER_SETTINGS.scale,
+      font: DEFAULT_TEXT_LAYER_SETTINGS.font,
+      style: DEFAULT_TEXT_LAYER_SETTINGS.style,
+      bgEnabled: DEFAULT_TEXT_LAYER_SETTINGS.bgEnabled,
+      bgColor: DEFAULT_TEXT_LAYER_SETTINGS.bgColor,
+      bgOpacity: DEFAULT_TEXT_LAYER_SETTINGS.bgOpacity,
+    };
+    if (selectedLayer) {
+      updateLayer(
+        selectedLayer.slide,
+        selectedLayer.id,
+        {
+          x: DEFAULT_TEXT_LAYER_SETTINGS.x,
+          y: DEFAULT_TEXT_LAYER_SETTINGS.y,
+          width: DEFAULT_TEXT_LAYER_SETTINGS.width,
+          scale: DEFAULT_TEXT_LAYER_SETTINGS.scale,
+          font: DEFAULT_TEXT_LAYER_SETTINGS.font,
+          style: DEFAULT_TEXT_LAYER_SETTINGS.style,
+          bgEnabled: DEFAULT_TEXT_LAYER_SETTINGS.bgEnabled,
+          bgColor: DEFAULT_TEXT_LAYER_SETTINGS.bgColor,
+          bgOpacity: DEFAULT_TEXT_LAYER_SETTINGS.bgOpacity,
+        },
+        slidesActiveTab,
+      );
+    }
   }
 
   // Rasterize the active platform's slide at that platform's native pixel size
@@ -1940,14 +2284,51 @@ export function SlideshowStudio({
   // match — not for "Start from Scratch" or the Custom flow.
   const startedFromTemplate = mode === "templates" && !!selectedTemplate && selectedTemplate !== "scratch";
 
+  function deleteUploadedMedia(mediaId?: string) {
+    if (!mediaId) return;
+    fetch(`/api/app/media/${encodeURIComponent(mediaId)}`, { method: "DELETE" }).catch(() => {
+      // Best-effort cleanup only. A missed delete should not interrupt editing.
+    });
+  }
+
+  // Shows a local blob preview immediately, then uploads to R2 in the
+  // background and swaps each entry's url to the durable /api/media-file/
+  // URL on success — same pattern as pickSlideUpload below.
   function addFiles(files: FileList | null) {
     if (!files) return;
+    setRefUploadError("");
+    const room = REFERENCE_MAX - refImages.length;
+    const picked = Array.from(files).slice(0, Math.max(0, room));
+    if (picked.length === 0) return;
+    const entries = picked.map((f) => ({ id: crypto.randomUUID(), file: f, url: URL.createObjectURL(f), name: f.name }));
     setRefImages((cur) => {
-      const room = REFERENCE_MAX - cur.length;
-      const next = Array.from(files)
-        .slice(0, Math.max(0, room))
-        .map((f) => ({ id: crypto.randomUUID(), url: URL.createObjectURL(f), name: f.name }));
-      return [...cur, ...next];
+      const next = [...cur, ...entries.map(({ id, url, name }) => ({ id, url, name }))];
+      refImagesRef.current = next;
+      return next;
+    });
+    setRefUploadingIds((cur) => new Set([...cur, ...entries.map((e) => e.id)]));
+    entries.forEach(async ({ id, file, url }) => {
+      try {
+        const uploaded = await uploadOneFile(file);
+        URL.revokeObjectURL(url);
+        if (!refImagesRef.current.some((r) => r.id === id)) {
+          deleteUploadedMedia(uploaded.id);
+          return;
+        }
+        setRefImages((cur) => {
+          const next = cur.map((r) => (r.id === id ? { ...r, url: `/api/media-file/${uploaded.id}`, mediaId: uploaded.id } : r));
+          refImagesRef.current = next;
+          return next;
+        });
+      } catch (e) {
+        setRefUploadError(e instanceof Error ? e.message : "Couldn't upload an image — it'll only last this session.");
+      } finally {
+        setRefUploadingIds((cur) => {
+          const next = new Set(cur);
+          next.delete(id);
+          return next;
+        });
+      }
     });
   }
 
@@ -1955,7 +2336,10 @@ export function SlideshowStudio({
     setRefImages((cur) => {
       const gone = cur.find((r) => r.id === id);
       if (gone?.url.startsWith("blob:")) URL.revokeObjectURL(gone.url);
-      return cur.filter((r) => r.id !== id);
+      deleteUploadedMedia(gone?.mediaId);
+      const next = cur.filter((r) => r.id !== id);
+      refImagesRef.current = next;
+      return next;
     });
   }
 
@@ -2004,11 +2388,12 @@ export function SlideshowStudio({
     }
     setPlatformSlideOverrides((cur) => {
       const base = cur[platformId] ?? effectiveSlideData(platformId);
-      return { ...cur, [platformId]: { ...base, layers: setAt(base.layers, index, mutate(base.layers[index] ?? []), []) } };
+      const nextData = { ...base, layers: setAt(base.layers, index, mutate(base.layers[index] ?? []), []) };
+      return setPlatformOverrideOrPrune(cur, platformId, nextData);
     });
   }
   function addLayer(index: number, platformId?: string) {
-    const layer = makeLayer();
+    const layer = makeLayer("", textLayerDefaults.current);
     mutateSlideLayers(index, platformId, (ls) => [...ls, layer]);
     setSelectedLayer({ slide: index, id: layer.id });
     setOverlays("text");
@@ -2028,7 +2413,8 @@ export function SlideshowStudio({
     } else {
       setPlatformSlideOverrides((cur) => {
         const base = cur[platformId] ?? effectiveSlideData(platformId);
-        return { ...cur, [platformId]: { ...base, sources: setAt(base.sources, index, id, "auto") } };
+        const nextData = { ...base, sources: setAt(base.sources, index, id, "auto") };
+        return setPlatformOverrideOrPrune(cur, platformId, nextData);
       });
     }
     // "Uploaded Images" needs an actual photo for this slide — never borrow
@@ -2040,32 +2426,65 @@ export function SlideshowStudio({
     }
   }
 
-  function pickSlideUpload(files: FileList | null) {
+  // Writes a slide's uploaded photo to the base array or the given platform's
+  // override, revoking whatever local blob preview it replaces. Shared by the
+  // immediate local-preview write and the later durable-URL write below.
+  function writeSlideUpload(index: number, platformId: string | null, image: RefImage, isBase: boolean) {
+    const releasePrev = (prev: RefImage | undefined) => {
+      if (prev && prev.url !== image.url && prev.url.startsWith("blob:")) URL.revokeObjectURL(prev.url);
+      if (prev?.mediaId && prev.mediaId !== image.mediaId) deleteUploadedMedia(prev.mediaId);
+    };
+    if (isBase) {
+      setSlideUploads((cur) => {
+        releasePrev(cur[index]);
+        return setAt(cur, index, image, undefined);
+      });
+      return;
+    }
+    setPlatformSlideOverrides((cur) => {
+      const base = cur[platformId!] ?? effectiveSlideData(platformId!);
+      releasePrev(base.uploads[index]);
+      const nextData = { ...base, uploads: setAt(base.uploads, index, image, undefined) };
+      return setPlatformOverrideOrPrune(cur, platformId!, nextData);
+    });
+  }
+
+  // Shows a local blob preview immediately (instant feedback), then uploads
+  // to R2 in the background and swaps in the durable /api/media-file/ URL —
+  // that's what makes the photo survive a draft reload instead of vanishing
+  // like a bare blob: URL does. A per-slide token guards against an older
+  // upload finishing after a newer one and clobbering it.
+  async function pickSlideUpload(files: FileList | null) {
     const file = files?.[0];
     const targetIndex = uploadTargetIndex;
     const targetPlatform = uploadTargetPlatform;
     setUploadTargetIndex(null);
     setUploadTargetPlatform(null);
     if (!file || targetIndex === null) return;
-    const image: RefImage = { id: crypto.randomUUID(), url: URL.createObjectURL(file), name: file.name };
-    if (!targetPlatform || targetPlatform === primaryPlatform) {
-      setSlideUploads((cur) => {
-        const prev = cur[targetIndex];
-        if (prev?.url.startsWith("blob:")) URL.revokeObjectURL(prev.url);
-        const next = [...cur];
-        next[targetIndex] = image;
-        return next;
-      });
-      return;
+
+    const isBase = !targetPlatform || targetPlatform === primaryPlatform;
+    const key = `${targetPlatform ?? "base"}:${targetIndex}`;
+    const token = (uploadTokens.current[key] ?? 0) + 1;
+    uploadTokens.current[key] = token;
+
+    const localImage: RefImage = { id: crypto.randomUUID(), url: URL.createObjectURL(file), name: file.name };
+    writeSlideUpload(targetIndex, targetPlatform, localImage, isBase);
+
+    setSlideUploadError("");
+    setSlideUploadBusy({ index: targetIndex, platform: targetPlatform });
+    try {
+      const uploaded = await uploadOneFile(file);
+      if (uploadTokens.current[key] !== token) {
+        deleteUploadedMedia(uploaded.id);
+        return; // superseded by a newer pick for this slide
+      }
+      writeSlideUpload(targetIndex, targetPlatform, { id: localImage.id, url: `/api/media-file/${uploaded.id}`, name: file.name, mediaId: uploaded.id }, isBase);
+    } catch (e) {
+      if (uploadTokens.current[key] !== token) return;
+      setSlideUploadError(e instanceof Error ? e.message : "Couldn't upload that photo — it'll only last this session.");
+    } finally {
+      if (uploadTokens.current[key] === token) setSlideUploadBusy(null);
     }
-    setPlatformSlideOverrides((cur) => {
-      const base = cur[targetPlatform] ?? effectiveSlideData(targetPlatform);
-      const prev = base.uploads[targetIndex];
-      if (prev?.url.startsWith("blob:")) URL.revokeObjectURL(prev.url);
-      const uploads = [...base.uploads];
-      uploads[targetIndex] = image;
-      return { ...cur, [targetPlatform]: { ...base, uploads } };
-    });
   }
 
   // Copies one slide's whole layer list (for whichever platform is being
@@ -2125,8 +2544,11 @@ export function SlideshowStudio({
     setDraftPlatform(null);
   }
 
-  // Pulls the real post (caption + cover image) server-side, evaluates it into
-  // an editable context brief, and lands the user in the Custom editor.
+  // Pulls the real post (caption + cover image) server-side and evaluates it
+  // into an editable context brief. From the "choose" screen this starts a
+  // whole new Custom draft; reopened mid-draft via the Reference pill's
+  // "Change" button, it only swaps the reference images — everything else
+  // the user has already built (slides, context, mode/step) is left alone.
   async function applyCopiedSlideshow() {
     const link = slideshowReference.trim();
     if (!link || copyBusy) return;
@@ -2134,6 +2556,7 @@ export function SlideshowStudio({
       setCopyError("Please accept the content policy to continue.");
       return;
     }
+    const isFreshStart = mode === "choose";
     setCopyBusy(true);
     setCopyError("");
     try {
@@ -2144,7 +2567,7 @@ export function SlideshowStudio({
       });
       const data = (await response.json()) as {
         platform?: string;
-        images?: string[];
+        images?: Array<string | { url: string; media_id?: string; mediaId?: string }>;
         context?: string;
         error?: { message?: string };
       };
@@ -2152,28 +2575,47 @@ export function SlideshowStudio({
         throw new Error(data.error?.message ?? "Couldn't copy that post.");
       }
 
-      setContext(data.context);
-      setAspect(data.platform === "Instagram" ? "4:5" : "9:16");
-      setOverlays("text");
-
       const pulled = (data.images ?? []).slice(0, REFERENCE_MAX);
-      if (pulled.length) {
-        // These are reference-only: inspiration for new AI-generated slides,
-        // never the literal images we post — hence "ai", not "upload".
-        setRefImages(pulled.map((url, i) => ({ id: crypto.randomUUID(), url, name: `Reference ${i + 1}` })));
-        const next = Math.min(SLIDE_MAX, Math.max(pulled.length, 3));
-        setSlideCount(next);
-        setSlideSources(Array(next).fill("ai"));
-        setSlideUploads(Array(next).fill(undefined));
-        setSlideLayers(Array.from({ length: next }, () => []));
+      // Always a full replace (never appended/merged) so swapping to a post
+      // with fewer images can't leave stragglers from the previous set —
+      // including clearing out entirely if the new post has no images at all.
+      // These are reference-only: inspiration for new AI-generated slides,
+      // never the literal images we post — hence "ai", not "upload".
+      setRefImages((cur) => {
+        cur.forEach((r) => deleteUploadedMedia(r.mediaId));
+        const next: RefImage[] = pulled.flatMap((image, i) => {
+            const url = typeof image === "string" ? image : image.url;
+            if (!url) return [];
+            return [{
+              id: crypto.randomUUID(),
+              url,
+              name: `Reference ${i + 1}`,
+              mediaId: typeof image === "string" ? undefined : image.media_id ?? image.mediaId,
+            }];
+          });
+        refImagesRef.current = next;
+        return next;
+      });
+
+      if (isFreshStart) {
+        setContext(data.context);
+        setAspect(data.platform === "Instagram" ? "4:5" : "9:16");
+        setOverlays("text");
+        if (pulled.length) {
+          const next = Math.min(SLIDE_MAX, Math.max(pulled.length, 3));
+          setSlideCount(next);
+          setSlideSources(Array(next).fill("ai"));
+          setSlideUploads(Array(next).fill(undefined));
+          setSlideLayers(Array.from({ length: next }, () => []));
+        }
+        setDraftOrigin("copy");
+        setDraftPlatform(data.platform ?? null);
+        setMode("custom");
+        setStep(0);
       }
 
       setCopyModalOpen(false);
       setCopyAcknowledged(false);
-      setDraftOrigin("copy");
-      setDraftPlatform(data.platform ?? null);
-      setMode("custom");
-      setStep(0);
     } catch (e) {
       setCopyError(e instanceof Error ? e.message : "Couldn't copy that post.");
     } finally {
@@ -2208,6 +2650,7 @@ export function SlideshowStudio({
       slideUploads: remoteSlideUploads,
       slideLayers,
       platformSlideOverrides: remotePlatformSlideOverrides,
+      platformPhotoFormatIds,
       refImages: remoteRefImages,
       platformCaptions,
       aiModel,
@@ -2270,6 +2713,7 @@ export function SlideshowStudio({
     setSlideUploads(p.slideUploads ?? []);
     setSlideLayers(p.slideLayers ?? []);
     setPlatformSlideOverrides(p.platformSlideOverrides ?? {});
+    setPlatformPhotoFormatIds(p.platformPhotoFormatIds ?? {});
     setRefImages(p.refImages ?? []);
     setPlatformCaptions(p.platformCaptions ?? {});
     setAiModel(p.aiModel ?? "nano-banana-2");
@@ -2318,6 +2762,7 @@ export function SlideshowStudio({
     slideUploads,
     slideLayers,
     platformSlideOverrides,
+    platformPhotoFormatIds,
     refImages,
     platformCaptions,
     aiModel,
@@ -2646,11 +3091,26 @@ export function SlideshowStudio({
                   </span>
                 </div>
                 {slideshowReference && (
-                  <div className="mt-2 flex items-center gap-1.5 rounded-xl border border-line bg-page/50 px-3 py-2 text-sm font-semibold text-muted">
+                  <div className="mt-2 flex flex-wrap items-center gap-1.5 rounded-xl border border-line bg-page/50 px-3 py-2 text-sm font-semibold text-muted">
                     {referencePlatformIconId(slideshowReference) && (
                       <PlatformIcon id={referencePlatformIconId(slideshowReference)!} size={14} />
                     )}
-                    Reference: {platformFromSlideshowUrl(slideshowReference)} slideshow
+                    <span className="flex-1">Reference: {platformFromSlideshowUrl(slideshowReference)} slideshow</span>
+                    <a
+                      href={slideshowReference}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold text-primary-deep transition-colors hover:bg-white"
+                    >
+                      <Icon name="external" size={12} /> Open source
+                    </a>
+                    <button
+                      type="button"
+                      onClick={() => setCopyModalOpen(true)}
+                      className="flex items-center gap-1 rounded-lg px-2 py-1 text-xs font-bold text-primary-deep transition-colors hover:bg-white"
+                    >
+                      <Icon name="refresh" size={12} /> Change
+                    </button>
                   </div>
                 )}
                 <div className="mt-2 grid grid-cols-4 gap-2 sm:grid-cols-8">
@@ -2658,6 +3118,11 @@ export function SlideshowStudio({
                     <div key={r.id} className="group relative aspect-square overflow-hidden rounded-lg border border-line">
                       {/* eslint-disable-next-line @next/next/no-img-element -- local object URL preview */}
                       <img src={r.url} alt={r.name} className="h-full w-full object-cover" />
+                      {refUploadingIds.has(r.id) && (
+                        <div className="absolute inset-0 flex items-center justify-center bg-ink/50">
+                          <span className="h-4 w-4 animate-spin rounded-full border-2 border-white/50 border-t-transparent" />
+                        </div>
+                      )}
                       <button
                         type="button"
                         onClick={() => removeRef(r.id)}
@@ -2679,6 +3144,7 @@ export function SlideshowStudio({
                     </button>
                   )}
                 </div>
+                {refUploadError && <p className="mt-2 text-xs font-semibold text-red-600">{refUploadError}</p>}
                 <input
                   ref={fileInput}
                   type="file"
@@ -2808,15 +3274,30 @@ export function SlideshowStudio({
                   {(close) => (
                     <>
                       <p className="px-2.5 py-1.5 text-xs font-bold uppercase tracking-wide text-muted">AI Image Model</p>
-                      {AI_MODELS.map((m) => (
-                        <MenuRow key={m.id} active={m.id === aiModel} onClick={() => { setAiModel(m.id); close(); }}>
-                          <span className="min-w-0 flex-1">
-                            <span className="block font-bold">{m.name}</span>
-                            <span className="block truncate text-xs text-muted">{m.desc}</span>
-                          </span>
-                          <CreditBadge credits={m.credits} active={m.id === aiModel} />
-                        </MenuRow>
-                      ))}
+                      {AI_MODELS.map((m) => {
+                        const configured = configuredProviders[MODEL_PROVIDER[m.id]] ?? true;
+                        return (
+                          <MenuRow key={m.id} active={m.id === aiModel} onClick={() => { setAiModel(m.id); close(); }}>
+                            <span className="min-w-0 flex-1">
+                              <span className="block font-bold">{m.name}</span>
+                              <span className="block truncate text-xs text-muted">{m.desc}</span>
+                            </span>
+                            {!configured && (
+                              <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold uppercase text-amber-700">
+                                Key needed
+                              </span>
+                            )}
+                            <CreditBadge credits={m.credits} active={m.id === aiModel} />
+                          </MenuRow>
+                        );
+                      })}
+                      <Link
+                        href="/dashboard/ai-image-keys"
+                        onClick={close}
+                        className="mt-1 flex items-center gap-1.5 border-t border-line px-2.5 py-2 text-xs font-semibold text-primary-deep hover:underline"
+                      >
+                        Manage keys <Icon name="external" size={12} />
+                      </Link>
                     </>
                   )}
                 </Popover>
@@ -2875,61 +3356,79 @@ export function SlideshowStudio({
                 <div className="mt-4 flex flex-wrap items-center gap-1.5">
                   {previewPlatforms.map((pid) => {
                     const isActive = pid === slidesActiveTab;
-                    const hasOverride = pid !== primaryPlatform && !!platformSlideOverrides[pid];
+                    const formatOptions = photoFormatOptionsForPlatform(pid);
+                    const activeFormat = selectedPhotoFormatForPlatform(pid, platformPhotoFormatIds);
+                    const canChooseFormat = formatOptions.length > 1;
                     return (
-                      <button
+                      <div
                         key={pid}
-                        type="button"
-                        onClick={() => setPreviewPlatform(pid)}
-                        className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold transition-colors ${
+                        className={`flex items-stretch overflow-visible rounded-lg border text-xs font-bold transition-colors ${
                           isActive
                             ? "border-primary bg-primary-soft/50 text-primary-deep"
                             : "border-line bg-white text-muted hover:text-ink"
                         }`}
                       >
-                        <PlatformIcon id={pid} size={14} />
-                        {platformOf(pid)?.name ?? pid}
-                        <span className={isActive ? "text-primary-deep/70" : "text-muted/70"}>{platformAspect(pid)}</span>
-                        {hasOverride && (
-                          <span
-                            className="h-1.5 w-1.5 rounded-full bg-primary"
-                            title="Independent from other platforms"
-                          />
+                        <button
+                          type="button"
+                          onClick={() => setPreviewPlatform(pid)}
+                          className="flex items-center gap-1.5 px-2.5 py-1.5"
+                        >
+                          <PlatformIcon id={pid} size={14} />
+                          {platformOf(pid)?.name ?? pid}
+                        </button>
+                        {canChooseFormat ? (
+                          <Popover
+                            align="right"
+                            width="min-w-[18rem]"
+                            trigger={(open) => (
+                              <span
+                                className={`flex h-full items-center gap-1 border-l px-2 py-1.5 ${
+                                  isActive ? "border-primary/30 text-primary-deep/80" : "border-line text-muted/80"
+                                } ${open ? "bg-white/60" : ""}`}
+                              >
+                                {activeFormat.aspect.name}
+                                <Icon name="chevronDown" size={12} />
+                              </span>
+                            )}
+                          >
+                            {(close) => (
+                              <>
+                                <p className="px-2.5 py-1.5 text-xs font-bold uppercase tracking-wide text-muted">
+                                  Photo format
+                                </p>
+                                {formatOptions.map((option) => (
+                                  <MenuRow
+                                    key={option.id}
+                                    active={option.id === activeFormat.id}
+                                    onClick={() => {
+                                      setPlatformPhotoFormatIds((cur) => ({ ...cur, [pid]: option.id }));
+                                      setPreviewPlatform(pid);
+                                      close();
+                                    }}
+                                  >
+                                    <PlatformIcon id={pid} size={15} className="shrink-0" />
+                                    <span className="min-w-0 flex-1">
+                                      <span className="block font-bold">{option.label}</span>
+                                      <span className="block text-xs text-muted">{option.placement}</span>
+                                    </span>
+                                    <span className="shrink-0 text-right font-bold text-ink">
+                                      {option.aspect.name}
+                                      <span className="block font-medium text-muted/70">{option.aspect.px}</span>
+                                    </span>
+                                  </MenuRow>
+                                ))}
+                              </>
+                            )}
+                          </Popover>
+                        ) : (
+                          <span className={`flex items-center px-2 py-1.5 ${isActive ? "text-primary-deep/70" : "text-muted/70"}`}>
+                            {activeFormat.aspect.name}
+                          </span>
                         )}
-                      </button>
+                      </div>
                     );
                   })}
-                  <Popover
-                    width="min-w-[15rem]"
-                    trigger={(open) => (
-                      <span
-                        className={`flex h-8 w-8 items-center justify-center rounded-full border transition-colors ${
-                          open ? "border-primary text-primary-deep" : "border-line text-muted hover:text-ink"
-                        }`}
-                      >
-                        <Icon name="info" size={14} />
-                      </span>
-                    )}
-                  >
-                    {() => (
-                      <div className="p-1">
-                        <p className="px-1.5 py-1 text-xs font-bold uppercase tracking-wide text-muted">
-                          Aspect ratio by platform
-                        </p>
-                        {ASPECTS.filter((a) => (CAROUSEL_ASPECT_PLATFORMS[a.id] ?? []).length > 0).map((a) => (
-                          <div key={a.id} className="flex items-center gap-2 px-1.5 py-1.5 text-xs">
-                            <span className="w-9 font-bold text-ink">{a.name}</span>
-                            <span className="flex items-center gap-1">
-                              {CAROUSEL_ASPECT_PLATFORMS[a.id].map((pid) => (
-                                <PlatformIcon key={pid} id={pid} size={14} />
-                              ))}
-                            </span>
-                            <span className="ml-auto text-muted/70">{a.px}</span>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-                  </Popover>
+                  <AspectLegendPopover />
                 </div>
               ) : (
                 <p className="mt-4 text-xs text-muted">
@@ -2956,18 +3455,18 @@ export function SlideshowStudio({
                     onChangeLayer={(id, patch) => updateLayer(i, id, patch, slidesActiveTab)}
                     onAddLayer={() => addLayer(i, slidesActiveTab)}
                     onDeleteLayer={(id) => deleteLayer(i, id, slidesActiveTab)}
-                    // ponytail: flags the whole card once this platform has
-                    // diverged at all, not just when this specific slide has —
-                    // precise per-slide diffing isn't worth it here.
-                    overridden={!!slidesActiveTab && slidesActiveTab !== primaryPlatform && !!platformSlideOverrides[slidesActiveTab]}
                     onApplyToAll={
                       previewPlatforms.length > 1 && slidesActiveTab
                         ? () => applyTextOverlayToAllPlatforms(i, slidesActiveTab)
                         : undefined
                     }
+                    uploading={
+                      slideUploadBusy?.index === i && slideUploadBusy.platform === (slidesActiveTab ?? null)
+                    }
                   />
                 ))}
               </div>
+              {slideUploadError && <p className="mt-2 text-xs font-semibold text-red-600">{slideUploadError}</p>}
               {showSlideText && (
                 <p className="mt-2 text-xs text-muted">
                   Add text with +, double-click a text to edit it, drag to move, and drag the dot to resize. Click a text to
@@ -2989,15 +3488,26 @@ export function SlideshowStudio({
             </section>
 
             <section className="mt-6">
-              <button
-                type="button"
-                onClick={() => setAdvancedTextOpen((v) => !v)}
-                className="flex items-center gap-2 text-sm font-bold text-muted transition-colors hover:text-primary-deep"
-              >
-                <Icon name="gear" size={16} />
-                Advanced Text Settings
-                <Icon name={advancedTextOpen ? "chevronUp" : "chevronDown"} size={15} />
-              </button>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAdvancedTextOpen((v) => !v)}
+                  className="flex items-center gap-2 text-sm font-bold text-muted transition-colors hover:text-primary-deep"
+                >
+                  <Icon name="gear" size={16} />
+                  Advanced Text Settings
+                  <Icon name={advancedTextOpen ? "chevronUp" : "chevronDown"} size={15} />
+                </button>
+                {advancedTextOpen && selectedLayerData && (
+                  <button
+                    type="button"
+                    onClick={resetSelectedLayer}
+                    className="rounded-lg border border-line bg-white px-3 py-1.5 text-xs font-bold text-muted transition-colors hover:border-primary/50 hover:text-primary-deep"
+                  >
+                    Reset all
+                  </button>
+                )}
+              </div>
 
               {advancedTextOpen &&
                 (!selectedLayerData ? (
@@ -3007,9 +3517,9 @@ export function SlideshowStudio({
                 ) : (
                   <div
                     data-keep-selection
-                    className="mt-4 grid gap-6 rounded-xl border border-line bg-page/50 p-4 sm:grid-cols-2 lg:grid-cols-4"
+                    className="mt-4 grid grid-cols-[repeat(auto-fit,minmax(12rem,1fr))] gap-5 rounded-xl border border-line bg-page/50 p-4"
                   >
-                    <div>
+                    <div className="min-w-0">
                       <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Font</p>
                       <div className="flex flex-wrap gap-1">
                         {FONTS.map((f) => (
@@ -3030,7 +3540,7 @@ export function SlideshowStudio({
                       </div>
                     </div>
 
-                    <div>
+                    <div className="min-w-0">
                       <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Font Size</p>
                       <div className="flex flex-wrap gap-1">
                         {TEXT_SIZE_PRESETS.map((size) => (
@@ -3058,9 +3568,29 @@ export function SlideshowStudio({
                         aria-label="Font size"
                         className="mt-3 w-full cursor-pointer accent-primary"
                       />
+                      <label className="mt-2 flex items-center gap-2 text-xs font-semibold text-muted">
+                        Size
+                        <span className="flex items-center rounded-lg border border-line bg-white px-2 py-1">
+                          <input
+                            type="number"
+                            min={TEXT_SCALE_MIN}
+                            max={TEXT_SCALE_MAX}
+                            step={0.5}
+                            value={selectedLayerData.scale}
+                            onChange={(e) =>
+                              patchSelectedLayer({
+                                scale: clamp(Number(e.target.value), TEXT_SCALE_MIN, TEXT_SCALE_MAX),
+                              })
+                            }
+                            className="w-14 bg-transparent text-right font-mono text-xs font-bold text-ink outline-none"
+                            aria-label="Font size value"
+                          />
+                          <span className="ml-1 font-mono text-muted/70">cqw</span>
+                        </span>
+                      </label>
                     </div>
 
-                    <div>
+                    <div className="min-w-0">
                       <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Style</p>
                       <div className="grid grid-cols-3 gap-1.5">
                         {TEXT_STYLES.map((style) => (
@@ -3079,7 +3609,11 @@ export function SlideshowStudio({
                             <span className="flex h-full w-full items-center justify-center rounded-md bg-gradient-to-br from-slate-300 via-slate-400 to-slate-600">
                               <span
                                 className={`rounded px-1.5 py-0.5 text-sm font-black ${style.className}`}
-                                style={selectedLayerData.bgEnabled ? { backgroundColor: selectedLayerData.bgColor } : undefined}
+                                style={
+                                  selectedLayerData.bgEnabled
+                                    ? { backgroundColor: hexToRgba(selectedLayerData.bgColor, selectedLayerData.bgOpacity ?? 100) }
+                                    : undefined
+                                }
                               >
                                 Aa
                               </span>
@@ -3089,7 +3623,7 @@ export function SlideshowStudio({
                       </div>
                     </div>
 
-                    <div>
+                    <div className="min-w-0">
                       <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Text Background</p>
                       <div className="flex flex-wrap items-center gap-1">
                         <button
@@ -3105,7 +3639,13 @@ export function SlideshowStudio({
                         </button>
                         <button
                           type="button"
-                          onClick={() => patchSelectedLayer({ bgEnabled: true })}
+                          onClick={() =>
+                            patchSelectedLayer({
+                              bgEnabled: true,
+                              bgColor: selectedLayerData.bgColor || textLayerDefaults.current.bgColor,
+                              bgOpacity: selectedLayerData.bgOpacity ?? textLayerDefaults.current.bgOpacity,
+                            })
+                          }
                           className={`rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${
                             selectedLayerData.bgEnabled
                               ? "border border-primary bg-white text-primary-deep"
@@ -3115,7 +3655,7 @@ export function SlideshowStudio({
                           Color
                         </button>
                         {selectedLayerData.bgEnabled && (
-                          <label className="flex items-center gap-1.5 rounded-lg border border-line bg-white px-2 py-1">
+                          <label className="flex min-w-0 items-center gap-1.5 rounded-lg border border-line bg-white px-2 py-1">
                             <input
                               type="color"
                               value={selectedLayerData.bgColor}
@@ -3123,10 +3663,42 @@ export function SlideshowStudio({
                               className="h-6 w-6 cursor-pointer border-0 bg-transparent p-0"
                               aria-label="Text background color"
                             />
-                            <span className="font-mono text-xs text-muted">{selectedLayerData.bgColor}</span>
+                            <span className="truncate font-mono text-xs text-muted">{selectedLayerData.bgColor}</span>
                           </label>
                         )}
                       </div>
+                      {selectedLayerData.bgEnabled && (
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          <span className="shrink-0 text-xs font-semibold text-muted">Opacity</span>
+                          <input
+                            type="range"
+                            min={0}
+                            max={100}
+                            step={1}
+                            value={selectedLayerData.bgOpacity ?? 100}
+                            onChange={(e) => patchSelectedLayer({ bgOpacity: Number(e.target.value) })}
+                            aria-label="Background opacity"
+                            className="min-w-24 flex-1 cursor-pointer accent-primary"
+                          />
+                          <span className="flex shrink-0 items-center rounded-lg border border-line bg-white px-2 py-1">
+                            <input
+                              type="number"
+                              min={0}
+                              max={100}
+                              step={1}
+                              value={selectedLayerData.bgOpacity ?? TEXT_BG_OPACITY_DEFAULT}
+                              onChange={(e) =>
+                                patchSelectedLayer({
+                                  bgOpacity: Math.round(clamp(Number(e.target.value), 0, 100)),
+                                })
+                              }
+                              className="w-10 bg-transparent text-right font-mono text-xs font-bold text-ink outline-none"
+                              aria-label="Background opacity value"
+                            />
+                            <span className="ml-1 font-mono text-xs text-muted/70">%</span>
+                          </span>
+                        </div>
+                      )}
                     </div>
                   </div>
                 ))}
@@ -3307,9 +3879,11 @@ export function SlideshowStudio({
                   onChangeLayer={(id, patch) => updateLayer(i, id, patch)}
                   onAddLayer={() => addLayer(i)}
                   onDeleteLayer={(id) => deleteLayer(i, id)}
+                  uploading={slideUploadBusy?.index === i && slideUploadBusy.platform === null}
                 />
               ))}
             </div>
+            {slideUploadError && <p className="mt-2 text-xs font-semibold text-red-600">{slideUploadError}</p>}
           </div>
         )}
 
@@ -3366,15 +3940,16 @@ export function SlideshowStudio({
                 ) : (
                   <div className="mt-5">
                     {/* Platform tabs */}
-                    <div className="flex gap-1.5 overflow-x-auto pb-1">
+                    <div className="flex flex-wrap items-center gap-1.5">
                       {previewPlatforms.map((pid) => {
                         const isActive = pid === activeTab;
+                        const activeFormat = selectedPhotoFormatForPlatform(pid, platformPhotoFormatIds);
                         return (
                           <button
                             key={pid}
                             type="button"
                             onClick={() => setPreviewPlatform(pid)}
-                            className={`flex shrink-0 items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-bold transition-colors ${
+                            className={`flex items-center gap-1.5 rounded-xl border px-3 py-2 text-sm font-bold transition-colors ${
                               isActive
                                 ? "border-primary bg-primary-soft/50 text-primary-deep"
                                 : "border-line bg-white text-muted hover:text-ink"
@@ -3382,6 +3957,9 @@ export function SlideshowStudio({
                           >
                             <PlatformIcon id={pid} size={16} />
                             {platformOf(pid)?.name ?? pid}
+                            <span className={isActive ? "text-primary-deep/70" : "text-muted/70"}>
+                              {activeFormat.aspect.name}
+                            </span>
                           </button>
                         );
                       })}

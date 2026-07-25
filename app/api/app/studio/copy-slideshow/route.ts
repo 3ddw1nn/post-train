@@ -11,13 +11,13 @@ const MAX_IMPORTED_IMAGES = 5;
 // draft that gets resumed later — pull the bytes into our own media library
 // (R2-backed, same as any upload) and hand back our stable URL instead. Best
 // effort per image: one host being unreachable shouldn't fail the whole copy.
-async function rehostImages(workspaceId: string, urls: string[]): Promise<string[]> {
+async function rehostImages(workspaceId: string, urls: string[]): Promise<{ url: string; media_id: string }[]> {
   const results = await Promise.allSettled(
     urls.slice(0, MAX_IMPORTED_IMAGES).map((url) => importFromUrl(workspaceId, url)),
   );
   return results
     .filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof importFromUrl>>> => r.status === "fulfilled")
-    .map((r) => mediaFileUrl(r.value.id));
+    .map((r) => ({ url: mediaFileUrl(r.value.id), media_id: r.value.id }));
 }
 
 // Apify's synchronous actor run can take up to ~60s for a cold start.

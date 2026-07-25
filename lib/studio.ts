@@ -19,11 +19,13 @@ import {
   probe,
   renderFadeIn,
   renderGrid,
+  type GridOptions,
   renderPlaceholder,
 } from "./ffmpeg";
 import { createLipsync, getLipsync, MOCK_OUTPUT_URL, type ProviderJobState } from "./creatify";
 import { falEnabled, falUploadBytes, FAL_AVATAR_PER_SECOND, pollAvatarJob, submitAvatarJob } from "./fal";
 import { STUDIO_AI_MONTHLY_CAP } from "./entitlements";
+import { VIDEO_PRESETS, normalizeVideoFps, videoAspectById, videoPresetById } from "./video-render-settings";
 
 export const STUDIO_TEMPLATES = ["grid-2x2", "fade-in", "ai-ugc", "slideshow"] as const;
 export type StudioTemplate = (typeof STUDIO_TEMPLATES)[number];
@@ -54,12 +56,18 @@ export type StudioParams = {
   persona?: { source: "stock" | "custom"; id?: string; image_media_id?: string; name?: string };
   script?: string;
   cta_media_id?: string;
+  video_preset_id?: string;
   aspect_ratio?: string;
+  fps?: number;
   // Slide text is rasterized to a PNG client-side (same idiom as caption_media_id
   // below — slim ffmpeg builds have no drawtext/freetype), so the server only
   // ever sees an already-rendered overlay image, never raw text.
   slides?: { image_media_id: string; caption_media_id?: string }[];
   source_explore_item_id?: string;
+  // grid-2x2 only: which clips' audio to mix together (0-3) plus an optional
+  // uploaded track, and optional colored separators between the four quadrants.
+  grid_audio?: { clips?: number[]; track_media_id?: string };
+  grid_border?: { width: number; color: string; opacity: number };
 };
 
 export const SCRIPT_MAX = 600; // also bounds per-generation provider cost
@@ -122,6 +130,37 @@ export async function createStudioJob(
       throw new DomainError(400, "All clips must be uploaded videos.");
     }
     params.media_ids = ids;
+    if (template === "grid-2x2") {
+      const preset = videoPresetById(input.video_preset_id);
+      const aspect = preset?.aspect ?? videoAspectById(input.aspect_ratio) ?? VIDEO_PRESETS[0].aspect;
+      if (preset) params.video_preset_id = preset.id;
+      params.aspect_ratio = aspect.id;
+      params.fps = normalizeVideoFps(input.fps);
+      const ga = input.grid_audio;
+      if (ga) {
+        const audio: { clips?: number[]; track_media_id?: string } = {};
+        if (Array.isArray(ga.clips)) {
+          audio.clips = [...new Set(ga.clips.map(Number))].filter((n) => Number.isInteger(n) && n >= 0 && n <= 3);
+        }
+        if (ga.track_media_id) {
+          const audioId = String(ga.track_media_id);
+          const kind = (await uploadedKinds([audioId])).get(audioId);
+          // A video's audio is fine too, but the picker only offers audio uploads.
+          if (kind !== "audio" && kind !== "video") {
+            throw new DomainError(400, "Upload an audio file for the soundtrack.");
+          }
+          audio.track_media_id = audioId;
+        }
+        if (audio.clips || audio.track_media_id) params.grid_audio = audio;
+      }
+      const gb = input.grid_border;
+      if (gb && Number(gb.width) > 0) {
+        const width = Math.min(40, Math.max(1, Math.round(Number(gb.width))));
+        const color = /^#[0-9a-fA-F]{6}$/.test(String(gb.color)) ? String(gb.color) : "#ffffff";
+        const opacity = Math.min(1, Math.max(0, Number(gb.opacity)));
+        params.grid_border = { width, color, opacity };
+      }
+    }
     if (template === "fade-in") {
       const caption = String(input.caption ?? "").trim();
       if (caption.length > CAPTION_MAX) {
@@ -284,7 +323,16 @@ async function renderComposite(job: StudioJobRow, params: StudioParams): Promise
     const inputs = await Promise.all(ids.map((id, i) => fetchMediaTo(dir, id, `in-${i}.mp4`)));
     const out = path.join(dir, "out.mp4");
     if (job.template === "grid-2x2") {
-      await renderGrid(inputs as [string, string, string, string], out);
+      const opts: GridOptions = {};
+      const aspect = videoAspectById(params.aspect_ratio) ?? videoAspectById("9:16")!;
+      opts.width = aspect.width;
+      opts.height = aspect.height;
+      opts.fps = normalizeVideoFps(params.fps);
+      const ga = params.grid_audio;
+      opts.audioClips = ga?.clips ?? [0]; // default to the top-left clip's audio
+      if (ga?.track_media_id) opts.audioPath = await fetchMediaTo(dir, ga.track_media_id, "audio-track");
+      if (params.grid_border) opts.border = params.grid_border;
+      await renderGrid(inputs as [string, string, string, string], out, opts);
     } else {
       const captionPng = params.caption_media_id
         ? await fetchMediaTo(dir, params.caption_media_id, "caption.png")

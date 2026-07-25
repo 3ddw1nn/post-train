@@ -7,36 +7,89 @@ import { Icon } from "./icons";
 
 export type ComposerMedia = { id: string; name: string; mime_type: string; kind: string };
 
+const VIDEO_MIME_BY_EXTENSION: Record<string, string> = {
+  "3g2": "video/3gpp2",
+  "3gp": "video/3gpp",
+  avi: "video/x-msvideo",
+  flv: "video/x-flv",
+  m2ts: "video/mp2t",
+  m4v: "video/x-m4v",
+  mkv: "video/x-matroska",
+  mov: "video/quicktime",
+  mp4: "video/mp4",
+  mpe: "video/mpeg",
+  mpeg: "video/mpeg",
+  mpg: "video/mpeg",
+  mts: "video/mp2t",
+  ogv: "video/ogg",
+  ts: "video/mp2t",
+  webm: "video/webm",
+  wmv: "video/x-ms-wmv",
+};
+const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
+  avif: "image/avif",
+  gif: "image/gif",
+  heic: "image/heic",
+  heif: "image/heif",
+  jpeg: "image/jpeg",
+  jpg: "image/jpeg",
+  png: "image/png",
+  svg: "image/svg+xml",
+  webp: "image/webp",
+};
+
+function uploadMimeType(file: File) {
+  if (file.type && file.type !== "application/octet-stream") return file.type;
+  const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
+  return VIDEO_MIME_BY_EXTENSION[extension] ?? IMAGE_MIME_BY_EXTENSION[extension] ?? file.type ?? "application/octet-stream";
+}
+
 /** Presigned three-step upload (create-url → PUT → complete); returns the media row. */
 export async function uploadOneFile(file: File): Promise<ComposerMedia> {
-  const res = await fetch("/api/app/media/upload-url", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      mime_type: file.type || "application/octet-stream",
-      size_bytes: file.size,
-      name: file.name,
-    }),
-  });
+  const mimeType = uploadMimeType(file);
+  let res: Response;
+  try {
+    res = await fetch("/api/app/media/upload-url", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        mime_type: mimeType,
+        size_bytes: file.size,
+        name: file.name,
+      }),
+    });
+  } catch {
+    throw new Error("Couldn't start the upload. Check your connection and try again.");
+  }
   const data = await res.json();
   if (!res.ok) throw new Error(data?.error?.message ?? "Upload failed");
-  const put = await fetch(data.upload_url, {
-    method: "PUT",
-    headers: { "Content-Type": file.type || "application/octet-stream" },
-    body: file,
-  });
+  let put: Response;
+  try {
+    put = await fetch(data.upload_url, {
+      method: "PUT",
+      headers: { "Content-Type": mimeType },
+      body: file,
+    });
+  } catch {
+    throw new Error("Couldn't upload this file. Check your connection and try again.");
+  }
   if (!put.ok) throw new Error("Upload failed");
   if (data.complete_url) {
-    const complete = await fetch(data.complete_url, { method: "POST" });
+    let complete: Response;
+    try {
+      complete = await fetch(data.complete_url, { method: "POST" });
+    } catch {
+      throw new Error("The upload finished, but couldn't be saved. Please try again.");
+    }
     if (!complete.ok) throw new Error("Upload completion failed");
   }
   return {
     id: data.media_id,
     name: file.name,
-    mime_type: file.type,
-    kind: file.type.startsWith("video/")
+    mime_type: mimeType,
+    kind: mimeType.startsWith("video/")
       ? "video"
-      : file.type === "application/pdf"
+      : mimeType === "application/pdf"
         ? "pdf"
         : "image",
   };
@@ -69,14 +122,14 @@ export function MediaThumb({
       />
     );
   }
-  if (media.kind === "pdf") {
+  if (media.kind === "pdf" || media.kind === "audio") {
     return (
       <span
         className={`flex items-center justify-center bg-page text-muted ${cls}`}
         style={full ? { height: 256 } : { width: size, height: size }}
         onClick={onClick}
       >
-        <Icon name="file" size={full ? 40 : 22} />
+        <Icon name={media.kind === "audio" ? "audio" : "file"} size={full ? 40 : 22} />
       </span>
     );
   }

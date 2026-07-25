@@ -63,6 +63,7 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
         exclude: ["/dashboard/settings/billing", "/dashboard/settings/plans", "/dashboard/settings/workspace"],
       },
       { label: "API Keys", href: "/dashboard/api-keys", icon: "key" },
+      { label: "AI Image Keys", href: "/dashboard/ai-image-keys", icon: "image" },
       {
         label: "Billing",
         href: "/dashboard/settings/billing",

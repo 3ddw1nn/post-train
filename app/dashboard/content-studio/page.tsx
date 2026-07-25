@@ -2,12 +2,22 @@ import Link from "next/link";
 import { requireOnboardedUser } from "@/lib/auth";
 import { getSubscription } from "@/lib/billing";
 import { studioAccess } from "@/lib/entitlements";
+import { platformsForType, type PostType } from "@/lib/platforms";
 import { Icon } from "@/components/icons";
+import { PlatformIconRow } from "@/components/platform-icon";
 import { StudioJobsList } from "@/components/studio";
 
 export const metadata = { title: "Content Studio" };
 
-const TEMPLATES = [
+const TEMPLATES: {
+  id: string;
+  title: string;
+  desc: string;
+  tags: string[];
+  icon: string;
+  featured?: boolean;
+  postType: PostType;
+}[] = [
   {
     id: "ai-ugc",
     title: "AI UGC Creator",
@@ -15,6 +25,7 @@ const TEMPLATES = [
     tags: ["AI-powered"],
     icon: "sparkles",
     featured: true,
+    postType: "video",
   },
   {
     id: "grid-2x2",
@@ -22,6 +33,7 @@ const TEMPLATES = [
     desc: "Four clips playing in a satisfying grid — a proven short-form format.",
     tags: ["Trending"],
     icon: "grid",
+    postType: "video",
   },
   {
     id: "fade-in",
@@ -29,6 +41,7 @@ const TEMPLATES = [
     desc: "One clip with a clean fade-in and caption overlay. Simple, fast, effective.",
     tags: [],
     icon: "video",
+    postType: "video",
   },
   {
     id: "slideshow",
@@ -36,6 +49,7 @@ const TEMPLATES = [
     desc: "Drop your own photos into a proven slide structure, with hook text baked onto each one.",
     tags: ["Photo posts"],
     icon: "image",
+    postType: "image",
   },
 ];
 
@@ -100,6 +114,9 @@ export default async function StudioPage() {
                   ))}
                 </div>
                 <p className="mt-0.5 text-sm text-muted">{t.desc}</p>
+                <span className="mt-1.5 block">
+                  <PlatformIconRow ids={platformsForType(t.postType).map((p) => p.id)} size={14} />
+                </span>
               </div>
               <div className="flex items-center gap-2 sm:shrink-0">
                 {!unlocked && (

@@ -36,6 +36,7 @@ const PATHS: Record<string, React.ReactNode> = {
   ),
   card: <path d="M3 7a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V7ZM3 10h18M7 15h4" />,
   megaphone: <path d="M3 11v3a1 1 0 0 0 1 1h2l3 5h2v-5m0-6V4h-2L6 9H4a1 1 0 0 0-1 1v1Zm8 5a9 9 0 0 0 0-8m3 11a13 13 0 0 0 0-14" />,
+  audio: <path d="M11 5 6 9H3v6h3l5 4V5ZM15.5 8.5a5 5 0 0 1 0 7M19 5a9 9 0 0 1 0 14" />,
   gift: (
     <path d="M20 12v9H4v-9M2 7h20v5H2V7ZM12 22V7M12 7H7.5a2.5 2.5 0 1 1 0-5C11 2 12 7 12 7ZM12 7h4.5a2.5 2.5 0 1 0 0-5C13 2 12 7 12 7Z" />
   ),
