@@ -602,43 +602,91 @@ export function ComposerSkeleton() {
   );
 }
 
-export function StudioWizardSkeleton() {
+/**
+ * The initial "choose" screen shared by Grid, Video Editor, and AI UGC
+ * studios: back-link, icon-badge title, one "create new" CTA card, one
+ * drafts card below it. Each real studio starts in this mode (`useState<"choose"|"wizard">("choose")`),
+ * so it's the layout actually on screen when a template route first loads —
+ * `maxW` matches each studio's own root wrapper (grid-2x2/video-editor use
+ * max-w-4xl, ai-ugc max-w-5xl). Slideshow Studio's choose screen looks
+ * different (a 3-card mode picker), so it keeps its own SlideshowStudioSkeleton below.
+ */
+export function StudioChooserSkeleton({ maxW = "max-w-4xl" }: { maxW?: string }) {
   return (
-    <div className="fade-up">
-      <div className="card mx-auto max-w-2xl p-6">
-        <span className="text-sm text-muted">Content Studio</span>
-        <SkeletonBlock className="mt-2 h-8 w-56" />
-        <SkeletonBlock className="mt-2 h-4 w-full" />
+    <div className={`fade-up mx-auto w-full ${maxW} pb-10`}>
+      <SkeletonBlock className="h-4 w-32" />
+      <div className="mt-2 flex items-center gap-2">
+        <SkeletonBlock className="h-8 w-8 rounded-lg" />
+        <SkeletonBlock className="h-7 w-56" />
+      </div>
 
-        <div className="mt-4 flex gap-2">
-          <SkeletonBlock className="h-8 w-32" />
-          <SkeletonBlock className="h-8 w-28" />
-        </div>
+      <div className="card mt-5 p-6 sm:p-8">
+        <SkeletonBlock className="h-6 w-64" />
+        <SkeletonBlock className="mt-2 h-4 w-full max-w-xl" />
+        <SkeletonBlock className="mt-2 h-4 w-2/3 max-w-xl" />
+        <SkeletonBlock className="mt-5 h-10 w-44" />
+      </div>
 
-        <div className="mt-3 grid max-h-72 grid-cols-3 gap-2 overflow-hidden sm:grid-cols-4">
-          {Array.from({ length: 8 }).map((_, i) => (
-            <div key={i} className="overflow-hidden rounded-xl border-2 border-transparent">
-              <SkeletonBlock className="aspect-[9/16] w-full rounded-none" />
-              <SkeletonBlock className="m-1.5 h-4 w-16" />
+      <div className="card mt-5 p-6 sm:p-8">
+        <SkeletonBlock className="h-3 w-16" />
+        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {Array.from({ length: 3 }).map((_, i) => (
+            <div key={i} className="flex items-center gap-3 rounded-xl border border-line p-3">
+              <SkeletonBlock className="h-14 w-14 shrink-0 rounded-lg" />
+              <div className="min-w-0 flex-1">
+                <SkeletonBlock className="h-4 w-3/4" />
+                <SkeletonBlock className="mt-2 h-3 w-1/2" />
+              </div>
             </div>
           ))}
         </div>
+      </div>
+    </div>
+  );
+}
 
-        <div className="mt-4">
-          <label className="text-xs font-semibold text-muted">Hook / script</label>
-          <SkeletonBlock className="mt-1 h-28 w-full" />
+/** Matches Thumbnail Maker's actual layout (components/thumbnail-studio.tsx):
+ *  format tab row, canvas card + toolbar, background-source side panel, and
+ *  the full-width Advanced Text Settings card below. */
+export function ThumbnailStudioSkeleton() {
+  return (
+    <div className="fade-up mx-auto w-full max-w-6xl pb-10">
+      <SkeletonBlock className="h-4 w-32" />
+      <div className="mt-2 flex items-center gap-2">
+        <SkeletonBlock className="h-8 w-8 rounded-lg" />
+        <SkeletonBlock className="h-7 w-48" />
+      </div>
+
+      <div className="mt-5 grid gap-5 lg:grid-cols-[1fr_360px]">
+        <div className="card p-5">
+          <div className="flex flex-wrap gap-1.5">
+            {Array.from({ length: 5 }).map((_, i) => (
+              <SkeletonBlock key={i} className="h-8 w-32 rounded-lg" />
+            ))}
+          </div>
+          <SkeletonBlock className="mt-4 aspect-video w-full rounded-xl" />
+          <div className="mt-4 flex flex-wrap items-center gap-2">
+            <SkeletonBlock className="h-9 w-24" />
+            <SkeletonBlock className="h-9 w-28" />
+            <SkeletonBlock className="ml-auto h-9 w-24" />
+            <SkeletonBlock className="h-9 w-32" />
+            <SkeletonBlock className="h-9 w-36" />
+          </div>
         </div>
 
-        <div className="mt-2">
-          <SkeletonBlock className="h-20 w-full" />
+        <div className="card p-5">
+          <SkeletonBlock className="h-3 w-20" />
+          <div className="mt-2 flex gap-1 rounded-lg bg-page p-1">
+            {Array.from({ length: 3 }).map((_, i) => (
+              <SkeletonBlock key={i} className="h-7 flex-1" />
+            ))}
+          </div>
+          <SkeletonBlock className="mt-3 h-9 w-full" />
         </div>
+      </div>
 
-        <div className="mt-4 rounded-xl bg-page p-3">
-          <SkeletonBlock className="h-4 w-full" />
-          <SkeletonBlock className="mt-2 h-4 w-3/4" />
-        </div>
-
-        <SkeletonBlock className="mt-4 h-10 w-full" />
+      <div className="card mt-5 p-5">
+        <SkeletonBlock className="h-4 w-44" />
       </div>
     </div>
   );
@@ -790,7 +838,8 @@ export function StudioSkeleton() {
           <SkeletonBlock className="mt-3 h-4 w-full max-w-xl" />
         </div>
         <div className="mt-5 flex flex-col divide-y divide-line overflow-hidden rounded-xl border border-line">
-          {Array.from({ length: 3 }).map((_, i) => (
+          {/* 5 rows — one per TEMPLATES entry in app/dashboard/content-studio/page.tsx (AI UGC, Video Editor, Grid, Slideshow, Thumbnail Maker). */}
+          {Array.from({ length: 5 }).map((_, i) => (
             <div key={i} className="flex items-center gap-4 p-4">
               <SkeletonBlock className="h-10 w-10 shrink-0" />
               <div className="flex-1">
