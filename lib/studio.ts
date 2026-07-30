@@ -1,7 +1,7 @@
 // Content Studio job orchestration: create + validate jobs, and drive the
 // state machine from the worker tick (queued → generating → done/failed).
 // Composite templates render locally with ffmpeg; ai-ugc generates through
-// Creatify (stock personas) or fal.ai (custom persona image), then optionally
+// Replicate P-Video Avatar (stock personas or a custom persona image), then optionally
 // concats a CTA clip.
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
@@ -17,15 +17,16 @@ import {
   concatClips,
   normalizeSlideImage,
   probe,
-  renderFadeIn,
+  renderFadeSequence,
   renderGrid,
   type GridOptions,
   renderPlaceholder,
 } from "./ffmpeg";
-import { createLipsync, getLipsync, MOCK_OUTPUT_URL, type ProviderJobState } from "./creatify";
-import { falEnabled, falUploadBytes, FAL_AVATAR_PER_SECOND, pollAvatarJob, submitAvatarJob } from "./fal";
+import { MOCK_OUTPUT_URL, studioMock, type ProviderJobState } from "./creatify";
+import { imageDataUri, pollAvatarJob, replicateEnabled, stockPersonaImage, submitAvatarJob } from "./replicate-avatar";
 import { STUDIO_AI_MONTHLY_CAP } from "./entitlements";
 import { VIDEO_PRESETS, normalizeVideoFps, videoAspectById, videoPresetById } from "./video-render-settings";
+import { DEFAULT_TRANSITION_DURATION, DEFAULT_TRANSITION_ID, clampTransitionDuration, isTransitionId } from "./transitions";
 
 export const STUDIO_TEMPLATES = ["grid-2x2", "fade-in", "ai-ugc", "slideshow"] as const;
 export type StudioTemplate = (typeof STUDIO_TEMPLATES)[number];
@@ -37,7 +38,7 @@ export type StudioJobRow = {
   template: StudioTemplate;
   status: "queued" | "generating" | "compositing" | "done" | "failed";
   params: string;
-  provider: "creatify" | "fal" | null;
+  provider: "replicate" | "creatify" | "fal" | null;
   provider_job_id: string | null;
   provider_video_url: string | null;
   output_media_id: string | null;
@@ -68,6 +69,30 @@ export type StudioParams = {
   // uploaded track, and optional colored separators between the four quadrants.
   grid_audio?: { clips?: number[]; track_media_id?: string };
   grid_border?: { width: number; color: string; opacity: number };
+  // Focal point for each clip's crop (0-1 per axis, 0.5 = centered), set via
+  // the double-click reposition modal in the editor.
+  grid_crop?: { x: number; y: number }[];
+  // Video Editor Studio: clips may be split into source slices, then joined by
+  // per-seam transitions (a hard cut or any xfade in lib/transitions.ts).
+  // fade_transitions[i] is the seam *before* segment i — index 0 is the
+  // opening (fade in from black instead of a preceding clip). fade_closing is
+  // the symmetric fade-to-black at the tail. fade_transition/_duration are the
+  // older whole-sequence form, still accepted as the per-seam fallback so
+  // in-flight jobs and older clients keep rendering.
+  fade_segments?: { media_id: string; start_s?: number; end_s?: number; gap_before_s?: number; volume?: number; crop?: { x: number; y: number } }[];
+  fade_transitions?: { type: string; duration: number }[];
+  fade_transition?: string;
+  fade_transition_duration?: number;
+  fade_closing?: { type: string; duration: number };
+  // Every audio clip mixed into the render — the uploaded soundtrack and any
+  // clip audio the user detached from its video are the same shape, each
+  // independently trimmed and positioned in the composed output timeline.
+  fade_audio_clips?: { media_id: string; source_start_s: number; source_end_s: number; start_s: number; volume: number }[];
+  // Video Editor Studio's Captions timeline: timed, positioned text overlays,
+  // baked into the export (unlike `caption` below, which is post text only).
+  // Each is a client-rasterized transparent PNG (same idiom as slides[].caption_media_id
+  // above) plus its placement/timing — see buildFadeFilterGraph's per-caption overlay.
+  fade_captions?: { media_id: string; start_s: number; end_s: number; x: number; y: number; width: number }[];
 };
 
 export const SCRIPT_MAX = 600; // also bounds per-generation provider cost
@@ -79,12 +104,11 @@ const SLIDE_MAX = 10;
  * Pay-as-you-go price transparency for the wizard. Speech averages ~15 chars/s,
  * so estimated video seconds ≈ script length / 15 (clamped 5–60s).
  */
-export function estimateAiUgcCost(scriptChars: number, source: "stock" | "custom") {
+export function estimateAiUgcCost(scriptChars: number, _source: "stock" | "custom") {
   const seconds = Math.min(60, Math.max(5, Math.round(scriptChars / 15)));
   return {
     seconds,
-    fal_usd: Math.round(seconds * FAL_AVATAR_PER_SECOND * 100) / 100,
-    creatify_credits: Math.max(5, Math.ceil(seconds / 30) * 5), // 5 credits / 30s
+    replicate_usd: Math.round(seconds * 0.025 * 100) / 100,
   };
 }
 
@@ -122,8 +146,8 @@ export async function createStudioJob(
   if (template === "grid-2x2" || template === "fade-in") {
     const ids = Array.isArray(input.media_ids) ? input.media_ids.map(String) : [];
     const need = template === "grid-2x2" ? 4 : 1;
-    if (ids.length !== need) {
-      throw new DomainError(400, `This template needs exactly ${need} video clip${need > 1 ? "s" : ""}.`);
+    if (template === "fade-in" ? ids.length < 1 || ids.length > 8 : ids.length !== need) {
+      throw new DomainError(400, template === "fade-in" ? "Add between 1 and 8 video segments." : `This template needs exactly ${need} video clips.`);
     }
     const kinds = await uploadedKinds(ids);
     if (ids.some((id) => kinds.get(id) !== "video")) {
@@ -160,20 +184,91 @@ export async function createStudioJob(
         const opacity = Math.min(1, Math.max(0, Number(gb.opacity)));
         params.grid_border = { width, color, opacity };
       }
+      if (Array.isArray(input.grid_crop) && input.grid_crop.length === 4) {
+        const clamp01 = (n: unknown) => (Number.isFinite(Number(n)) ? Math.min(1, Math.max(0, Number(n))) : 0.5);
+        params.grid_crop = input.grid_crop.map((o) => ({ x: clamp01(o?.x), y: clamp01(o?.y) }));
+      }
     }
     if (template === "fade-in") {
+      const preset = videoPresetById(input.video_preset_id);
+      const aspect = preset?.aspect ?? videoAspectById(input.aspect_ratio) ?? VIDEO_PRESETS[0].aspect;
+      if (preset) params.video_preset_id = preset.id;
+      params.aspect_ratio = aspect.id;
+      const requestedSegments = Array.isArray(input.fade_segments) ? input.fade_segments : [];
+      if (requestedSegments.length > 0) {
+        if (requestedSegments.length !== ids.length || requestedSegments.some((segment, index) => String(segment?.media_id) !== ids[index])) {
+          throw new DomainError(400, "The video timeline does not match its source clips.");
+        }
+        params.fade_segments = requestedSegments.map((segment) => ({
+          media_id: String(segment.media_id),
+          start_s: Number.isFinite(Number(segment.start_s)) ? Math.max(0, Number(segment.start_s)) : undefined,
+          end_s: Number.isFinite(Number(segment.end_s)) ? Math.max(0, Number(segment.end_s)) : undefined,
+          gap_before_s: Number.isFinite(Number(segment.gap_before_s)) ? Math.min(60, Math.max(0, Number(segment.gap_before_s))) : 0,
+          volume: Number.isFinite(Number(segment.volume)) ? Math.min(2, Math.max(0, Number(segment.volume))) : 1,
+          crop: {
+            x: Number.isFinite(Number(segment.crop?.x)) ? Math.min(1, Math.max(0, Number(segment.crop?.x))) : 0.5,
+            y: Number.isFinite(Number(segment.crop?.y)) ? Math.min(1, Math.max(0, Number(segment.crop?.y))) : 0.5,
+          },
+        }));
+      }
+      params.fade_transition = isTransitionId(input.fade_transition) ? String(input.fade_transition) : DEFAULT_TRANSITION_ID;
+      params.fade_transition_duration = clampTransitionDuration(input.fade_transition_duration ?? DEFAULT_TRANSITION_DURATION);
+      // One seam per clip boundary, plus index 0 for the opening (fade in
+      // from black instead of a preceding clip). Normalized to the clip count
+      // so a short or long array can never leave a boundary reading someone
+      // else's transition.
+      params.fade_transitions = ids.map((_, index) => {
+        const seam = Array.isArray(input.fade_transitions) ? input.fade_transitions[index] : undefined;
+        return {
+          type: isTransitionId(seam?.type) ? String(seam!.type) : params.fade_transition!,
+          duration: clampTransitionDuration(seam?.duration ?? params.fade_transition_duration),
+        };
+      });
+      // Unlike interior seams, the closing fade defaults to "cut" (no effect)
+      // rather than falling back to the shared default transition — nothing
+      // should start fading to black unless the user explicitly adds it.
+      params.fade_closing = {
+        type: isTransitionId(input.fade_closing?.type) ? String(input.fade_closing!.type) : "cut",
+        duration: clampTransitionDuration(input.fade_closing?.duration ?? DEFAULT_TRANSITION_DURATION),
+      };
+      const requestedAudioClips = Array.isArray(input.fade_audio_clips) ? input.fade_audio_clips : [];
+      if (requestedAudioClips.length > 0) {
+        const audioIds = requestedAudioClips.map((c) => String(c.media_id));
+        const audioKinds = await uploadedKinds(audioIds);
+        if (audioIds.some((id) => { const kind = audioKinds.get(id); return kind !== "audio" && kind !== "video"; })) {
+          throw new DomainError(400, "Every audio clip needs an uploaded audio or video file.");
+        }
+        params.fade_audio_clips = requestedAudioClips.map((c) => ({
+          media_id: String(c.media_id),
+          source_start_s: Number.isFinite(Number(c.source_start_s)) ? Math.max(0, Number(c.source_start_s)) : 0,
+          source_end_s: Number.isFinite(Number(c.source_end_s)) ? Math.max(0, Number(c.source_end_s)) : 0,
+          start_s: Number.isFinite(Number(c.start_s)) ? Math.max(0, Number(c.start_s)) : 0,
+          volume: Number.isFinite(Number(c.volume)) ? Math.min(2, Math.max(0, Number(c.volume))) : 1,
+        }));
+      }
+      const requestedCaptions = Array.isArray(input.fade_captions) ? input.fade_captions : [];
+      if (requestedCaptions.length > 0) {
+        const captionIds = requestedCaptions.map((c) => String(c.media_id));
+        const captionKinds = await uploadedKinds(captionIds);
+        if (captionIds.some((id) => captionKinds.get(id) !== "image")) {
+          throw new DomainError(400, "Every caption needs a rendered overlay image.");
+        }
+        params.fade_captions = requestedCaptions.map((c) => ({
+          media_id: String(c.media_id),
+          start_s: Number.isFinite(Number(c.start_s)) ? Math.max(0, Number(c.start_s)) : 0,
+          end_s: Number.isFinite(Number(c.end_s)) ? Math.max(0, Number(c.end_s)) : 0,
+          x: Number.isFinite(Number(c.x)) ? Math.min(100, Math.max(0, Number(c.x))) : 50,
+          y: Number.isFinite(Number(c.y)) ? Math.min(100, Math.max(0, Number(c.y))) : 50,
+          width: Number.isFinite(Number(c.width)) ? Math.min(100, Math.max(5, Number(c.width))) : 64,
+        }));
+      }
+      // Pure post text — never baked into the video (matches grid-2x2's
+      // platformCaptions, which never touches the render either).
       const caption = String(input.caption ?? "").trim();
       if (caption.length > CAPTION_MAX) {
         throw new DomainError(400, `Caption exceeds ${CAPTION_MAX} characters.`);
       }
       params.caption = caption;
-      if (input.caption_media_id) {
-        const capKinds = await uploadedKinds([String(input.caption_media_id)]);
-        if (capKinds.get(String(input.caption_media_id)) !== "image") {
-          throw new DomainError(400, "Caption overlay must be an uploaded image.");
-        }
-        params.caption_media_id = String(input.caption_media_id);
-      }
     }
   } else if (template === "slideshow") {
     const slides = Array.isArray(input.slides) ? input.slides : [];
@@ -198,6 +293,9 @@ export async function createStudioJob(
     }
   } else {
     // ai-ugc
+    if (!replicateEnabled() && !studioMock()) {
+      throw new DomainError(503, "AI UGC is not configured yet. Add REPLICATE_API_TOKEN to enable video generation.");
+    }
     const script = String(input.script ?? "").trim();
     if (!script) throw new DomainError(400, "A script is required.");
     if (script.length > SCRIPT_MAX) {
@@ -254,6 +352,13 @@ export async function getStudioJob(id: string): Promise<StudioJobRow | null> {
   return await convexQuery<StudioJobRow | null>(api.studioJobs.getById, { id });
 }
 
+/** Removes a render from the Content Studio history for this workspace.
+ * Output/source media remain in the media library and any existing posts are
+ * untouched, so this is safe even after a video has been used elsewhere. */
+export async function deleteStudioJob(id: string, workspaceId: string): Promise<boolean> {
+  return await convexMutation<boolean>(api.studioJobs.deleteForWorkspace, { id, workspace_id: workspaceId });
+}
+
 const patchJob = (id: string, patch: Record<string, unknown>) =>
   convexMutation<StudioJobRow | null>(api.studioJobs.patchJob, { id, patch });
 
@@ -308,7 +413,12 @@ async function withTmpDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
 }
 
 async function fetchMediaTo(dir: string, mediaId: string, name: string): Promise<string> {
-  const file = await readMediaBytes(mediaId);
+  let file: Awaited<ReturnType<typeof readMediaBytes>>;
+  try {
+    file = await readMediaBytes(mediaId);
+  } catch {
+    throw new Error("We couldn’t retrieve one of the source videos. Check your connection and try rendering again.");
+  }
   if (!file) throw new Error("A source clip is missing from storage.");
   const p = path.join(dir, name);
   writeFileSync(p, file.bytes);
@@ -332,12 +442,33 @@ async function renderComposite(job: StudioJobRow, params: StudioParams): Promise
       opts.audioClips = ga?.clips ?? [0]; // default to the top-left clip's audio
       if (ga?.track_media_id) opts.audioPath = await fetchMediaTo(dir, ga.track_media_id, "audio-track");
       if (params.grid_border) opts.border = params.grid_border;
+      if (params.grid_crop?.length === 4) {
+        opts.cropOffsets = params.grid_crop as [
+          { x: number; y: number },
+          { x: number; y: number },
+          { x: number; y: number },
+          { x: number; y: number },
+        ];
+      }
       await renderGrid(inputs as [string, string, string, string], out, opts);
     } else {
-      const captionPng = params.caption_media_id
-        ? await fetchMediaTo(dir, params.caption_media_id, "caption.png")
-        : undefined;
-      await renderFadeIn(inputs[0], out, captionPng);
+      await renderFadeSequence(inputs, out, {
+        segments: params.fade_segments,
+        transitions: params.fade_transitions,
+        transition: params.fade_transition,
+        transitionDuration: params.fade_transition_duration,
+        closing: params.fade_closing,
+        audioClips: params.fade_audio_clips ? await Promise.all(params.fade_audio_clips.map(async (c, index) => ({
+          path: await fetchMediaTo(dir, c.media_id, `audio-clip-${index}`),
+          sourceStart: c.source_start_s, sourceEnd: c.source_end_s, start: c.start_s, volume: c.volume,
+        }))) : undefined,
+        width: (videoAspectById(params.aspect_ratio) ?? VIDEO_PRESETS[0].aspect).width,
+        height: (videoAspectById(params.aspect_ratio) ?? VIDEO_PRESETS[0].aspect).height,
+        captions: params.fade_captions ? await Promise.all(params.fade_captions.map(async (c, index) => ({
+          path: await fetchMediaTo(dir, c.media_id, `caption-${index}`),
+          x: c.x, y: c.y, width: c.width, start: c.start_s, end: c.end_s,
+        }))) : undefined,
+      });
     }
     await finishJob(job, out);
   });
@@ -345,24 +476,17 @@ async function renderComposite(job: StudioJobRow, params: StudioParams): Promise
 
 async function submitGeneration(job: StudioJobRow, params: StudioParams): Promise<void> {
   const persona = params.persona!;
-  let provider: "creatify" | "fal";
+  const provider = "replicate";
   let jobId: string;
   if (persona.source === "stock") {
-    provider = "creatify";
-    ({ jobId } = await createLipsync({
-      personaId: persona.id!,
-      script: params.script!,
-      aspectRatio: params.aspect_ratio ?? "9:16",
-    }));
+    ({ jobId } = await submitAvatarJob({ image: stockPersonaImage(persona.id!), script: params.script! }));
   } else {
-    provider = "fal";
-    let imageUrl = "mock:image";
-    if (falEnabled()) {
-      const image = await readMediaBytes(persona.image_media_id!);
-      if (!image) throw new Error("Persona image is missing from storage.");
-      imageUrl = await falUploadBytes(image.bytes, image.row.mime_type, image.row.name);
-    }
-    ({ jobId } = await submitAvatarJob({ imageUrl, script: params.script! }));
+    const image = await readMediaBytes(persona.image_media_id!);
+    if (!image) throw new Error("Persona image is missing from storage.");
+    ({ jobId } = await submitAvatarJob({
+      image: imageDataUri(image.bytes, image.row.mime_type),
+      script: params.script!,
+    }));
   }
   await patchJob(job.id, {
     status: "generating",
@@ -374,9 +498,9 @@ async function submitGeneration(job: StudioJobRow, params: StudioParams): Promis
 
 async function checkGeneration(job: StudioJobRow, params: StudioParams): Promise<void> {
   const state: ProviderJobState =
-    job.provider === "fal"
+    job.provider === "replicate"
       ? await pollAvatarJob(job.provider_job_id!)
-      : await getLipsync(job.provider_job_id!);
+      : { status: "failed", error: "This render uses a retired provider. Please generate it again." };
 
   if (state.status === "running") {
     await patchJob(job.id, { lease_until: null });

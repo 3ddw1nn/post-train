@@ -37,14 +37,29 @@ const IMAGE_MIME_BY_EXTENSION: Record<string, string> = {
   svg: "image/svg+xml",
   webp: "image/webp",
 };
+const AUDIO_MIME_BY_EXTENSION: Record<string, string> = {
+  aac: "audio/aac",
+  flac: "audio/flac",
+  m4a: "audio/mp4",
+  mp3: "audio/mpeg",
+  oga: "audio/ogg",
+  ogg: "audio/ogg",
+  wav: "audio/wav",
+  weba: "audio/webm",
+};
 
 function uploadMimeType(file: File) {
   if (file.type && file.type !== "application/octet-stream") return file.type;
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "";
-  return VIDEO_MIME_BY_EXTENSION[extension] ?? IMAGE_MIME_BY_EXTENSION[extension] ?? file.type ?? "application/octet-stream";
+  return VIDEO_MIME_BY_EXTENSION[extension] ?? AUDIO_MIME_BY_EXTENSION[extension] ?? IMAGE_MIME_BY_EXTENSION[extension] ?? file.type ?? "application/octet-stream";
 }
 
-/** Presigned three-step upload (create-url → PUT → complete); returns the media row. */
+async function uploadError(response: Response, fallback: string) {
+  const body = await response.json().catch(() => null);
+  return body?.error?.message ?? body?.message ?? fallback;
+}
+
+/** Uploads a file and returns the media row once the server has saved it. */
 export async function uploadOneFile(file: File): Promise<ComposerMedia> {
   const mimeType = uploadMimeType(file);
   let res: Response;
@@ -61,8 +76,9 @@ export async function uploadOneFile(file: File): Promise<ComposerMedia> {
   } catch {
     throw new Error("Couldn't start the upload. Check your connection and try again.");
   }
-  const data = await res.json();
-  if (!res.ok) throw new Error(data?.error?.message ?? "Upload failed");
+  const data = await res.json().catch(() => null);
+  if (!res.ok) throw new Error(data?.error?.message ?? "Couldn't prepare this upload. Please try again.");
+  if (!data?.upload_url || !data?.media_id) throw new Error("The upload service returned an incomplete response. Please try again.");
   let put: Response;
   try {
     put = await fetch(data.upload_url, {
@@ -73,22 +89,15 @@ export async function uploadOneFile(file: File): Promise<ComposerMedia> {
   } catch {
     throw new Error("Couldn't upload this file. Check your connection and try again.");
   }
-  if (!put.ok) throw new Error("Upload failed");
-  if (data.complete_url) {
-    let complete: Response;
-    try {
-      complete = await fetch(data.complete_url, { method: "POST" });
-    } catch {
-      throw new Error("The upload finished, but couldn't be saved. Please try again.");
-    }
-    if (!complete.ok) throw new Error("Upload completion failed");
-  }
+  if (!put.ok) throw new Error(await uploadError(put, "Couldn't upload this file. Please try again."));
   return {
     id: data.media_id,
     name: file.name,
     mime_type: mimeType,
     kind: mimeType.startsWith("video/")
       ? "video"
+      : mimeType.startsWith("audio/")
+        ? "audio"
       : mimeType === "application/pdf"
         ? "pdf"
         : "image",

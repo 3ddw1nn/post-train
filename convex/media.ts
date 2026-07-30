@@ -61,6 +61,16 @@ export const markUploaded = mutation({
   },
 });
 
+export const setThumbnail = mutation({
+  args: { workspace_id: v.string(), id: v.string(), thumbnail_media_id: v.union(v.string(), v.null()) },
+  handler: async (ctx, args) => {
+    const row = await byLegacyId(ctx, "media", args.id);
+    if (!row || row.workspace_id !== args.workspace_id) return null;
+    await ctx.db.patch(row._id, { thumbnail_media_id: args.thumbnail_media_id });
+    return await ctx.db.get(row._id);
+  },
+});
+
 export const deleteMedia = mutation({
   args: { workspace_id: v.string(), id: v.string() },
   handler: async (ctx, args) => {

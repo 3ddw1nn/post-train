@@ -36,7 +36,7 @@ Final items to ship Post Train to production. These are in order of dependency.
 ## 4. Content Studio Providers (Optional Launch Blocker)
 
 - [ ] **Creatify**: Sign up for paid API plan, get `API_ID`/`API_KEY`
-- [ ] **fal.ai**: Create account, generate `FAL_KEY`, top up credits if needed
+- [ ] **Replicate**: Create an API token, add `REPLICATE_API_TOKEN`, and top up pay-as-you-go credits
 - [ ] Set both on Vercel + Render
 - [ ] Test one real generation end-to-end (grid, fade-in, or AI UGC)
 

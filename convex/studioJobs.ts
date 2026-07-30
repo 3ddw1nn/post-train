@@ -56,6 +56,19 @@ export const patchJob = mutation({
   },
 });
 
+// The Next.js API verifies the requesting user's workspace before calling
+// this mutation. Keeping the workspace check here too prevents a stale or
+// cross-workspace id from deleting another workspace's render history.
+export const deleteForWorkspace = mutation({
+  args: { id: v.string(), workspace_id: v.string() },
+  handler: async (ctx, args) => {
+    const job = await byLegacyId(ctx, "studio_jobs", args.id);
+    if (!job || job.workspace_id !== args.workspace_id) return false;
+    await ctx.db.delete(job._id);
+    return true;
+  },
+});
+
 /**
  * Atomically claim runnable jobs (queued, or generating awaiting a provider
  * poll) whose lease has expired. Convex OCC serializes concurrent claims, so
@@ -64,7 +77,10 @@ export const patchJob = mutation({
 export const claimRunnable = mutation({
   args: { now: v.string(), limit: v.number() },
   handler: async (ctx, args) => {
-    const lease = new Date(Date.parse(args.now) + 5 * 60_000).toISOString();
+    // Must outlast the longest render: runFfmpeg kills at 10 minutes
+    // (lib/ffmpeg.ts), and a lease that expires first lets a second worker
+    // claim a job that is still compositing and render it twice.
+    const lease = new Date(Date.parse(args.now) + 12 * 60_000).toISOString();
     const claimed = [];
     for (const status of ["queued", "generating", "compositing"]) {
       const rows = await ctx.db

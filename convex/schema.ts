@@ -103,6 +103,10 @@ export default defineSchema({
     height: nullableNumber,
     upload_status: v.string(),
     created_at: v.string(),
+    // Set by the Thumbnail Maker tool ("attach to video") — the id of a
+    // media row (kind "image") to use as this video's cover. Optional so
+    // existing rows, and every media kind that isn't a video, stay unset.
+    thumbnail_media_id: v.optional(nullableString),
   })
     .index("by_legacy_id", ["id"])
     .index("by_workspace", ["workspace_id"])

@@ -176,7 +176,7 @@ export default function LandingPage() {
           icon="video"
           eyebrow="Content studio"
           title="Turn raw clips into formats that travel"
-          copy="Grid videos, fade-ins, AI-assisted UGC — start from a template, drop your media in, and send it straight to the composer."
+          copy="A timeline video editor, grid videos, AI-assisted UGC — start from a template, drop your media in, and send it straight to the composer."
           media={<StudioMock />}
         />
       </section>

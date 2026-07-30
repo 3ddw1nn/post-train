@@ -20,6 +20,7 @@ export async function POST(req: Request) {
   const context = typeof body.context === "string" ? body.context.slice(0, 1200) : "";
   const campaignName = typeof body.campaignName === "string" ? body.campaignName.slice(0, 160) : "";
   const length = body.length === "short" || body.length === "long" ? body.length : "medium";
+  const format = body.format === "video" ? "video" : "slideshow";
 
   const p = platformOf(platformId);
   if (!p) {
@@ -43,7 +44,7 @@ export async function POST(req: Request) {
   const messages: ChatTurn[] = [
     {
       role: "system",
-      content: `You write a single ${p.name} post caption for a slideshow. Match ${p.name}'s typical tone and formatting conventions. ${lengthInstruction} Stay at or under ${max} characters total, including any hashtags. ${
+      content: `You write a single ${p.name} post caption for a short-form ${format}. Match ${p.name}'s typical tone and formatting conventions. ${lengthInstruction} Stay at or under ${max} characters total, including any hashtags. ${
         wantsHashtags
           ? "End with 3-5 relevant, specific hashtags on their own line — no generic tags like #love or #instagood."
           : "Do not include hashtags."

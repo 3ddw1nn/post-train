@@ -29,6 +29,7 @@ export type MediaRow = {
   height: number | null;
   upload_status: "pending" | "uploaded" | "failed";
   created_at: string;
+  thumbnail_media_id?: string | null;
 };
 export type UploadTarget = {
   media_id: string;
@@ -89,7 +90,11 @@ export async function storeUpload(mediaId: string, sig: string, body: Buffer): P
       headers: { "Content-Type": row.mime_type },
       body: new Uint8Array(body),
     });
-    if (!put.ok) throw new Error(`Could not upload media to storage (${put.status}).`);
+    if (!put.ok) {
+      const detail = (await put.text().catch(() => "")).slice(0, 300);
+      console.error("[media] object upload failed", { status: put.status, detail });
+      throw new Error("We couldn't save this file. Please try again.");
+    }
   } else {
     ensureMediaDir();
     writeFileSync(path.join(MEDIA_DIR, mediaId), body);
@@ -104,10 +109,10 @@ export async function completeUpload(mediaId: string, sig: string): Promise<Medi
   if (sign(`complete:${mediaId}`) !== sig) throw new Error("Invalid upload signature.");
   const row = await convexQuery<MediaRow | null>(api.media.getById, { id: mediaId });
   if (!row) throw new Error("Unknown media id.");
-  return await convexMutation<MediaRow>(api.media.markUploaded, {
-    id: mediaId,
-    size_bytes: row.size_bytes,
-  });
+  if (row.upload_status !== "uploaded") {
+    throw new Error("This upload is still processing. Please try again in a moment.");
+  }
+  return row;
 }
 
 export async function getMediaRedirectUrl(mediaId: string): Promise<{ row: MediaRow; url: string } | null> {
@@ -156,6 +161,15 @@ export async function deleteMedia(workspaceId: string, mediaId: string): Promise
   const file = path.join(MEDIA_DIR, mediaId);
   if (existsSync(file)) unlinkSync(file);
   return true;
+}
+
+/** Attaches (or clears, with `null`) a cover image to a video — set from the Thumbnail Maker tool. */
+export async function setMediaThumbnail(workspaceId: string, mediaId: string, thumbnailMediaId: string | null): Promise<MediaRow | null> {
+  return await convexMutation<MediaRow | null>(api.media.setThumbnail, {
+    workspace_id: workspaceId,
+    id: mediaId,
+    thumbnail_media_id: thumbnailMediaId,
+  });
 }
 
 export async function listMedia(workspaceId: string, limit = 50, offset = 0): Promise<{ data: MediaRow[]; count: number }> {

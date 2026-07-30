@@ -15,10 +15,7 @@ export default async function DashboardToolsPage() {
 
   return (
     <div className="fade-up">
-      <div className="flex flex-col gap-1 sm:flex-row sm:items-end sm:justify-between">
-        <h1 className="text-2xl font-bold">Tools</h1>
-        <p className="text-sm text-muted">Free utilities — no login, no catch.</p>
-      </div>
+      <h1 className="text-2xl font-bold">Tools</h1>
 
       <ToolCardGrid tools={tools} />
     </div>

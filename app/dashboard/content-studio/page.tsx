@@ -20,11 +20,21 @@ const TEMPLATES: {
 }[] = [
   {
     id: "ai-ugc",
-    title: "AI UGC Creator",
+    title: "AI UGC Video Studio",
     desc: "Pick a persona, add your hook text and CTA clip — ship UGC-style videos at volume.",
     tags: ["AI-powered"],
     icon: "sparkles",
     featured: true,
+    postType: "video",
+  },
+  {
+    // The persisted template slug stays "fade-in" (studio_jobs/studio_drafts
+    // rows already carry it); "video-editor" is a friendlier URL alias.
+    id: "video-editor",
+    title: "Video Editor",
+    desc: "Build a sequence on a timeline — trim, reorder, and drop a transition on every cut.",
+    tags: ["Updated"],
+    icon: "video",
     postType: "video",
   },
   {
@@ -36,18 +46,18 @@ const TEMPLATES: {
     postType: "video",
   },
   {
-    id: "fade-in",
-    title: "Single Fade-in Video",
-    desc: "One clip with a clean fade-in and caption overlay. Simple, fast, effective.",
-    tags: [],
-    icon: "video",
-    postType: "video",
-  },
-  {
     id: "slideshow",
     title: "Slideshow",
     desc: "Drop your own photos into a proven slide structure, with hook text baked onto each one.",
     tags: ["Photo posts"],
+    icon: "image",
+    postType: "image",
+  },
+  {
+    id: "thumbnail",
+    title: "Thumbnail Maker",
+    desc: "Design or AI-generate a video thumbnail — upload a background, grab a video frame, or generate one — then attach it to a video.",
+    tags: ["New"],
     icon: "image",
     postType: "image",
   },

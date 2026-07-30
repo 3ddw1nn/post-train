@@ -64,3 +64,18 @@ export async function resolveProviderKey(workspaceId: string, provider: ImageGen
 export async function providerConfigured(workspaceId: string, provider: ImageGenProvider): Promise<boolean> {
   return (await resolveProviderKey(workspaceId, provider)) !== null;
 }
+
+/**
+ * Workspace-stored key only, no env-var fallback — for tools (Thumbnail
+ * Maker) that bill per-generation and shouldn't silently spend the
+ * operator's own key without the user having added one.
+ */
+export async function resolveWorkspaceKey(workspaceId: string, provider: ImageGenProvider): Promise<string | null> {
+  const row = await findRecord<KeyRow>("image_gen_keys", { workspace_id: workspaceId, provider });
+  return row ? decryptJson<{ apiKey: string }>(row.credentials).apiKey : null;
+}
+
+/** For UI status badges on BYOK-required flows — workspace key only, matching resolveWorkspaceKey (not resolveProviderKey's env fallback). */
+export async function workspaceKeyConfigured(workspaceId: string, provider: ImageGenProvider): Promise<boolean> {
+  return (await resolveWorkspaceKey(workspaceId, provider)) !== null;
+}

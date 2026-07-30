@@ -22,9 +22,9 @@
 ### 🎥 Content Studio (AI Video Generation)
 - **2×2 Grid Compositing** — combine up to 4 video clips locally
 - **Fade-in Template** — single clip with text overlay
-- **AI UGC Creator** — generate talking-head videos
-  - **Stock personas** via Creatify (1500+ ready-made avatars)
-  - **Custom personas** via fal.ai (upload your face → TTS → AI avatar)
+- **AI UGC Video Studio** — generate, tailor, and schedule talking-head videos
+  - **Original stock personas** via Replicate P-Video Avatar
+  - **Custom personas** via Replicate P-Video Avatar (upload a face → AI avatar)
 - Monthly generation cap per workspace; purchasable credits
 
 ### 📊 Analytics
@@ -223,14 +223,13 @@ Output: 1080×1920 vertical video
 Cost: Free (local CPU)
 ```
 
-### AI UGC Creator
+### AI UGC Video Studio
 ```
 Input: Script (≤600 chars) + persona (stock or upload image)
 Process: 
-  - Stock: Creatify API → talking-head video
-  - Custom: fal.ai (image → TTS → Kling AI Avatar v2)
-Output: 1080×1920 vertical video (30-60s)
-Cost: ~$0 (Creatify paid plan) or ~$1.70 per 30s (fal.ai pay-as-you-go)
+  - Stock or custom: Replicate P-Video Avatar → talking-head video
+Output: 720p vertical talking-head video (up to 60s) + optional CTA clip
+Cost: ~$0.75 per 30s at 720p (pay-as-you-go)
 ```
 
 Monthly cap: **30 AI generations/month** per workspace (flat rate). Grid/fade-in uncapped.
@@ -278,8 +277,7 @@ Monthly cap: **30 AI generations/month** per workspace (flat rate). Grid/fade-in
 **Video Generation (Optional):**
 | Variable | Purpose |
 |----------|---------|
-| `CREATIFY_API_ID` / `API_KEY` | Stock UGC personas |
-| `FAL_KEY` | Custom persona AI |
+| `REPLICATE_API_TOKEN` | AI UGC talking-avatar video |
 | `STUDIO_MOCK` | Force mock mode (`1`) |
 
 **Background Worker (Render):**

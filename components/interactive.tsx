@@ -327,12 +327,14 @@ export function Dropdown({
   align = "left",
   side = "bottom",
   width = 220,
+  menuClassName,
 }: {
   trigger: React.ReactNode;
   children: React.ReactNode;
   align?: "left" | "right";
   side?: "top" | "bottom";
   width?: number;
+  menuClassName?: string;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -369,7 +371,9 @@ export function Dropdown({
       {open && mounted && pos && createPortal(
         <div
           ref={menuRef}
-          className="fixed z-[120] overflow-hidden rounded-xl border border-line bg-white py-1 shadow-lg fade-up"
+          className={`fixed z-[120] overflow-hidden rounded-xl border py-1 shadow-lg fade-up ${
+            menuClassName ?? "border-line bg-white"
+          }`}
           style={{ width, top: pos.top, left: pos.left }}
           onClick={(e) => {
             if ((e.target as HTMLElement).closest("a, button")) setOpen(false);
@@ -394,6 +398,8 @@ export function Select({
   className,
   width = 200,
   align = "left",
+  tone = "default",
+  ariaLabel,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -402,20 +408,29 @@ export function Select({
   className?: string;
   width?: number;
   align?: "left" | "right";
+  tone?: "default" | "dark";
+  ariaLabel?: string;
 }) {
   const selected = options.find((o) => o.value === value) ?? options[0];
+  const dark = tone === "dark";
   return (
     <Dropdown
       align={align}
       width={width}
+      menuClassName={dark ? "border-white/10 bg-[#171717] text-white shadow-2xl" : undefined}
       trigger={
         <button
           type="button"
           disabled={disabled}
-          className={`input flex items-center justify-between gap-2 text-left disabled:cursor-not-allowed disabled:opacity-50 ${className ?? ""}`}
+          aria-label={ariaLabel}
+          className={`flex items-center justify-between gap-2 text-left disabled:cursor-not-allowed disabled:opacity-50 ${
+            dark
+              ? "rounded-lg border border-white/15 bg-[#171717] px-3 py-2 text-sm font-semibold text-white hover:border-white/30 hover:bg-[#202020]"
+              : "input"
+          } ${className ?? ""}`}
         >
           <span className="truncate">{selected?.label ?? ""}</span>
-          <Icon name="chevronDown" size={15} className="shrink-0 text-muted" />
+          <Icon name="chevronDown" size={15} className={`shrink-0 ${dark ? "text-neutral-400" : "text-muted"}`} />
         </button>
       }
     >
@@ -427,11 +442,13 @@ export function Select({
               key={option.value}
               type="button"
               onClick={() => onChange(option.value)}
-              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold transition-colors hover:bg-page ${
-                active ? "text-primary-deep" : "text-ink"
+              className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold transition-colors ${
+                dark
+                  ? `hover:bg-white/10 ${active ? "text-white" : "text-neutral-300"}`
+                  : `hover:bg-page ${active ? "text-primary-deep" : "text-ink"}`
               }`}
             >
-              <Icon name="check" size={14} className={active ? "text-primary-deep" : "opacity-0"} />
+              <Icon name="check" size={14} className={active ? (dark ? "text-primary" : "text-primary-deep") : "opacity-0"} />
               <span className="truncate">{option.label}</span>
             </button>
           );

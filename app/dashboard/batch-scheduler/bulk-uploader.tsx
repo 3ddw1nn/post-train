@@ -115,10 +115,6 @@ export function BulkUploader({
           body: file,
         });
         if (!put.ok) throw new Error("Upload failed");
-        if (data.complete_url) {
-          const complete = await fetch(data.complete_url, { method: "POST" });
-          if (!complete.ok) throw new Error("Upload completion failed");
-        }
         setRows((r) => [
           ...r,
           {

@@ -60,6 +60,8 @@ const PATHS: Record<string, React.ReactNode> = {
   type: <path d="M4 7V5h16v2M12 5v14M9 19h6" />,
   circle: <path d="M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18Z" />,
   trash: <path d="M3 6h18M8 6V4h8v2M19 6l-1 14H6L5 6M10 11v6M14 11v6" />,
+  scissors: <path d="M6.5 7.5a2.5 2.5 0 1 1-3.54-3.54A2.5 2.5 0 0 1 6.5 7.5ZM6.5 20.04a2.5 2.5 0 1 1-3.54-3.54 2.5 2.5 0 0 1 3.54 3.54ZM8 6l13 12M8 18 21 6" />,
+  trim: <path d="M7 3v14a4 4 0 0 0 4 4h10M3 7h14a4 4 0 0 1 4 4v10" />,
   copy: (
     <path d="M9 9h11v11H9V9ZM5 15H4a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v1" />
   ),
@@ -96,6 +98,10 @@ const PATHS: Record<string, React.ReactNode> = {
     <path d="M8 3H5a2 2 0 0 0-2 2v3M16 3h3a2 2 0 0 1 2 2v3M21 16v3a2 2 0 0 1-2 2h-3M8 21H5a2 2 0 0 1-2-2v-3" />
   ),
   download: <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3" />,
+  play: <path d="M7 4v16l13-8L7 4Z" />,
+  pause: <path d="M7 4h3v16H7ZM14 4h3v16h-3Z" />,
+  undo: <path d="M9 7 4 12l5 5M4 12h9a7 7 0 0 1 7 7" />,
+  redo: <path d="m15 7 5 5-5 5M20 12h-9a7 7 0 0 0-7 7" />,
 };
 
 export function Icon({

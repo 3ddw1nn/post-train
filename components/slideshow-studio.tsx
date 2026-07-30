@@ -264,11 +264,15 @@ type TextLayer = {
   scale: number;
   font: string;
   style: string;
+  /** Text fill color — independent of `style`, which now only drives the
+   *  shadow/outline/none effect. Falls back to the style's own default fill
+   *  for layers saved before this field existed. */
+  color?: string;
   bgEnabled: boolean;
   bgColor: string;
   bgOpacity: number; // 0-100
 };
-type TextLayerDefaults = Pick<TextLayer, "width" | "scale" | "font" | "style" | "bgEnabled" | "bgColor" | "bgOpacity">;
+type TextLayerDefaults = Pick<TextLayer, "width" | "scale" | "font" | "style" | "color" | "bgEnabled" | "bgColor" | "bgOpacity">;
 const DEFAULT_TEXT_LAYER_SETTINGS = {
   x: 50,
   y: 50,
@@ -276,6 +280,7 @@ const DEFAULT_TEXT_LAYER_SETTINGS = {
   scale: TEXT_SCALE_DEFAULT,
   font: "sans",
   style: "shadow",
+  color: "#ffffff",
   bgEnabled: true,
   bgColor: TEXT_BG_COLOR_DEFAULT,
   bgOpacity: TEXT_BG_OPACITY_DEFAULT,
@@ -332,7 +337,9 @@ const QUICK_TEMPLATES: QuickTemplate[] = [
   { id: "budget-travel", title: "Travel on a Budget", desc: "Destination tips that feel aspirational.", category: "listicle", slides: 5, emoji: "🌍", tone: "from-cyan-100 via-white to-primary-soft" },
 ];
 
-type RefImage = { id: string; url: string; name: string; mediaId?: string };
+type CropOffset = { x: number; y: number };
+const DEFAULT_CROP: CropOffset = { x: 0.5, y: 0.5 };
+type RefImage = { id: string; url: string; name: string; mediaId?: string; crop?: CropOffset };
 type PlatformSlideData = {
   sources: string[];
   uploads: (RefImage | undefined)[];
@@ -878,6 +885,7 @@ function LayerView({
         style={{
           fontSize: `${layer.scale}cqw`,
           fontFamily: font.stack,
+          color: layer.color || st.fill,
           ...(layer.bgEnabled ? { backgroundColor: hexToRgba(layer.bgColor, layer.bgOpacity ?? 100) } : {}),
         }}
         className={`inline-block whitespace-pre-wrap break-words rounded px-[0.3em] py-[0.12em] font-black leading-tight outline-none ${st.className} ${
@@ -957,7 +965,12 @@ function LayeredSlideFrame({
     >
       {source === "upload" && uploadedImage ? (
         // eslint-disable-next-line @next/next/no-img-element -- local object URL preview.
-        <img src={uploadedImage.url} alt={uploadedImage.name} className="h-full w-full object-cover" />
+        <img
+          src={uploadedImage.url}
+          alt={uploadedImage.name}
+          className="h-full w-full object-cover"
+          style={{ objectPosition: `${(uploadedImage.crop?.x ?? DEFAULT_CROP.x) * 100}% ${(uploadedImage.crop?.y ?? DEFAULT_CROP.y) * 100}%` }}
+        />
       ) : (
         // Light, modern "empty slot" placeholder: soft mint gradient + a small
         // centered icon mark, rather than a heavy dark fill. The "shadow" text
@@ -991,6 +1004,129 @@ function LayeredSlideFrame({
         {index + 1}
       </span>
     </div>
+  );
+}
+
+/** Choose the focal point for an uploaded photo before it is committed to a
+ * slide. The highlighted window mirrors CSS object-fit: cover exactly. */
+function ImageCropModal({
+  imageUrl,
+  imageName,
+  targetAspect,
+  platformLabel,
+  stepLabel,
+  actionLabel,
+  initial = DEFAULT_CROP,
+  onCancel,
+  onSave,
+}: {
+  imageUrl: string;
+  imageName: string;
+  targetAspect: number;
+  platformLabel: string;
+  stepLabel?: string;
+  actionLabel: string;
+  initial?: CropOffset;
+  onCancel: () => void;
+  onSave: (crop: CropOffset) => void;
+}) {
+  const [mounted, setMounted] = useState(false);
+  const [crop, setCrop] = useState(initial);
+  const [imageSize, setImageSize] = useState<{ width: number; height: number } | null>(null);
+  const frameRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<{ x: number; y: number; value: number } | null>(null);
+  useEffect(() => setMounted(true), []);
+
+  const imageAspect = imageSize ? imageSize.width / imageSize.height : targetAspect;
+  const axis: "x" | "y" | "none" = imageAspect > targetAspect + 0.005 ? "x" : imageAspect < targetAspect - 0.005 ? "y" : "none";
+  const cropWidth = axis === "x" ? (targetAspect / imageAspect) * 100 : 100;
+  const cropHeight = axis === "y" ? (imageAspect / targetAspect) * 100 : 100;
+  const left = axis === "x" ? (100 - cropWidth) * crop.x : 0;
+  const top = axis === "y" ? (100 - cropHeight) * crop.y : 0;
+
+  function onPointerDown(e: React.PointerEvent<HTMLDivElement>) {
+    if (axis === "none") return;
+    e.currentTarget.setPointerCapture(e.pointerId);
+    dragRef.current = { x: e.clientX, y: e.clientY, value: axis === "x" ? crop.x : crop.y };
+  }
+  function onPointerMove(e: React.PointerEvent<HTMLDivElement>) {
+    if (!dragRef.current || !frameRef.current || axis === "none") return;
+    const rect = frameRef.current.getBoundingClientRect();
+    const travel = axis === "x" ? rect.width * (1 - cropWidth / 100) : rect.height * (1 - cropHeight / 100);
+    if (travel <= 0) return;
+    const delta = axis === "x" ? e.clientX - dragRef.current.x : e.clientY - dragRef.current.y;
+    const value = Math.min(1, Math.max(0, dragRef.current.value + delta / travel));
+    setCrop((current) => (axis === "x" ? { ...current, x: value } : { ...current, y: value }));
+  }
+  function onPointerUp(e: React.PointerEvent<HTMLDivElement>) {
+    dragRef.current = null;
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch {
+      // Pointer capture can already be released by the browser.
+    }
+  }
+
+  if (!mounted) return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[150] flex items-center justify-center bg-ink/55 p-4" role="dialog" aria-modal="true" aria-label="Reposition image crop">
+      <div className="card w-full max-w-2xl p-5 shadow-[0_24px_60px_rgba(6,63,59,0.26)]">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="text-lg font-extrabold text-ink">Reposition crop</p>
+            <p className="mt-1 text-sm text-muted">
+              {stepLabel ? `${stepLabel} · ` : ""}{platformLabel} · Drag the frame to choose what stays visible.
+            </p>
+          </div>
+          <button type="button" onClick={onCancel} aria-label="Cancel crop" className="text-muted transition-colors hover:text-ink">
+            <Icon name="x" size={18} />
+          </button>
+        </div>
+
+        <div className="mt-5 flex justify-center">
+          <div
+            ref={frameRef}
+            className="relative max-h-[58vh] w-full max-w-[560px] touch-none select-none overflow-hidden rounded-xl bg-ink"
+            style={{ aspectRatio: imageAspect }}
+          >
+            <img
+              src={imageUrl}
+              alt={imageName}
+              className="pointer-events-none h-full w-full object-contain"
+              onLoad={(e) => setImageSize({ width: e.currentTarget.naturalWidth, height: e.currentTarget.naturalHeight })}
+            />
+            {axis !== "none" && (
+              <div
+                className="absolute border-2 border-white"
+                style={{
+                  left: `${left}%`,
+                  top: `${top}%`,
+                  width: `${cropWidth}%`,
+                  height: `${cropHeight}%`,
+                  boxShadow: "0 0 0 9999px rgba(0,0,0,0.58)",
+                  cursor: axis === "x" ? "ew-resize" : "ns-resize",
+                }}
+                onPointerDown={onPointerDown}
+                onPointerMove={onPointerMove}
+                onPointerUp={onPointerUp}
+              />
+            )}
+          </div>
+        </div>
+        {axis === "none" && <p className="mt-3 text-center text-sm text-muted">This image already fits this format exactly.</p>}
+
+        <div className="mt-5 flex justify-end gap-2">
+          <button type="button" className="btn-subtle" onClick={() => setCrop(DEFAULT_CROP)}>
+            <Icon name="refresh" size={14} /> Center
+          </button>
+          <button type="button" className="btn-subtle" onClick={onCancel}>Cancel</button>
+          <button type="button" className="btn-primary" onClick={() => onSave(crop)}>
+            {actionLabel} <Icon name="chevronRight" size={15} />
+          </button>
+        </div>
+      </div>
+    </div>,
+    document.body,
   );
 }
 
@@ -1069,7 +1205,7 @@ function SlideExpandModal({
             onClick={onAddLayer}
             className="flex items-center gap-1 rounded-xl border border-white/25 bg-white/10 px-3 py-1.5 text-sm font-bold text-white transition-colors hover:bg-white/20"
           >
-            <Icon name="plus" size={14} /> Add text
+            <Icon name="type" size={14} /> Add text
           </button>
           <button
             type="button"
@@ -1153,7 +1289,7 @@ function SlideStructureCard({
               aria-label="Add a text box"
               className="flex h-7 w-7 items-center justify-center rounded-md bg-ink/70 text-white transition-colors hover:bg-ink/90"
             >
-              <Icon name="plus" size={14} />
+              <Icon name="type" size={14} />
             </button>
             <button
               type="button"
@@ -1357,7 +1493,7 @@ function drawLayer(ctx: CanvasRenderingContext2D, w: number, h: number, layer: T
       ctx.strokeStyle = "#000000";
       ctx.strokeText(ln, cx, y);
     }
-    ctx.fillStyle = st.fill;
+    ctx.fillStyle = layer.color || st.fill;
     ctx.fillText(ln, cx, y);
     ctx.restore();
   });
@@ -1382,7 +1518,8 @@ async function renderSlideBlob(opts: {
       const scale = Math.max(w / img.width, h / img.height); // object-cover
       const dw = img.width * scale;
       const dh = img.height * scale;
-      ctx.drawImage(img, (w - dw) / 2, (h - dh) / 2, dw, dh);
+      const crop = opts.uploadedImage.crop ?? DEFAULT_CROP;
+      ctx.drawImage(img, (w - dw) * crop.x, (h - dh) * crop.y, dw, dh);
     } catch {
       drawSlidePlaceholder(ctx, w, h);
     }
@@ -2001,6 +2138,15 @@ export function SlideshowStudio({
   const [platformSlideOverrides, setPlatformSlideOverrides] = useState<Record<string, PlatformSlideData>>({});
   const [uploadTargetIndex, setUploadTargetIndex] = useState<number | null>(null);
   const [uploadTargetPlatform, setUploadTargetPlatform] = useState<string | null>(null);
+  const [pendingUploadScope, setPendingUploadScope] = useState<{ file: File; index: number; platform: string | null } | null>(null);
+  const [pendingCropFlow, setPendingCropFlow] = useState<{
+    file: File;
+    imageUrl: string;
+    index: number;
+    platforms: (string | null)[];
+    current: number;
+    crops: Record<string, CropOffset>;
+  } | null>(null);
   const slideUploadInput = useRef<HTMLInputElement>(null);
   // Which slide (for which platform, null = base) is mid-upload to R2, so the
   // grid can show a spinner over it; and the last upload failure, if any.
@@ -2022,6 +2168,7 @@ export function SlideshowStudio({
     scale: DEFAULT_TEXT_LAYER_SETTINGS.scale,
     font: DEFAULT_TEXT_LAYER_SETTINGS.font,
     style: DEFAULT_TEXT_LAYER_SETTINGS.style,
+    color: DEFAULT_TEXT_LAYER_SETTINGS.color,
     bgEnabled: DEFAULT_TEXT_LAYER_SETTINGS.bgEnabled,
     bgColor: DEFAULT_TEXT_LAYER_SETTINGS.bgColor,
     bgOpacity: DEFAULT_TEXT_LAYER_SETTINGS.bgOpacity,
@@ -2146,7 +2293,10 @@ export function SlideshowStudio({
     }
     return set;
   }, [selectedAccountIds, accounts]);
-  const previewPlatforms = useMemo(() => PHOTO_PREVIEW_PLATFORM_TABS, []);
+  const previewPlatforms = useMemo(
+    () => PHOTO_PREVIEW_PLATFORM_TABS.filter((pid) => selectedPlatforms.has(pid)),
+    [selectedPlatforms]
+  );
   // The first selected platform's slides ARE the shared arrays (slideSources
   // etc) — every other platform inherits them until it gets its own override.
   const primaryPlatform = previewPlatforms[0];
@@ -2201,6 +2351,7 @@ export function SlideshowStudio({
     if (typeof patch.scale === "number") next.scale = clamp(patch.scale, TEXT_SCALE_MIN, TEXT_SCALE_MAX);
     if (typeof patch.font === "string") next.font = patch.font;
     if (typeof patch.style === "string") next.style = patch.style;
+    if (typeof patch.color === "string") next.color = patch.color;
     if (typeof patch.bgEnabled === "boolean") next.bgEnabled = patch.bgEnabled;
     if (typeof patch.bgColor === "string") next.bgColor = patch.bgColor;
     if (typeof patch.bgOpacity === "number") next.bgOpacity = Math.round(clamp(patch.bgOpacity, 0, 100));
@@ -2216,6 +2367,7 @@ export function SlideshowStudio({
       scale: DEFAULT_TEXT_LAYER_SETTINGS.scale,
       font: DEFAULT_TEXT_LAYER_SETTINGS.font,
       style: DEFAULT_TEXT_LAYER_SETTINGS.style,
+      color: DEFAULT_TEXT_LAYER_SETTINGS.color,
       bgEnabled: DEFAULT_TEXT_LAYER_SETTINGS.bgEnabled,
       bgColor: DEFAULT_TEXT_LAYER_SETTINGS.bgColor,
       bgOpacity: DEFAULT_TEXT_LAYER_SETTINGS.bgOpacity,
@@ -2231,6 +2383,7 @@ export function SlideshowStudio({
           scale: DEFAULT_TEXT_LAYER_SETTINGS.scale,
           font: DEFAULT_TEXT_LAYER_SETTINGS.font,
           style: DEFAULT_TEXT_LAYER_SETTINGS.style,
+          color: DEFAULT_TEXT_LAYER_SETTINGS.color,
           bgEnabled: DEFAULT_TEXT_LAYER_SETTINGS.bgEnabled,
           bgColor: DEFAULT_TEXT_LAYER_SETTINGS.bgColor,
           bgOpacity: DEFAULT_TEXT_LAYER_SETTINGS.bgOpacity,
@@ -2406,7 +2559,7 @@ export function SlideshowStudio({
     setSelectedLayer((cur) => (cur?.id === layerId ? null : cur));
   }
 
-  function updateSlideSource(index: number, id: string, platformId?: string) {
+  function writeSlideSource(index: number, id: string, platformId?: string) {
     const isBase = !platformId || platformId === primaryPlatform;
     if (isBase) {
       setSlideSources((s) => setAt(s, index, id, "auto"));
@@ -2417,13 +2570,18 @@ export function SlideshowStudio({
         return setPlatformOverrideOrPrune(cur, platformId, nextData);
       });
     }
-    // "Uploaded Images" needs an actual photo for this slide — never borrow
-    // one from the reference pool, so prompt a file picker right away.
+  }
+
+  function updateSlideSource(index: number, id: string, platformId?: string) {
+    // Wait to apply the upload source until the person chooses its platform
+    // scope. That makes Cancel a true cancellation instead of a partial edit.
     if (id === "upload") {
       setUploadTargetIndex(index);
-      setUploadTargetPlatform(isBase ? null : platformId ?? null);
+      setUploadTargetPlatform(!platformId || platformId === primaryPlatform ? null : platformId);
       slideUploadInput.current?.click();
+      return;
     }
+    writeSlideSource(index, id, platformId);
   }
 
   // Writes a slide's uploaded photo to the base array or the given platform's
@@ -2454,37 +2612,89 @@ export function SlideshowStudio({
   // that's what makes the photo survive a draft reload instead of vanishing
   // like a bare blob: URL does. A per-slide token guards against an older
   // upload finishing after a newer one and clobbering it.
-  async function pickSlideUpload(files: FileList | null) {
-    const file = files?.[0];
+  // Commit one upload across one or more platform-specific slide variants.
+  // Each variant gets its own crop even though they share the original file.
+  function applySlideUploadForPlatforms(index: number, platforms: (string | null)[], image: Omit<RefImage, "crop">, crops: Record<string, CropOffset>) {
+    const includesBase = platforms.includes(null) || (primaryPlatform !== undefined && platforms.includes(primaryPlatform));
+    if (includesBase) {
+      const crop = crops[primaryPlatform ?? "base"] ?? DEFAULT_CROP;
+      writeSlideSource(index, "upload");
+      writeSlideUpload(index, null, { ...image, crop }, true);
+    }
+    setPlatformSlideOverrides((cur) => {
+      let next = cur;
+      for (const platformId of platforms) {
+        if (!platformId || platformId === primaryPlatform) continue;
+        const data = next[platformId] ?? effectiveSlideData(platformId);
+        next = {
+          ...next,
+          [platformId]: {
+            ...data,
+            sources: setAt(data.sources, index, "upload", "auto"),
+            uploads: setAt(data.uploads, index, { ...image, crop: crops[platformId] ?? DEFAULT_CROP }, undefined),
+          },
+        };
+      }
+      return next;
+    });
+  }
+
+  function beginCropFlow(file: File, platforms: (string | null)[]) {
     const targetIndex = uploadTargetIndex;
-    const targetPlatform = uploadTargetPlatform;
     setUploadTargetIndex(null);
     setUploadTargetPlatform(null);
-    if (!file || targetIndex === null) return;
+    if (targetIndex === null) return;
+    setPendingCropFlow({ file, imageUrl: URL.createObjectURL(file), index: targetIndex, platforms, current: 0, crops: {} });
+  }
 
-    const isBase = !targetPlatform || targetPlatform === primaryPlatform;
-    const key = `${targetPlatform ?? "base"}:${targetIndex}`;
+  function cancelCropFlow() {
+    if (pendingCropFlow?.imageUrl.startsWith("blob:")) URL.revokeObjectURL(pendingCropFlow.imageUrl);
+    setPendingCropFlow(null);
+  }
+
+  async function commitCropFlow(flow: NonNullable<typeof pendingCropFlow>) {
+    setPendingCropFlow(null);
+    const key = `crop:${flow.index}:${flow.platforms.join(",")}`;
     const token = (uploadTokens.current[key] ?? 0) + 1;
     uploadTokens.current[key] = token;
-
-    const localImage: RefImage = { id: crypto.randomUUID(), url: URL.createObjectURL(file), name: file.name };
-    writeSlideUpload(targetIndex, targetPlatform, localImage, isBase);
+    const localImage = { id: crypto.randomUUID(), url: flow.imageUrl, name: flow.file.name };
+    applySlideUploadForPlatforms(flow.index, flow.platforms, localImage, flow.crops);
 
     setSlideUploadError("");
-    setSlideUploadBusy({ index: targetIndex, platform: targetPlatform });
+    setSlideUploadBusy({ index: flow.index, platform: flow.platforms.length === 1 ? flow.platforms[0] : null });
     try {
-      const uploaded = await uploadOneFile(file);
+      const uploaded = await uploadOneFile(flow.file);
       if (uploadTokens.current[key] !== token) {
         deleteUploadedMedia(uploaded.id);
-        return; // superseded by a newer pick for this slide
+        return;
       }
-      writeSlideUpload(targetIndex, targetPlatform, { id: localImage.id, url: `/api/media-file/${uploaded.id}`, name: file.name, mediaId: uploaded.id }, isBase);
+      applySlideUploadForPlatforms(
+        flow.index,
+        flow.platforms,
+        { id: localImage.id, url: `/api/media-file/${uploaded.id}`, name: flow.file.name, mediaId: uploaded.id },
+        flow.crops,
+      );
+      // Every slide variant now points at the durable media URL, so its shared
+      // local preview can be released without leaving a browser memory leak.
+      window.setTimeout(() => URL.revokeObjectURL(flow.imageUrl), 0);
     } catch (e) {
       if (uploadTokens.current[key] !== token) return;
       setSlideUploadError(e instanceof Error ? e.message : "Couldn't upload that photo — it'll only last this session.");
     } finally {
       if (uploadTokens.current[key] === token) setSlideUploadBusy(null);
     }
+  }
+
+  function saveCropAndContinue(crop: CropOffset) {
+    const flow = pendingCropFlow;
+    if (!flow) return;
+    const platformId = flow.platforms[flow.current] ?? "base";
+    const next = { ...flow, crops: { ...flow.crops, [platformId]: crop } };
+    if (flow.current < flow.platforms.length - 1) {
+      setPendingCropFlow({ ...next, current: flow.current + 1 });
+      return;
+    }
+    void commitCropFlow(next);
   }
 
   // Copies one slide's whole layer list (for whichever platform is being
@@ -2980,7 +3190,7 @@ export function SlideshowStudio({
                   : undefined
             }
           >
-            {mode === "custom" ? "Review" : "Continue"} <Icon name="chevronRight" size={15} />
+            Next <Icon name="chevronRight" size={15} />
           </button>
         )}
       </div>
@@ -3003,10 +3213,18 @@ export function SlideshowStudio({
           type="file"
           accept="image/*"
           className="hidden"
-          onChange={(e) => {
-            pickSlideUpload(e.target.files);
-            e.target.value = "";
-          }}
+                  onChange={(e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) {
+                      setUploadTargetIndex(null);
+                      setUploadTargetPlatform(null);
+                    } else if (uploadTargetIndex !== null && previewPlatforms.length > 1) {
+                      setPendingUploadScope({ file, index: uploadTargetIndex, platform: uploadTargetPlatform });
+                    } else {
+                      beginCropFlow(file, [uploadTargetPlatform ?? primaryPlatform ?? null]);
+                    }
+                    e.target.value = "";
+                  }}
         />
 
         {isTemplatesStep && (
@@ -3609,11 +3827,10 @@ export function SlideshowStudio({
                             <span className="flex h-full w-full items-center justify-center rounded-md bg-gradient-to-br from-slate-300 via-slate-400 to-slate-600">
                               <span
                                 className={`rounded px-1.5 py-0.5 text-sm font-black ${style.className}`}
-                                style={
-                                  selectedLayerData.bgEnabled
-                                    ? { backgroundColor: hexToRgba(selectedLayerData.bgColor, selectedLayerData.bgOpacity ?? 100) }
-                                    : undefined
-                                }
+                                style={{
+                                  color: selectedLayerData.color || style.fill,
+                                  ...(selectedLayerData.bgEnabled ? { backgroundColor: hexToRgba(selectedLayerData.bgColor, selectedLayerData.bgOpacity ?? 100) } : {}),
+                                }}
                               >
                                 Aa
                               </span>
@@ -3621,6 +3838,27 @@ export function SlideshowStudio({
                           </button>
                         ))}
                       </div>
+                    </div>
+
+                    <div className="min-w-0">
+                      <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-muted">Font Color</p>
+                      <label className="flex min-w-0 items-center gap-1.5 rounded-lg border border-line bg-white px-2 py-1">
+                        <input
+                          type="color"
+                          value={selectedLayerData.color || DEFAULT_TEXT_LAYER_SETTINGS.color}
+                          onChange={(e) => patchSelectedLayer({ color: e.target.value })}
+                          className="h-6 w-6 shrink-0 cursor-pointer border-0 bg-transparent p-0"
+                          aria-label="Font color"
+                        />
+                        <input
+                          type="text"
+                          value={selectedLayerData.color || DEFAULT_TEXT_LAYER_SETTINGS.color}
+                          onChange={(e) => patchSelectedLayer({ color: e.target.value })}
+                          className="w-full min-w-0 bg-transparent font-mono text-xs font-bold text-ink outline-none"
+                          aria-label="Font color hex code"
+                          spellCheck={false}
+                        />
+                      </label>
                     </div>
 
                     <div className="min-w-0">
@@ -3660,10 +3898,17 @@ export function SlideshowStudio({
                               type="color"
                               value={selectedLayerData.bgColor}
                               onChange={(e) => patchSelectedLayer({ bgColor: e.target.value })}
-                              className="h-6 w-6 cursor-pointer border-0 bg-transparent p-0"
+                              className="h-6 w-6 shrink-0 cursor-pointer border-0 bg-transparent p-0"
                               aria-label="Text background color"
                             />
-                            <span className="truncate font-mono text-xs text-muted">{selectedLayerData.bgColor}</span>
+                            <input
+                              type="text"
+                              value={selectedLayerData.bgColor}
+                              onChange={(e) => patchSelectedLayer({ bgColor: e.target.value })}
+                              className="w-20 min-w-0 bg-transparent font-mono text-xs font-bold text-ink outline-none"
+                              aria-label="Text background color hex code"
+                              spellCheck={false}
+                            />
                           </label>
                         )}
                       </div>
@@ -3706,7 +3951,7 @@ export function SlideshowStudio({
 
             <section className="mt-6">
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <FieldLabel icon="type">Platform Captions</FieldLabel>
+                <FieldLabel icon="type">Platform Captions (optional)</FieldLabel>
                 {selectedPlatforms.size > 0 && (
                   <div className="flex items-center gap-1 rounded-xl border border-line bg-page p-1">
                     {(
@@ -3732,9 +3977,10 @@ export function SlideshowStudio({
                 )}
               </div>
               {selectedPlatforms.size === 0 ? (
-                <p className="mt-2 text-sm text-muted">Select accounts under Post To to write a caption for each platform.</p>
+                <p className="mt-2 text-sm text-muted">Select accounts under Post To to optionally write a caption for each platform.</p>
               ) : (
                 <div className="mt-2 flex flex-col gap-3">
+                  <p className="text-sm text-muted">Leave any platform blank to launch without a caption.</p>
                   {[...selectedPlatforms].map((id) => {
                     const max = CAPTION_MAX_BY_PLATFORM[id as keyof typeof CAPTION_MAX_BY_PLATFORM] ?? CAPTION_MAX;
                     const value = platformCaptions[id] ?? "";
@@ -4108,9 +4354,110 @@ export function SlideshowStudio({
               </>
             );
           })()}
+
+        <div className="mt-8 flex items-center justify-between border-t border-line pt-5">
+          <button type="button" onClick={goBack} className="btn-subtle !py-1.5 text-sm">
+            <Icon name="chevronLeft" size={15} /> Back
+          </button>
+          {isReviewStep ? (
+            <button type="button" className="btn-primary !py-1.5 text-sm">
+              Launch <Icon name="sparkles" size={15} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={goNext}
+              disabled={(isSettingsStep && !canContinue) || (isTemplatesStep && !selectedTemplate)}
+              className="btn-primary !py-1.5 text-sm disabled:opacity-50"
+              title={
+                isSettingsStep && !canContinue
+                  ? "Add a campaign name and context to continue"
+                  : isTemplatesStep && !selectedTemplate
+                    ? "Pick a template to continue"
+                    : undefined
+              }
+            >
+              Next <Icon name="chevronRight" size={15} />
+            </button>
+          )}
+        </div>
       </div>
 
       {draftStatusPill && <div className="mt-4 flex justify-center">{draftStatusPill}</div>}
+
+      {pendingUploadScope && (
+        <div className="fixed inset-0 z-[140] flex items-center justify-center bg-ink/55 p-4" role="dialog" aria-modal="true" aria-label="Choose image scope">
+          <div className="card w-full max-w-md p-5 shadow-[0_24px_60px_rgba(6,63,59,0.26)]">
+            <p className="text-lg font-extrabold text-ink">Where should this image appear?</p>
+            <p className="mt-1.5 text-sm text-muted">
+              Choose the scope first. You’ll set the crop for each selected platform right after this.
+            </p>
+            <div className="mt-5 grid gap-2">
+              <button
+                type="button"
+                className="btn-subtle justify-start !px-4 !py-3 text-left"
+                onClick={() => {
+                  const { file, platform } = pendingUploadScope;
+                  setPendingUploadScope(null);
+                  beginCropFlow(file, [platform ?? primaryPlatform ?? null]);
+                }}
+              >
+                <span>
+                  <span className="block font-bold">This platform only</span>
+                  <span className="mt-0.5 block text-xs font-medium text-muted">Apply to Slide {pendingUploadScope.index + 1} for {platformOf(pendingUploadScope.platform ?? primaryPlatform ?? "")?.name ?? "this platform"}.</span>
+                </span>
+              </button>
+              <button
+                type="button"
+                className="btn-primary justify-start !px-4 !py-3 text-left"
+                onClick={() => {
+                  const { file } = pendingUploadScope;
+                  setPendingUploadScope(null);
+                  beginCropFlow(file, previewPlatforms.length ? previewPlatforms : [null]);
+                }}
+              >
+                <span>
+                  <span className="block font-bold">All selected platforms</span>
+                  <span className="mt-0.5 block text-xs font-medium text-white/80">Crop Slide {pendingUploadScope.index + 1} once for each format.</span>
+                </span>
+              </button>
+            </div>
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                className="btn-subtle"
+                onClick={() => {
+                  setPendingUploadScope(null);
+                  setUploadTargetIndex(null);
+                  setUploadTargetPlatform(null);
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {pendingCropFlow && (() => {
+        const platformId = pendingCropFlow.platforms[pendingCropFlow.current];
+        const platformLabel = platformId ? platformOf(platformId)?.name ?? platformId : "your selected format";
+        const activeAspect = platformId ? selectedPhotoFormatForPlatform(platformId, platformPhotoFormatIds).aspect.id : aspect;
+        const isLast = pendingCropFlow.current === pendingCropFlow.platforms.length - 1;
+        return (
+          <ImageCropModal
+            imageUrl={pendingCropFlow.imageUrl}
+            imageName={pendingCropFlow.file.name}
+            targetAspect={aspectRatioValue(activeAspect)}
+            platformLabel={platformLabel}
+            stepLabel={pendingCropFlow.platforms.length > 1 ? `Crop ${pendingCropFlow.current + 1} of ${pendingCropFlow.platforms.length}` : undefined}
+            actionLabel={isLast ? "Use image" : "Next crop"}
+            initial={pendingCropFlow.crops[platformId ?? "base"] ?? DEFAULT_CROP}
+            onCancel={cancelCropFlow}
+            onSave={saveCropAndContinue}
+          />
+        );
+      })()}
 
       <ConfirmDialog
         open={confirmDeleteDraft}

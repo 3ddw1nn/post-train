@@ -240,8 +240,7 @@ Draft-to-inbox (current, live behavior) already works and needs nothing further 
 
 ### 6. Content Studio with real providers (optional for MVP)
 
-- [ ] Creatify: Sign up for paid API plan, set `CREATIFY_API_ID`/`CREATIFY_API_KEY` on Vercel + Render
-- [ ] fal.ai: Create account, get `FAL_KEY`, set on both deployments
+- [ ] Replicate: Create account, get `REPLICATE_API_TOKEN`, set on both deployments
 - [ ] Generate one real video (any template) and verify it lands in media library
 - [ ] "Create post" from finished job → publish to a connected account
 
@@ -293,5 +292,3 @@ Draft-to-inbox (current, live behavior) already works and needs nothing further 
 | R2 (Media)       | ✅ Live      | CORS configured; scoped token in use                          |
 | Brevo (Email)    | ✅ Live      | Verified working; consider custom domain                      |
 | Stripe (Billing) | ✅ Sandbox   | Upgrade to production before launch                           |
-
-

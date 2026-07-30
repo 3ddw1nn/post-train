@@ -1,6 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { jsonError } from "@/lib/api-auth";
-import { listPersonas } from "@/lib/creatify";
+import { listPersonas } from "@/lib/replicate-avatar";
 
 export async function GET() {
   try {
