@@ -6,7 +6,7 @@
 // ponytail: text-only for now, same media-upload gap as lib/twitter.ts —
 // images/video need LinkedIn's separate assets registerUpload flow.
 import { randomBytes } from "node:crypto";
-import { sign } from "./auth";
+import { requireEnv, packOAuthState as packState, unpackOAuthState as unpackState } from "./oauth-state";
 
 const AUTHORIZE_URL = "https://www.linkedin.com/oauth/v2/authorization";
 const TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken";
@@ -27,12 +27,6 @@ class LinkedInError extends Error {
 }
 export function isLinkedInError(e: unknown): e is LinkedInError {
   return e instanceof LinkedInError;
-}
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`${name} is not set.`);
-  return v;
 }
 
 export function linkedinRedirectUri(): string {
@@ -88,18 +82,11 @@ export type OAuthFlowState = {
 };
 
 export function packOAuthState(data: Omit<OAuthFlowState, "exp">): string {
-  const payload: OAuthFlowState = { ...data, exp: Date.now() + 10 * 60_000 };
-  const json = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${json}.${sign(json)}`;
+  return packState<OAuthFlowState>(data);
 }
 
 export function unpackOAuthState(token: string | undefined): OAuthFlowState | null {
-  if (!token) return null;
-  const [json, mac] = token.split(".");
-  if (!json || !mac || sign(json) !== mac) return null;
-  const payload = JSON.parse(Buffer.from(json, "base64url").toString("utf8")) as OAuthFlowState;
-  if (Date.now() > payload.exp) return null;
-  return payload;
+  return unpackState<OAuthFlowState>(token);
 }
 
 export function newCsrfState(): string {

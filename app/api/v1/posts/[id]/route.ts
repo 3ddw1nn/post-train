@@ -1,19 +1,5 @@
 import { authenticateApiKey, jsonError } from "@/lib/api-auth";
-import {
-  DomainError,
-  deletePost,
-  getPostRow,
-  serializePost,
-  updatePost,
-} from "@/lib/posts";
-
-async function findPost(workspaceId: string, id: string) {
-  const post = await getPostRow(id);
-  if (!post || post.workspace_id !== workspaceId) {
-    throw new DomainError(404, "Post not found.");
-  }
-  return post;
-}
+import { deletePost, findPost, serializePost, updatePost } from "@/lib/posts";
 
 export async function GET(req: Request, ctx: { params: Promise<{ id: string }> }) {
   try {

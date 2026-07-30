@@ -30,6 +30,7 @@ import {
 } from "@/lib/video-render-settings";
 import { checkAiTone, type AiToneResult } from "@/lib/ai-tone";
 import type { StudioDraftRow } from "@/lib/studio-drafts";
+import { StudioChooseScreen, StudioCtaCard } from "./studio-choose-screen";
 
 export type GridAccount = { id: number; platform: string; username: string; avatar_url: string | null };
 type JobStatus = "idle" | "queued" | "generating" | "compositing" | "done" | "failed";
@@ -154,15 +155,6 @@ function audioSummary(clips: number[], hasTrack: boolean): string {
 function formatTime(seconds: number) {
   const s = Math.max(0, Math.floor(seconds));
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
-}
-
-function relativeTime(iso: string) {
-  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
 }
 
 function FieldLabel({ children, icon }: { children: React.ReactNode; icon?: string }) {
@@ -771,43 +763,6 @@ function DraftPreview({ draft }: { draft: StudioDraftRow }) {
   );
 }
 
-function DraftsSection({ drafts, loading, onResume, onDelete }: { drafts: StudioDraftRow[]; loading: boolean; onResume: (d: StudioDraftRow) => void; onDelete: (id: string) => void }) {
-  return (
-    <div className="card mt-5 p-6 sm:p-8">
-      <FieldLabel>Drafts</FieldLabel>
-      {loading ? (
-        <div className="mt-4 flex items-center gap-2 text-sm font-semibold text-muted" role="status">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted/40 border-t-transparent" />
-          Loading drafts…
-        </div>
-      ) : drafts.length === 0 ? (
-        <p className="mt-4 text-sm font-semibold text-muted">No saved drafts.</p>
-      ) : (
-        <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {drafts.map((d) => (
-            <div key={d.id} className="group flex items-center gap-3 rounded-xl border border-line bg-white p-3 transition-colors hover:border-primary hover:bg-primary-soft/30">
-              <button type="button" onClick={() => onResume(d)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                <DraftPreview draft={d} />
-                <span className="min-w-0">
-                  <span className="block truncate text-sm font-bold text-ink">{d.title}</span>
-                  <span className="mt-1 block text-xs font-semibold text-muted">{relativeTime(d.updated_at)}</span>
-                </span>
-              </button>
-              <button
-                type="button"
-                onClick={() => onDelete(d.id)}
-                aria-label={`Delete draft ${d.title}`}
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted opacity-0 transition-opacity hover:bg-ink/10 hover:text-danger group-hover:opacity-100 focus-visible:opacity-100"
-              >
-                <Icon name="x" size={13} />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 /* ---------------------------------- main ---------------------------------- */
 
@@ -1513,22 +1468,29 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
 
   if (mode === "choose") {
     return (
-      <div className="fade-up mx-auto w-full max-w-4xl pb-10">
-        {header}
-        <div className="card mt-5 p-6 sm:p-8">
-          <h2 className="text-xl font-black text-ink">Start a 2×2 grid video</h2>
-          <p className="mt-1 max-w-xl text-sm text-muted">
-            Four clips play at once in a social-ready video — pick the platform format, audio, borders, then render and launch.
-          </p>
-          <button type="button" onClick={() => { resetWizard(); setMode("wizard"); }} className="btn-primary mt-5">
-            <Icon name="plus" size={15} /> New grid video
-          </button>
-        </div>
-        <DraftsSection drafts={drafts} loading={draftsLoading} onResume={resumeDraft} onDelete={(id) => setPendingDeleteId(id)} />
-        {pendingDeleteId && (
-          <ConfirmDialog title="Delete draft?" message="This grid video draft will be removed. This can't be undone." onCancel={() => setPendingDeleteId(null)} onConfirm={confirmDelete} />
-        )}
-      </div>
+      <StudioChooseScreen
+        maxW="max-w-4xl"
+        icon="grid"
+        title="2×2 Grid Video Studio"
+        headerExtra={draftStatusPill}
+        cta={
+          <StudioCtaCard
+            title="Start a 2×2 grid video"
+            description="Four clips play at once in a social-ready video — pick the platform format, audio, borders, then render and launch."
+            buttonLabel="New grid video"
+            onClick={() => { resetWizard(); setMode("wizard"); }}
+          />
+        }
+        drafts={drafts}
+        draftsLoading={draftsLoading}
+        renderPreview={(draft) => <DraftPreview draft={draft} />}
+        onResume={resumeDraft}
+        onDelete={async (id) => {
+          const wasCurrent = draftIdRef.current === id;
+          await deleteDraft(id);
+          if (wasCurrent) resetWizard();
+        }}
+      />
     );
   }
 

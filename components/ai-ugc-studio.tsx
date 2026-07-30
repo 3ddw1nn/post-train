@@ -26,6 +26,7 @@ import {
   platform as platformOf,
 } from "@/lib/platforms";
 import type { StudioDraftRow } from "@/lib/studio-drafts";
+import { StudioChooseScreen, StudioCtaCard } from "./studio-choose-screen";
 
 export type AiUgcAccount = {
   id: number;
@@ -77,17 +78,6 @@ function defaultPublishing() {
     ].join("-"),
     time: `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`,
   };
-}
-
-function relativeTime(iso: string) {
-  const seconds = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
-  if (seconds < 60) return "Just now";
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
 }
 
 function estimateSeconds(chars: number) {
@@ -788,74 +778,33 @@ export function AiUgcStudio({
 
   if (mode === "choose") {
     return (
-      <div className="fade-up mx-auto w-full max-w-5xl pb-10">
-        {header}
-        <div className="card mt-5 p-6 sm:p-8">
-          <h2 className="text-xl font-black text-ink">Create an AI creator video</h2>
-          <p className="mt-1 max-w-2xl text-sm text-muted">
-            Choose the face, write what they say, add an optional product clip, then tailor and
-            schedule the finished video for every destination.
-          </p>
-          <button
-            type="button"
-            onClick={() => {
-              resetWizard();
-              setMode("wizard");
-            }}
-            className="btn-primary mt-5"
-          >
-            <Icon name="plus" size={15} /> New AI UGC video
-          </button>
-        </div>
-
-        <div className="card mt-5 p-6 sm:p-8">
-          <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Drafts</p>
-          {draftsLoading ? (
-            <div className="mt-4 flex items-center gap-2 text-sm font-semibold text-muted" role="status">
-              <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted/40 border-t-transparent" />
-              Loading drafts…
-            </div>
-          ) : drafts.length === 0 ? (
-            <div className="mt-4 rounded-xl border border-dashed border-line px-4 py-5">
-              <p className="text-sm font-bold text-ink">No saved drafts yet</p>
-              <p className="mt-1 text-sm text-muted">
-                Your work will appear here automatically after you name a campaign or start a script.
-              </p>
-            </div>
-          ) : (
-            <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {drafts.map((draft) => (
-                <div
-                  key={draft.id}
-                  className="group flex items-center gap-3 rounded-xl border border-line bg-white p-3 transition-colors hover:border-primary hover:bg-primary-soft/30"
-                >
-                  <button
-                    type="button"
-                    onClick={() => resumeDraft(draft)}
-                    className="flex min-w-0 flex-1 items-center gap-3 text-left"
-                  >
-                    <DraftPreview draft={draft} />
-                    <span className="min-w-0">
-                      <span className="block truncate text-sm font-bold text-ink">{draft.title}</span>
-                      <span className="mt-1 block text-xs font-semibold text-muted">
-                        {relativeTime(draft.updated_at)}
-                      </span>
-                    </span>
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void deleteDraft(draft.id)}
-                    aria-label={`Delete draft ${draft.title}`}
-                    className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted opacity-100 transition-opacity hover:bg-ink/10 hover:text-red-600 sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
-                  >
-                    <Icon name="x" size={13} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
+      <StudioChooseScreen
+        maxW="max-w-5xl"
+        icon="sparkles"
+        title="AI UGC Video Studio"
+        headerExtra={draftStatusPill}
+        cta={
+          <StudioCtaCard
+            title="Create an AI creator video"
+            description="Choose the face, write what they say, add an optional product clip, then tailor and schedule the finished video for every destination."
+            buttonLabel="New AI UGC video"
+            onClick={() => { resetWizard(); setMode("wizard"); }}
+          />
+        }
+        drafts={drafts}
+        draftsLoading={draftsLoading}
+        renderPreview={(draft) => <DraftPreview draft={draft} />}
+        onResume={resumeDraft}
+        onDelete={(id) => deleteDraft(id)}
+        emptyState={
+          <div className="mt-4 rounded-xl border border-dashed border-line px-4 py-5">
+            <p className="text-sm font-bold text-ink">No saved drafts yet</p>
+            <p className="mt-1 text-sm text-muted">
+              Your work will appear here automatically after you name a campaign or start a script.
+            </p>
+          </div>
+        }
+      />
     );
   }
 

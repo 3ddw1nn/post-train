@@ -1,9 +1,9 @@
 // AI image-generation providers for Slideshow Studio's "AI Generated" slide
 // source (see AI_MODELS in components/slideshow-studio.tsx) and the Thumbnail
-// Maker tool (components/tool-widgets/thumbnail-maker.tsx). Plain fetch
-// against each provider's HTTP API — same no-SDK idiom as lib/fal.ts and
-// lib/creatify.ts. Callers resolve the API key first (workspace BYOK or env
-// fallback — see lib/image-gen-keys.ts) and pass it in; this file has no
+// Maker Content Studio template (components/thumbnail-studio.tsx). Plain
+// fetch against each provider's HTTP API — same no-SDK idiom as lib/fal.ts
+// and lib/creatify.ts. Callers resolve the API key first (workspace BYOK or
+// env fallback — see lib/image-gen-keys.ts) and pass it in; this file has no
 // DB/Convex dependency of its own.
 export type ImageGenModel = "gpt-image-2" | "nano-banana-2" | "seedream-5";
 export type ImageGenProvider = "openai" | "gemini" | "ark";

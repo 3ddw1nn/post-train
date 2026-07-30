@@ -2,7 +2,7 @@
 // Uses the TikTok Content Posting API to publish videos.
 // https://developers.tiktok.com/doc/
 import { randomBytes } from "node:crypto";
-import { sign } from "./auth";
+import { requireEnv, packOAuthState as packState, unpackOAuthState as unpackState } from "./oauth-state";
 
 // TikTok deprecated the v1 OAuth endpoints in Sept 2023 — v2 is required now.
 const AUTHORIZE_URL = "https://www.tiktok.com/v2/auth/authorize/";
@@ -26,12 +26,6 @@ class TikTokError extends Error {
 
 export function isTikTokError(e: unknown): e is TikTokError {
   return e instanceof TikTokError;
-}
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`${name} is not set.`);
-  return v;
 }
 
 export function tiktokRedirectUri(origin: string): string {
@@ -153,16 +147,9 @@ export function newCsrfState(): string {
 }
 
 export function packOAuthState(data: Omit<OAuthFlowState, "exp">): string {
-  const payload: OAuthFlowState = { ...data, exp: Date.now() + 10 * 60_000 };
-  const json = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${json}.${sign(json)}`;
+  return packState<OAuthFlowState>(data);
 }
 
 export function unpackOAuthState(token: string | undefined): OAuthFlowState | null {
-  if (!token) return null;
-  const [json, mac] = token.split(".");
-  if (!json || !mac || sign(json) !== mac) return null;
-  const payload = JSON.parse(Buffer.from(json, "base64url").toString("utf8")) as OAuthFlowState;
-  if (payload.exp < Date.now()) return null;
-  return payload;
+  return unpackState<OAuthFlowState>(token);
 }

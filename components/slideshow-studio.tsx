@@ -10,6 +10,8 @@ import { platform as platformOf, CAROUSEL_MAX, CAPTION_MAX, CAPTION_MAX_BY_PLATF
 import { checkAiTone, type AiToneResult } from "@/lib/ai-tone";
 import type { StudioDraftMode, StudioDraftRow } from "@/lib/studio-drafts";
 import { MODEL_PROVIDER, type ImageGenProvider } from "@/lib/image-gen";
+import { clamp, hexToRgba } from "@/lib/color";
+import { StudioChooseScreen } from "./studio-choose-screen";
 
 const CUSTOM_STEPS = ["Settings", "Review & Launch"] as const;
 const TEMPLATE_STEPS = ["Templates", "Settings", "Images", "Launch"] as const;
@@ -300,17 +302,6 @@ function layerFont(layer: TextLayer) {
 }
 function layerStyle(layer: TextLayer) {
   return TEXT_STYLES.find((s) => s.id === layer.style) ?? TEXT_STYLES[0];
-}
-// hex -> "rgba(r, g, b, a)" so the background chip can be translucent without
-// the CSS `opacity` property also fading the text drawn on top of it.
-function hexToRgba(hex: string, opacityPercent: number): string {
-  const clean = hex.replace("#", "");
-  const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
-  const n = parseInt(full, 16) || 0;
-  const r = (n >> 16) & 255;
-  const g = (n >> 8) & 255;
-  const b = n & 255;
-  return `rgba(${r}, ${g}, ${b}, ${clamp(opacityPercent, 0, 100) / 100})`;
 }
 
 // Quick-start templates for the Templates wizard grid. Thumbnails are branded
@@ -734,8 +725,6 @@ function SlideSourceControl({
     </>
   );
 }
-
-const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 
 // Set arr[index] = value, growing the array with `fill` if it's too short.
 // A plain arr.map() silently drops the write when index is past the end (which
@@ -1623,15 +1612,6 @@ function ModeChooser({
 
 /* --------------------------------- drafts ------------------------------------- */
 
-function relativeTime(iso: string) {
-  const mins = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  if (mins < 1) return "just now";
-  if (mins < 60) return `${mins}m ago`;
-  const hours = Math.round(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
-  return `${Math.round(hours / 24)}d ago`;
-}
-
 function DraftOriginTag({ mode, platform }: { mode: StudioDraftMode; platform: string | null }) {
   if (mode === "copy") {
     const iconId = platform === "Instagram" ? "instagram" : platform === "TikTok" ? "tiktok" : null;
@@ -1689,88 +1669,6 @@ function ConfirmDialog({
   );
 }
 
-function DraftsSection({
-  drafts,
-  loading,
-  onResume,
-  onDelete,
-}: {
-  drafts: StudioDraftRow[];
-  loading: boolean;
-  onResume: (draft: StudioDraftRow) => void;
-  onDelete: (id: string) => void;
-}) {
-  const [pendingDelete, setPendingDelete] = useState<StudioDraftRow | null>(null);
-  return (
-    <div className="card mt-5 p-6 sm:p-8">
-      <h3 className="text-xs font-black uppercase tracking-[0.1em] text-muted">Drafts</h3>
-      {loading ? (
-        <div className="mt-4 flex items-center gap-2 text-sm font-semibold text-muted">
-          <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted/40 border-t-transparent" />
-          Loading drafts…
-        </div>
-      ) : !drafts.length ? (
-        <p className="mt-4 text-sm font-semibold text-muted">No saved drafts.</p>
-      ) : (
-      <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {drafts.map((draft) => (
-          <div
-            key={draft.id}
-            role="button"
-            tabIndex={0}
-            onClick={() => onResume(draft)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.preventDefault();
-                onResume(draft);
-              }
-            }}
-            className="group relative flex cursor-pointer items-center gap-3 rounded-xl border border-line bg-white p-3 text-left transition-colors hover:border-primary hover:bg-primary-soft/30"
-          >
-            <span className="flex h-12 w-12 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-page">
-              {draft.cover_image_url ? (
-                // eslint-disable-next-line @next/next/no-img-element -- external reference-photo preview
-                <img src={draft.cover_image_url} alt="" className="h-full w-full object-cover" />
-              ) : (
-                <Icon name="stack" size={18} className="text-muted" />
-              )}
-            </span>
-            <span className="min-w-0 flex-1">
-              <span className="block truncate text-sm font-bold text-ink">{draft.title}</span>
-              <span className="mt-1 flex items-center gap-2">
-                <DraftOriginTag mode={draft.mode} platform={draft.source_platform} />
-                <span className="text-xs font-semibold text-muted">{relativeTime(draft.updated_at)}</span>
-              </span>
-            </span>
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                setPendingDelete(draft);
-              }}
-              aria-label={`Delete draft ${draft.title}`}
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-muted opacity-0 transition-opacity hover:bg-ink/10 hover:text-ink group-hover:opacity-100"
-            >
-              <Icon name="x" size={13} />
-            </button>
-          </div>
-        ))}
-      </div>
-      )}
-      <ConfirmDialog
-        open={!!pendingDelete}
-        title="Delete this draft?"
-        message={`"${pendingDelete?.title || "Untitled draft"}" will be permanently deleted. This can't be undone.`}
-        confirmLabel="Delete"
-        onConfirm={() => {
-          if (pendingDelete) onDelete(pendingDelete.id);
-          setPendingDelete(null);
-        }}
-        onCancel={() => setPendingDelete(null)}
-      />
-    </div>
-  );
-}
 
 /* ------------------------------- templates step ------------------------------ */
 
@@ -3124,14 +3022,33 @@ export function SlideshowStudio({
 
   if (mode === "choose") {
     return (
-      <div className="fade-up mx-auto w-full max-w-5xl pb-10">
-        {header}
-        <ModeChooser
-          onTemplates={() => enterMode("templates")}
-          onCustom={() => enterMode("custom")}
-          onCopy={() => setCopyModalOpen(true)}
-        />
-        <DraftsSection drafts={drafts} loading={draftsLoading} onResume={resumeDraft} onDelete={deleteDraft} />
+      <StudioChooseScreen
+        maxW="max-w-5xl"
+        icon="stack"
+        title="Slide Show Studio"
+        cta={
+          <ModeChooser
+            onTemplates={() => enterMode("templates")}
+            onCustom={() => enterMode("custom")}
+            onCopy={() => setCopyModalOpen(true)}
+          />
+        }
+        drafts={drafts}
+        draftsLoading={draftsLoading}
+        renderPreview={(draft) => (
+          <span className="flex h-16 w-16 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-page">
+            {draft.cover_image_url ? (
+              // eslint-disable-next-line @next/next/no-img-element -- external reference-photo preview
+              <img src={draft.cover_image_url} alt="" className="h-full w-full object-cover" />
+            ) : (
+              <Icon name="stack" size={18} className="text-muted" />
+            )}
+          </span>
+        )}
+        renderBadge={(draft) => <DraftOriginTag mode={draft.mode} platform={draft.source_platform} />}
+        onResume={resumeDraft}
+        onDelete={deleteDraft}
+      >
         <CopySlideshowModal
           open={copyModalOpen}
           link={slideshowReference}
@@ -3146,7 +3063,7 @@ export function SlideshowStudio({
           acknowledged={copyAcknowledged}
           onAcknowledgedChange={setCopyAcknowledged}
         />
-      </div>
+      </StudioChooseScreen>
     );
   }
 

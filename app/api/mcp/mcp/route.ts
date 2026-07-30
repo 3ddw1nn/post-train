@@ -7,7 +7,7 @@ import { accountsForWorkspace } from "@/lib/accounts";
 import {
   createPost,
   deletePost,
-  getPostRow,
+  findPost as findWorkspacePost,
   listPosts,
   serializePost,
   updatePost,
@@ -104,13 +104,7 @@ const TOOLS: { name: string; description: string; inputSchema: Json }[] = [
 ];
 
 async function callTool(ctx: ApiContext, name: string, args: Json): Promise<unknown> {
-  const findPost = async (id: string) => {
-    const post = await getPostRow(String(id));
-    if (!post || post.workspace_id !== ctx.workspace.id) {
-      throw new DomainError(404, "Post not found.");
-    }
-    return post;
-    };
+  const findPost = (id: string) => findWorkspacePost(ctx.workspace.id, String(id));
   switch (name) {
     case "list_social_accounts":
       return (await accountsForWorkspace(ctx.workspace.id)).map((a) => ({

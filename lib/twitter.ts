@@ -9,7 +9,7 @@
 // tokens in the same encrypted `credentials` blob, and upload media before
 // creating the tweet.
 import { randomBytes, createHash } from "node:crypto";
-import { sign } from "./auth";
+import { requireEnv, packOAuthState as packState, unpackOAuthState as unpackState } from "./oauth-state";
 
 const AUTHORIZE_URL = "https://twitter.com/i/oauth2/authorize";
 const TOKEN_URL = "https://api.twitter.com/2/oauth2/token";
@@ -41,12 +41,6 @@ export function generatePkce(): { verifier: string; challenge: string } {
   const verifier = base64url(randomBytes(32));
   const challenge = base64url(createHash("sha256").update(verifier).digest());
   return { verifier, challenge };
-}
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`${name} is not set.`);
-  return v;
 }
 
 export function twitterRedirectUri(): string {
@@ -153,18 +147,11 @@ export type OAuthFlowState = {
 
 /** Signed, short-lived carrier for PKCE verifier + return path across the OAuth redirect. */
 export function packOAuthState(data: Omit<OAuthFlowState, "exp">): string {
-  const payload: OAuthFlowState = { ...data, exp: Date.now() + 10 * 60_000 };
-  const json = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${json}.${sign(json)}`;
+  return packState<OAuthFlowState>(data);
 }
 
 export function unpackOAuthState(token: string | undefined): OAuthFlowState | null {
-  if (!token) return null;
-  const [json, mac] = token.split(".");
-  if (!json || !mac || sign(json) !== mac) return null;
-  const payload = JSON.parse(Buffer.from(json, "base64url").toString("utf8")) as OAuthFlowState;
-  if (Date.now() > payload.exp) return null;
-  return payload;
+  return unpackState<OAuthFlowState>(token);
 }
 
 export type TwitterPublishResult = { platform_post_id: string; share_url: string };

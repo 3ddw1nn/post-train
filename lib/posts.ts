@@ -210,6 +210,15 @@ export async function getPostRow(id: string): Promise<PostRow | null> {
   return await convexQuery<PostRow | null>(api.posts.getPost, { id });
 }
 
+/** getPostRow, plus the workspace-ownership check every caller needs before acting on the result. */
+export async function findPost(workspaceId: string, id: string): Promise<PostRow> {
+  const post = await getPostRow(id);
+  if (!post || post.workspace_id !== workspaceId) {
+    throw new DomainError(404, "Post not found.");
+  }
+  return post;
+}
+
 export async function postMediaIds(postId: string): Promise<string[]> {
   return await convexQuery<string[]>(api.posts.getMediaIds, { post_id: postId });
 }

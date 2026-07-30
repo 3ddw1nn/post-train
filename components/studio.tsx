@@ -27,6 +27,8 @@ import {
   type TransitionGroup,
   type TransitionId,
 } from "@/lib/transitions";
+import { clamp, hexToRgba as fadeHexToRgba } from "@/lib/color";
+import { StudioChooseScreen, StudioCtaCard } from "./studio-choose-screen";
 
 type StudioJob = {
   id: string;
@@ -222,7 +224,6 @@ async function captionToPngFile(text: string): Promise<File> {
 // vs. per-slide, one set shared across every platform vs. per-platform
 // overrides) — each Studio stays self-contained, same as FadeCropModal
 // duplicating ImageCropModal's concept independently.
-const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
 const FADE_FONTS = [
   { id: "sans", name: "Sans", stack: "-apple-system, 'Segoe UI', Roboto, sans-serif" },
   { id: "serif", name: "Serif", stack: "Georgia, 'Times New Roman', serif" },
@@ -263,15 +264,6 @@ function fadeLayerFont(layer: FadeTextLayer) {
 }
 function fadeLayerStyle(layer: FadeTextLayer) {
   return FADE_TEXT_STYLES.find((s) => s.id === layer.style) ?? FADE_TEXT_STYLES[0];
-}
-function fadeHexToRgba(hex: string, opacityPercent: number): string {
-  const clean = hex.replace("#", "");
-  const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
-  const n = parseInt(full, 16) || 0;
-  const r = (n >> 16) & 255;
-  const g = (n >> 8) & 255;
-  const b = n & 255;
-  return `rgba(${r}, ${g}, ${b}, ${Math.min(100, Math.max(0, opacityPercent)) / 100})`;
 }
 // Video captions read much smaller than slideshow's hero text at the same
 // cqw scale (a slide is one big static hook line; a caption is a subtitle
@@ -3949,10 +3941,6 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
 
 }
 
-function draftAge(iso: string) {
-  const minutes = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
-  return minutes < 1 ? "just now" : minutes < 60 ? `${minutes}m ago` : `${Math.round(minutes / 60)}h ago`;
-}
 
 export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) {
   const [mode, setMode] = useState<"choose" | "wizard">("choose");
@@ -3970,6 +3958,7 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
   const [pollTick, setPollTick] = useState(0);
   const [renderError, setRenderError] = useState("");
   const [drafts, setDrafts] = useState<StudioDraftRow[]>([]);
+  const [draftsLoading, setDraftsLoading] = useState(true);
   const [draftStatus, setDraftStatus] = useState<"idle" | "saving" | "saved">("idle");
   const [uploading, setUploading] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
@@ -3991,7 +3980,8 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
     fetch("/api/app/studio/drafts")
       .then((response) => response.ok ? response.json() : null)
       .then((data) => setDrafts((data?.data ?? []).filter((draft: StudioDraftRow) => draft.template === "fade-in")))
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setDraftsLoading(false));
   }, []);
 
   useEffect(() => {
@@ -4061,10 +4051,51 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
       setMode("wizard");
     } catch {}
   }
+  async function deleteDraft(id: string) {
+    const wasCurrent = draftId.current === id;
+    setDrafts((current) => current.filter((draft) => draft.id !== id));
+    try {
+      await fetch(`/api/app/studio/drafts/${id}`, { method: "DELETE" });
+    } catch {
+      /* best-effort */
+    }
+    if (wasCurrent) reset();
+  }
 
   if (mode === "wizard") return <FadeVideoEditor onExit={() => setMode("choose")} accounts={accounts} initialClip={resumeDraft?.state.segments?.[0]?.media ?? clip} initialCaption={resumeDraft?.state.caption ?? caption} initialDraft={resumeDraft?.state} initialDraftId={resumeDraft?.id} />;
 
-  if (mode === "choose") return <div className="fade-up mx-auto w-full max-w-4xl pb-10"><Link href="/dashboard/content-studio" className="inline-flex items-center gap-1 text-sm font-medium text-muted hover:text-primary-deep"><Icon name="chevronLeft" size={15} /> Content Studio</Link><h1 className="mt-2 flex items-center gap-2 text-2xl font-bold"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white"><Icon name="video" size={18} /></span>Video Editor Studio</h1><div className="card mt-5 p-6 sm:p-8"><h2 className="text-xl font-black">Create a video</h2><p className="mt-1 max-w-xl text-sm text-muted">Build a sequence, join the clips with transitions, then review exactly what each audience will receive.</p><button type="button" onClick={() => { reset(); setResumeDraft(null); setMode("wizard"); }} className="btn-primary mt-5"><Icon name="plus" size={15} /> New video</button></div><div className="card mt-5 p-6"><p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Drafts</p>{drafts.length === 0 ? <p className="mt-4 text-sm font-semibold text-muted">No saved drafts.</p> : <div className="mt-4 grid gap-3 sm:grid-cols-2">{drafts.map((draft) => { let media: ComposerMedia | null = null; try { const state = JSON.parse(draft.state) as FadeDraftSnapshot & { clip?: ComposerMedia | null }; media = state.segments?.[0]?.media ?? state.clip ?? null; } catch {} return <button key={draft.id} type="button" onClick={() => resume(draft)} className="flex min-w-0 items-center gap-3 rounded-xl border border-line p-3 text-left hover:border-primary hover:bg-primary-soft/30">{media ? <video src={`/api/media-file/${media.id}`} className="h-14 w-14 rounded-lg bg-ink object-cover" muted preload="metadata" onLoadedMetadata={(event) => { event.currentTarget.currentTime = Math.min(0.1, event.currentTarget.duration || 0); }} /> : <span className="flex h-14 w-14 items-center justify-center rounded-lg bg-primary-soft text-primary-deep"><Icon name="video" size={20} /></span>}<span className="min-w-0"><span className="block truncate font-bold">{draft.title}</span><span className="mt-1 block text-xs text-muted">{draftAge(draft.updated_at)}</span></span></button>; })}</div>}</div></div>;
+  if (mode === "choose")
+    return (
+      <StudioChooseScreen
+        maxW="max-w-4xl"
+        icon="video"
+        title="Video Editor Studio"
+        cta={
+          <StudioCtaCard
+            title="Create a video"
+            description="Build a sequence, join the clips with transitions, then review exactly what each audience will receive."
+            buttonLabel="New video"
+            onClick={() => { reset(); setResumeDraft(null); setMode("wizard"); }}
+          />
+        }
+        drafts={drafts}
+        draftsLoading={draftsLoading}
+        renderPreview={(draft) => {
+          let media: ComposerMedia | null = null;
+          try {
+            const state = JSON.parse(draft.state) as FadeDraftSnapshot & { clip?: ComposerMedia | null };
+            media = state.segments?.[0]?.media ?? state.clip ?? null;
+          } catch {}
+          return media ? (
+            <video src={`/api/media-file/${media.id}`} className="h-16 w-16 shrink-0 rounded-lg bg-ink object-cover" muted preload="metadata" onLoadedMetadata={(event) => { event.currentTarget.currentTime = Math.min(0.1, event.currentTarget.duration || 0); }} />
+          ) : (
+            <span className="flex h-16 w-16 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary-deep"><Icon name="video" size={20} /></span>
+          );
+        }}
+        onResume={resume}
+        onDelete={deleteDraft}
+      />
+    );
 }
 
 /* -------------------------------- jobs list -------------------------------- */

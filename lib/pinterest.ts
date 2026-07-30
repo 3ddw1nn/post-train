@@ -2,7 +2,7 @@
 // Uses the Pins API to create pins on a user's Pinterest board.
 // https://developers.pinterest.com/docs/api/overview/
 import { randomBytes } from "node:crypto";
-import { sign } from "./auth";
+import { requireEnv, packOAuthState as packState, unpackOAuthState as unpackState } from "./oauth-state";
 
 const AUTHORIZE_URL = "https://api.pinterest.com/oauth/";
 const TOKEN_URL = "https://api.pinterest.com/v1/oauth/token";
@@ -24,12 +24,6 @@ class PinterestError extends Error {
 
 export function isPinterestError(e: unknown): e is PinterestError {
   return e instanceof PinterestError;
-}
-
-function requireEnv(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`${name} is not set.`);
-  return v;
 }
 
 export function pinterestRedirectUri(origin: string): string {
@@ -133,16 +127,9 @@ export function newCsrfState(): string {
 }
 
 export function packOAuthState(data: Omit<OAuthFlowState, "exp">): string {
-  const payload: OAuthFlowState = { ...data, exp: Date.now() + 10 * 60_000 };
-  const json = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${json}.${sign(json)}`;
+  return packState<OAuthFlowState>(data);
 }
 
 export function unpackOAuthState(token: string | undefined): OAuthFlowState | null {
-  if (!token) return null;
-  const [json, mac] = token.split(".");
-  if (!json || !mac || sign(json) !== mac) return null;
-  const payload = JSON.parse(Buffer.from(json, "base64url").toString("utf8")) as OAuthFlowState;
-  if (payload.exp < Date.now()) return null;
-  return payload;
+  return unpackState<OAuthFlowState>(token);
 }

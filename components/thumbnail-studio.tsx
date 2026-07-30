@@ -24,8 +24,7 @@ import {
   type ThumbnailStyleId,
 } from "@/lib/thumbnail-presets";
 import type { ImageGenModel, ImageGenProvider } from "@/lib/image-gen";
-
-const clamp = (n: number, lo: number, hi: number) => Math.min(hi, Math.max(lo, n));
+import { clamp, hexToRgba } from "@/lib/color";
 
 // System font stacks only — same reasoning as slideshow-studio.tsx: nothing
 // to fetch, no CSP concerns, and it matches the DOM preview to the canvas
@@ -96,12 +95,6 @@ function layerFont(layer: TextLayer) {
 }
 function layerStyle(layer: TextLayer) {
   return TEXT_STYLES.find((s) => s.id === layer.style) ?? TEXT_STYLES[0];
-}
-function hexToRgba(hex: string, opacityPercent: number): string {
-  const clean = hex.replace("#", "");
-  const full = clean.length === 3 ? clean.split("").map((c) => c + c).join("") : clean;
-  const n = parseInt(full, 16) || 0;
-  return `rgba(${(n >> 16) & 255}, ${(n >> 8) & 255}, ${n & 255}, ${clamp(opacityPercent, 0, 100) / 100})`;
 }
 function makeTextLayer(text: string): TextLayer {
   return { id: `l_${Math.random().toString(36).slice(2, 9)}`, kind: "text", text, x: 50, y: 50, width: 70, scale: 9, font: "sans", style: "shadow", bgEnabled: false, bgColor: "#000000", bgOpacity: 100 };
