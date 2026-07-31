@@ -27,7 +27,7 @@ export function localDateInputValue(date = new Date()): string {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
 }
 
-/** One minute from now as an `<input type="time">` value, in local time. */
+/** 60+ seconds from now as an `<input type="time">` value, in local time. */
 export function nextMinuteInputValue(date = new Date()): string {
   const next = new Date(date);
   next.setSeconds(0, 0);
@@ -38,4 +38,11 @@ export function nextMinuteInputValue(date = new Date()): string {
 export function isPastSchedule(date: string, time: string, now = new Date()): boolean {
   const scheduled = new Date(`${date}T${time || "00:00"}`);
   return !Number.isNaN(scheduled.getTime()) && scheduled.getTime() < now.getTime();
+}
+
+/** Check if scheduled time is past today but same day (not a rejected future date). */
+export function isPastToday(date: string, time: string, now = new Date()): boolean {
+  if (!isPastSchedule(date, time, now)) return false;
+  const todayDate = localDateInputValue(now);
+  return date === todayDate;
 }

@@ -13,10 +13,10 @@ const AVATAR_ROOT = AVATAR_MODEL.split("/").slice(0, 2).join("/");
 export const FAL_AVATAR_PER_SECOND = 0.0562; // Kling AI Avatar v2 standard, $/sec of output
 
 export function falEnabled(): boolean {
-  return !!process.env.FAL_KEY && !studioMock();
+  return !!process.env.FAL_API_KEY && !studioMock();
 }
 
-const authHeader = () => ({ Authorization: `Key ${process.env.FAL_KEY}` });
+const authHeader = () => ({ Authorization: `Key ${process.env.FAL_API_KEY}` });
 
 async function falJson(url: string, init?: RequestInit): Promise<unknown> {
   const res = await fetch(url, {

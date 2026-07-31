@@ -26,7 +26,7 @@ export function creatifyEnabled(): boolean {
 export function studioMock(): boolean {
   if (process.env.STUDIO_MOCK === "1") return true;
   if (process.env.STUDIO_MOCK === "0") return false;
-  const anyKey = process.env.REPLICATE_API_TOKEN || process.env.FAL_KEY;
+  const anyKey = process.env.REPLICATE_API_TOKEN || process.env.FAL_API_KEY;
   return process.env.NODE_ENV !== "production" && !anyKey;
 }
 

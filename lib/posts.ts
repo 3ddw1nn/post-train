@@ -165,10 +165,15 @@ export async function createPost(
     } else if (input.scheduled_at) {
       const t = new Date(input.scheduled_at);
       if (isNaN(t.getTime())) throw new DomainError(400, "scheduled_at is not a valid datetime.");
-      if (t.getTime() < Date.now() - 60_000) {
+      const diff = Date.now() - t.getTime();
+      if (diff > 15 * 60 * 1000) {
         throw new DomainError(400, "scheduled_at must be in the future.");
       }
-      scheduledAt = t.toISOString();
+      if (diff > 0) {
+        scheduledAt = new Date().toISOString();
+      } else {
+        scheduledAt = t.toISOString();
+      }
     } else {
       scheduledAt = new Date().toISOString(); // instant post → picked up by the worker
     }

@@ -31,7 +31,7 @@ import {
 } from "@/lib/video-render-settings";
 import { checkAiTone, type AiToneResult } from "@/lib/ai-tone";
 import type { StudioDraftRow } from "@/lib/studio-drafts";
-import { localDateInputValue, nextMinuteInputValue, isPastSchedule } from "@/lib/format";
+import { localDateInputValue, nextMinuteInputValue, isPastSchedule, isPastToday } from "@/lib/format";
 import { StudioChooseScreen, StudioCtaCard } from "./studio-choose-screen";
 import { useEditGuard } from "./edit-guard";
 import { CaptionCopyButton } from "./caption-copy-button";
@@ -866,6 +866,7 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
   const [finishedMediaId, setFinishedMediaId] = useState<string | null>(null);
   const [draftLocked, setDraftLocked] = useState(false);
   const publishScheduleIsPast = !draftLocked && isPastSchedule(publishDate, publishTime);
+  const publishScheduleIsPastToday = !draftLocked && isPastToday(publishDate, publishTime);
   async function finish() {
     if (!outputMediaId || finishing) return;
     setFinishing(true);
@@ -1653,8 +1654,8 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
               <button type="button" onClick={() => window.location.assign(`/dashboard/create/video?${new URLSearchParams({ media: outputMediaId ?? "", date: publishDate, time: publishTime })}`)} className="btn-primary !py-1.5 text-sm">Publish <Icon name="sparkles" size={15} /></button>
             </div>
           ) : (
-            <button type="button" onClick={() => void finish()} disabled={jobStatus !== "done" || !outputMediaId || finishing || publishScheduleIsPast} title={publishScheduleIsPast ? "Update the date and time on the Build step before finishing." : undefined} className="btn-primary !py-1.5 text-sm disabled:opacity-50">
-              {finishing ? "Finishing…" : publishScheduleIsPast ? <><Icon name="warningTriangle" size={15} /> Update schedule</> : "Finish"}
+            <button type="button" onClick={() => void finish()} disabled={jobStatus !== "done" || !outputMediaId || finishing || (publishScheduleIsPast && !publishScheduleIsPastToday)} title={publishScheduleIsPast && !publishScheduleIsPastToday ? "Update the date and time on the Build step before finishing." : undefined} className="btn-primary !py-1.5 text-sm disabled:opacity-50">
+              {finishing ? "Finishing…" : publishScheduleIsPast && !publishScheduleIsPastToday ? <><Icon name="warningTriangle" size={15} /> Update schedule</> : "Finish"}
             </button>
           )
         ) : (
@@ -1690,7 +1691,7 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
                   <input type="date" min={earliestPublishDate} value={publishDate} onChange={(e) => updatePublishDate(e.target.value)} className="h-[42px] rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/25" />
                   <input type="time" min={publishDate === earliestPublishDate ? earliestPublishTime : undefined} value={publishTime} onChange={(e) => updatePublishTime(e.target.value)} className="h-[42px] rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/25" />
                 </div>
-                {publishScheduleIsPast && <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-amber-700" role="alert"><Icon name="warningTriangle" size={14} />This scheduled time has already passed.</p>}
+                {publishScheduleIsPastToday ? <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-amber-700" role="alert"><Icon name="warningTriangle" size={14} />This time has already passed today. Your post will go live immediately.</p> : publishScheduleIsPast && <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-red-700" role="alert"><Icon name="warningTriangle" size={14} />Can't schedule posts in the past.</p>}
               </div>
             </div>
 

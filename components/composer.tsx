@@ -12,7 +12,7 @@ import { ActionButton } from "./interactive";
 import { platform as platformOf, FOUR_IMAGE_PLATFORMS, CAPTION_MAX, CAPTION_MAX_BY_PLATFORM, type PostType } from "@/lib/platforms";
 import { MediaLibraryModal, MediaThumb, uploadOneFile, type ComposerMedia } from "./media";
 import { checkAiTone, type AiToneResult } from "@/lib/ai-tone";
-import { localDateInputValue, nextMinuteInputValue, isPastSchedule } from "@/lib/format";
+import { localDateInputValue, nextMinuteInputValue, isPastSchedule, isPastToday } from "@/lib/format";
 import { CaptionCopyButton } from "./caption-copy-button";
 
 export type { ComposerMedia };
@@ -144,6 +144,7 @@ export function Composer({
   const earliestDate = localDateInputValue();
   const earliestTime = nextMinuteInputValue();
   const scheduleIsPast = scheduleOn && isPastSchedule(date, time);
+  const scheduleIsPastToday = scheduleOn && isPastToday(date, time);
   function updateDate(value: string) {
     if (!value || value < earliestDate) return;
     setDate(value);
@@ -781,9 +782,13 @@ export function Composer({
                 />
                 <InfoTip text="Times are picked in your local timezone and stored as UTC." />
               </div>
-              {scheduleIsPast ? (
+              {scheduleIsPastToday ? (
                 <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-700" role="alert">
-                  <Icon name="warningTriangle" size={14} /> This scheduled time has already passed.
+                  <Icon name="warningTriangle" size={14} /> This time has already passed today. Your post will go live immediately.
+                </p>
+              ) : scheduleIsPast ? (
+                <p className="flex items-center gap-1.5 text-xs font-semibold text-red-700" role="alert">
+                  <Icon name="warningTriangle" size={14} /> Can't schedule posts in the past.
                 </p>
               ) : (
                 timeCaption && <p className="text-xs text-muted">{timeCaption}</p>
@@ -797,12 +802,12 @@ export function Composer({
                 {scheduleOn ? (
                   <button
                     className="btn-composer-primary w-full"
-                    disabled={busy || selected.size === 0 || !scheduledIso() || uploading > 0 || scheduleIsPast}
+                    disabled={busy || selected.size === 0 || !scheduledIso() || uploading > 0 || (scheduleIsPast && !scheduleIsPastToday)}
                     onClick={() =>
                       submit({ scheduled_at: scheduledIso() }, "/dashboard/posts?status=scheduled")
                     }
                   >
-                    {scheduleIsPast ? <><Icon name="warningTriangle" size={15} /> Update schedule</> : "Schedule"}
+                    {scheduleIsPast && !scheduleIsPastToday ? <><Icon name="warningTriangle" size={15} /> Update schedule</> : "Schedule"}
                   </button>
                 ) : (
                   <button
@@ -833,7 +838,7 @@ export function Composer({
               <>
                 <button
                   className="btn-composer-primary w-full"
-                  disabled={busy || selected.size === 0 || uploading > 0 || (scheduleOn && scheduleIsPast)}
+                  disabled={busy || selected.size === 0 || uploading > 0 || (scheduleOn && scheduleIsPast && !scheduleIsPastToday)}
                   onClick={() =>
                     submit(
                       scheduleOn && scheduledIso()
@@ -843,7 +848,7 @@ export function Composer({
                     )
                   }
                 >
-                  {scheduleOn && scheduleIsPast ? <><Icon name="warningTriangle" size={15} /> Update schedule</> : "Update"}
+                  {scheduleOn && scheduleIsPast && !scheduleIsPastToday ? <><Icon name="warningTriangle" size={15} /> Update schedule</> : "Update"}
                 </button>
                 <DuplicateButton postId={post!.id} />
                 <ActionButton

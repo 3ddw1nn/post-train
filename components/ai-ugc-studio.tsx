@@ -27,7 +27,7 @@ import {
 import type { StudioDraftRow } from "@/lib/studio-drafts";
 import { StudioChooseScreen, StudioCtaCard } from "./studio-choose-screen";
 import { useEditGuard } from "./edit-guard";
-import { localDateInputValue, nextMinuteInputValue, isPastSchedule } from "@/lib/format";
+import { localDateInputValue, nextMinuteInputValue, isPastSchedule, isPastToday } from "@/lib/format";
 import { CaptionCopyButton } from "./caption-copy-button";
 
 export type AiUgcAccount = {
@@ -339,6 +339,7 @@ export function AiUgcStudio({
   const [finishedMediaId, setFinishedMediaId] = useState<string | null>(null);
   const [draftLocked, setDraftLocked] = useState(false);
   const publishScheduleIsPast = !draftLocked && isPastSchedule(publishDate, publishTime);
+  const publishScheduleIsPastToday = !draftLocked && isPastToday(publishDate, publishTime);
   async function unlockDraft() {
     setDraftLocked(false);
     if (draftIdRef.current) {
@@ -890,7 +891,7 @@ export function AiUgcStudio({
                     className="h-[42px] rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/25"
                   />
                 </div>
-                {publishScheduleIsPast && <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-amber-700" role="alert"><Icon name="warningTriangle" size={14} />This scheduled time has already passed.</p>}
+                {publishScheduleIsPastToday ? <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-amber-700" role="alert"><Icon name="warningTriangle" size={14} />This time has already passed today. Your post will go live immediately.</p> : publishScheduleIsPast && <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-red-700" role="alert"><Icon name="warningTriangle" size={14} />Can't schedule posts in the past.</p>}
               </div>
             </div>
 
@@ -1394,11 +1395,11 @@ export function AiUgcStudio({
             <button
               type="button"
               onClick={() => void finish()}
-              disabled={!outputIsCurrent || launching || publishScheduleIsPast}
+              disabled={!outputIsCurrent || launching || (publishScheduleIsPast && !publishScheduleIsPastToday)}
               className="btn-primary !py-1.5 text-sm disabled:opacity-50"
-              title={!outputIsCurrent ? "Wait for the current video to finish generating." : publishScheduleIsPast ? "Update the date and time on the Build step before finishing." : undefined}
+              title={!outputIsCurrent ? "Wait for the current video to finish generating." : publishScheduleIsPast && !publishScheduleIsPastToday ? "Update the date and time on the Build step before finishing." : undefined}
             >
-              {launching ? "Finishing…" : publishScheduleIsPast ? <>Update schedule <Icon name="warningTriangle" size={15} /></> : <>Finish <Icon name="send" size={15} /></>}
+              {launching ? "Finishing…" : publishScheduleIsPast && !publishScheduleIsPastToday ? <>Update schedule <Icon name="warningTriangle" size={15} /></> : <>Finish <Icon name="send" size={15} /></>}
             </button>
           )}
         </div>

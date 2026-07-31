@@ -13,6 +13,9 @@ import { DATA_DIR } from "./db";
  */
 export function secretKey(): Buffer {
   if (process.env.PT_SECRET) return Buffer.from(process.env.PT_SECRET.trim(), "hex");
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("PT_SECRET is required in production (set via env vars, not filesystem)");
+  }
   const file = path.join(DATA_DIR, "secret");
   if (!existsSync(file)) {
     mkdirSync(DATA_DIR, { recursive: true });
