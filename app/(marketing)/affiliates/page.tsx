@@ -15,7 +15,7 @@ export default function AffiliatesPage() {
         <p className="text-3xl font-extrabold text-primary-deep">30%</p>
         <p className="mt-1 text-sm text-muted">recurring commission · 60-day cookie</p>
         <a
-          href="mailto:affiliates@posttrain.example?subject=Affiliate%20signup"
+          href="mailto:affiliates@posttrain.app?subject=Affiliate%20signup"
           className="btn-primary mt-4 w-full"
         >
           Request your link

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { createUser, findUserByEmail, setSessionCookie } from "@/lib/auth";
+import { findUserByEmail, setSessionCookie } from "@/lib/auth";
 
 export async function GET(req: Request) {
   const url = new URL(req.url);
@@ -31,14 +31,10 @@ export async function GET(req: Request) {
     picture?: string;
   };
 
-  let user = await findUserByEmail(profile.email);
-  if (!user) {
-    user = await createUser({
-      email: profile.email,
-      displayName: profile.name,
-      avatarUrl: profile.picture,
-    });
-  }
+  const user = await findUserByEmail(profile.email);
+  // ponytail: sign-ups are closed — Google only logs in existing accounts
+  // while we're pre-launch. Join the waitlist at /create-account instead.
+  if (!user) redirect("/signin?error=no_account");
   await setSessionCookie(user.id, user.session_epoch);
   redirect(user.onboarded_at ? "/dashboard/create" : "/onboarding/start");
 }

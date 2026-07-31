@@ -1,25 +1,25 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 
-export function AuthForm() {
-  const router = useRouter();
+export function WaitlistForm() {
+  const [email, setEmail] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
 
   async function submit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
     setBusy(true);
     setError(null);
-    const form = new FormData(e.currentTarget);
-    const res = await fetch("/api/auth/signin", {
+    const res = await fetch("/api/leads", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        email: form.get("email"),
-        password: form.get("password"),
-        timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        email,
+        source: "waitlist",
+        pagePath: window.location.pathname,
+        referrer: document.referrer || null,
       }),
     });
     const data = await res.json().catch(() => null);
@@ -28,8 +28,16 @@ export function AuthForm() {
       setBusy(false);
       return;
     }
-    router.push(data.redirect);
-    router.refresh();
+    setDone(true);
+    setBusy(false);
+  }
+
+  if (done) {
+    return (
+      <p className="rounded-lg bg-primary-soft px-4 py-3 text-sm font-medium text-primary-deep">
+        You&apos;re on the list — we&apos;ll email you when it&apos;s your turn.
+      </p>
+    );
   }
 
   return (
@@ -38,22 +46,15 @@ export function AuthForm() {
         name="email"
         type="email"
         required
+        value={email}
+        onChange={(e) => setEmail(e.target.value)}
         placeholder="you@example.com"
         className="input"
         autoComplete="email"
       />
-      <input
-        name="password"
-        type="password"
-        required
-        minLength={8}
-        placeholder="Password (8+ characters)"
-        className="input"
-        autoComplete="current-password"
-      />
       {error && <p className="text-sm font-medium text-danger">{error}</p>}
       <button className="btn-primary w-full" disabled={busy}>
-        {busy ? "One moment…" : "Log in"}
+        {busy ? "One moment…" : "Join waitlist"}
       </button>
     </form>
   );

@@ -2,7 +2,7 @@
 
 > Ship social media faster. Schedule posts once, publish everywhere. Real OAuth, AI video generation, and analytics across Twitter, LinkedIn, Mastodon, Bluesky, and more.
 
-[![Vercel](https://img.shields.io/badge/deployed%20on-Vercel-000?style=flat&logo=vercel)](https://post-train.vercel.app)
+[![Vercel](https://img.shields.io/badge/deployed%20on-Vercel-000?style=flat&logo=vercel)](https://posttrain.app)
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 ## Features
@@ -184,7 +184,7 @@ For a detailed breakdown, see [docs/FINISHED.md](docs/FINISHED.md).
 
 ### Public API (v1)
 
-Base: `https://post-train.vercel.app/api/v1`
+Base: `https://posttrain.app/api/v1`
 
 **Authentication:** `Authorization: Bearer <api_key>` (hashed, workspace-scoped)
 

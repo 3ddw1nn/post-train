@@ -3,10 +3,12 @@ import { resolveChatSessionKey } from "@/lib/chat-session";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
-type LeadRow = { id: string; status: string };
+type LeadRow = { id: string; name: string; status: string };
 
 export async function POST(req: Request) {
   const body = await req.json().catch(() => null);
+  // Name is optional: the marketing chat lead form collects it, but the
+  // waitlist form (source "waitlist") only asks for an email.
   const name = typeof body?.name === "string" ? body.name.trim().slice(0, 200) : "";
   const emailRaw = typeof body?.email === "string" ? body.email.trim() : "";
   const message = typeof body?.message === "string" ? body.message.trim().slice(0, 2000) || null : null;
@@ -14,9 +16,6 @@ export async function POST(req: Request) {
   const pagePath = typeof body?.pagePath === "string" ? body.pagePath.slice(0, 300) : null;
   const referrer = typeof body?.referrer === "string" ? body.referrer.slice(0, 300) : null;
 
-  if (!name) {
-    return Response.json({ error: { message: "Name is required." } }, { status: 400 });
-  }
   if (!EMAIL_PATTERN.test(emailRaw)) {
     return Response.json({ error: { message: "A valid email is required." } }, { status: 400 });
   }
@@ -29,7 +28,7 @@ export async function POST(req: Request) {
   const existing = await findRecord<LeadRow>("leads", { email });
   if (existing) {
     await patchRecord("leads", existing.id, {
-      name,
+      name: name || existing.name,
       message,
       source,
       page_path: pagePath,

@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { AuthForm } from "./auth-form";
+import { WaitlistForm } from "./waitlist-form";
 import { MarketingNav } from "@/app/(marketing)/marketing-nav";
 import { MarketingFooter } from "@/app/(marketing)/marketing-footer";
 import { ShaderGradientBg } from "./shader-gradient-bg";
@@ -61,18 +62,38 @@ export async function AuthShell({ children }: { children: React.ReactNode }) {
 
 export function AuthCard({ mode }: { mode: "signin" | "signup" }) {
   const googleConfigured = !!process.env.GOOGLE_CLIENT_ID;
+
+  if (mode === "signup") {
+    return (
+      <AuthShell>
+        <div className="card overflow-hidden">
+          <div className="p-8">
+            <h1 className="text-2xl font-bold tracking-tight">Join the waitlist</h1>
+            <p className="mt-1.5 text-sm text-muted">
+              We&apos;re still finishing Post Train. Drop your email and we&apos;ll let you in as soon
+              as a spot opens up.
+            </p>
+            <div className="mt-6">
+              <WaitlistForm />
+            </div>
+          </div>
+        </div>
+        <p className="mt-5 text-center text-sm text-muted">
+          Already have an account?{" "}
+          <Link href="/signin" className="font-semibold text-primary-deep">
+            Log in
+          </Link>
+        </p>
+      </AuthShell>
+    );
+  }
+
   return (
     <AuthShell>
       <div className="card overflow-hidden">
         <div className="p-8">
-          <h1 className="text-2xl font-bold tracking-tight">
-            {mode === "signin" ? "Welcome back" : "Create your account"}
-          </h1>
-          <p className="mt-1.5 text-sm text-muted">
-            {mode === "signin"
-              ? "Log in to keep your posting streak going."
-              : "Start cross-posting in under two minutes."}
-          </p>
+          <h1 className="text-2xl font-bold tracking-tight">Welcome back</h1>
+          <p className="mt-1.5 text-sm text-muted">Log in to keep your posting streak going.</p>
           <div className="mt-6 flex flex-col gap-3">
             <a
               href={googleConfigured ? "/api/auth/google" : undefined}
@@ -107,26 +128,15 @@ export function AuthCard({ mode }: { mode: "signin" | "signup" }) {
             <div className="flex items-center gap-3 text-xs text-muted">
               <span className="h-px flex-1 bg-line" /> or <span className="h-px flex-1 bg-line" />
             </div>
-            <AuthForm mode={mode} />
+            <AuthForm />
           </div>
         </div>
       </div>
       <p className="mt-5 text-center text-sm text-muted">
-        {mode === "signin" ? (
-          <>
-            New here?{" "}
-            <Link href="/create-account" className="font-semibold text-primary-deep">
-              Create an account
-            </Link>
-          </>
-        ) : (
-          <>
-            Already have an account?{" "}
-            <Link href="/signin" className="font-semibold text-primary-deep">
-              Log in
-            </Link>
-          </>
-        )}
+        New here?{" "}
+        <Link href="/create-account" className="font-semibold text-primary-deep">
+          Join the waitlist
+        </Link>
       </p>
     </AuthShell>
   );
