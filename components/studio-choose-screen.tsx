@@ -79,6 +79,7 @@ export function StudioChooseScreen({
   renderPreview,
   renderBadge,
   onResume,
+  onPublish,
   onDelete,
   emptyState,
   children,
@@ -95,6 +96,8 @@ export function StudioChooseScreen({
   /** Optional small tag rendered next to the timestamp — e.g. Slideshow's Template/Custom/Copy origin badge. */
   renderBadge?: (draft: StudioDraftRow) => React.ReactNode;
   onResume: (draft: StudioDraftRow) => void;
+  /** Shown below finished cards when this studio can send its output directly to Create Post. */
+  onPublish?: (draft: StudioDraftRow) => void | Promise<void>;
   onDelete: (id: string) => void | Promise<void>;
   /** Defaults to a plain "No saved drafts." — pass a richer empty state if the studio wants one. */
   emptyState?: React.ReactNode;
@@ -102,6 +105,43 @@ export function StudioChooseScreen({
   children?: React.ReactNode;
 }) {
   const [pendingDelete, setPendingDelete] = useState<StudioDraftRow | null>(null);
+  const finishedDrafts = drafts.filter((d) => d.status === "finished");
+  const activeDrafts = drafts.filter((d) => d.status !== "finished");
+
+  const draftRow = (draft: StudioDraftRow) => {
+    const publishable = draft.status === "finished" && !!onPublish;
+    return (
+      <div key={draft.id} className="group">
+        <div className="rounded-xl border border-line bg-white p-3 transition-colors hover:border-primary hover:bg-primary-soft/30">
+          <div className="flex items-center gap-3">
+          <button type="button" onClick={() => onResume(draft)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
+            {renderPreview(draft)}
+            <span className="min-w-0">
+              <span className="block truncate text-sm font-bold text-ink">{draft.title}</span>
+              <span className="mt-1 flex items-center gap-2">
+                {renderBadge?.(draft)}
+                <span className="text-xs font-semibold text-muted">{relativeTime(draft.updated_at)}</span>
+              </span>
+            </span>
+          </button>
+          <button
+            type="button"
+            onClick={() => setPendingDelete(draft)}
+            aria-label={`Delete draft ${draft.title}`}
+            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted opacity-100 transition-opacity hover:bg-ink/10 hover:text-danger sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
+          >
+            <Icon name="x" size={13} />
+          </button>
+          </div>
+        </div>
+        {publishable && (
+          <button type="button" onClick={() => void onPublish!(draft)} className="btn-primary mt-2 w-full justify-center">
+            Publish <Icon name="sparkles" size={15} />
+          </button>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div className={`fade-up mx-auto w-full ${maxW} pb-10`}>
@@ -122,6 +162,17 @@ export function StudioChooseScreen({
 
       {cta}
 
+      {!draftsLoading && finishedDrafts.length > 0 && (
+        <div className="card mt-5 border-primary/30 bg-primary-soft/20 p-6 sm:p-8">
+          <p className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-[0.1em] text-primary-deep">
+            <Icon name="check" size={13} /> Finished — ready to publish
+          </p>
+          <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            {finishedDrafts.map(draftRow)}
+          </div>
+        </div>
+      )}
+
       <div className="card mt-5 p-6 sm:p-8">
         <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Drafts</p>
         {draftsLoading ? (
@@ -129,32 +180,11 @@ export function StudioChooseScreen({
             <span className="h-4 w-4 animate-spin rounded-full border-2 border-muted/40 border-t-transparent" />
             Loading drafts…
           </div>
-        ) : drafts.length === 0 ? (
+        ) : activeDrafts.length === 0 ? (
           emptyState ?? <p className="mt-4 text-sm font-semibold text-muted">No saved drafts.</p>
         ) : (
           <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {drafts.map((draft) => (
-              <div key={draft.id} className="group flex items-center gap-3 rounded-xl border border-line bg-white p-3 transition-colors hover:border-primary hover:bg-primary-soft/30">
-                <button type="button" onClick={() => onResume(draft)} className="flex min-w-0 flex-1 items-center gap-3 text-left">
-                  {renderPreview(draft)}
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-bold text-ink">{draft.title}</span>
-                    <span className="mt-1 flex items-center gap-2">
-                      {renderBadge?.(draft)}
-                      <span className="text-xs font-semibold text-muted">{relativeTime(draft.updated_at)}</span>
-                    </span>
-                  </span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setPendingDelete(draft)}
-                  aria-label={`Delete draft ${draft.title}`}
-                  className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-muted opacity-100 transition-opacity hover:bg-ink/10 hover:text-danger sm:opacity-0 sm:group-hover:opacity-100 sm:focus-visible:opacity-100"
-                >
-                  <Icon name="x" size={13} />
-                </button>
-              </div>
-            ))}
+            {activeDrafts.map(draftRow)}
           </div>
         )}
       </div>

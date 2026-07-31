@@ -17,6 +17,9 @@ export type StudioDraftRow = {
   title: string;
   cover_image_url: string | null;
   state: string; // JSON
+  /** "drafting" (or unset) is the normal editable state; "finished" is set by
+   *  the studio's Finish button and locks the draft until explicitly edited. */
+  status?: string;
   created_at: string;
   updated_at: string;
 };
@@ -55,4 +58,8 @@ export async function saveStudioDraft(
 
 export async function deleteStudioDraft(workspaceId: string, id: string): Promise<boolean> {
   return await convexMutation<boolean>(api.studioDrafts.remove, { id, workspace_id: workspaceId });
+}
+
+export async function setStudioDraftStatus(workspaceId: string, id: string, status: "drafting" | "finished"): Promise<StudioDraftRow | null> {
+  return await convexMutation<StudioDraftRow | null>(api.studioDrafts.setStatus, { id, workspace_id: workspaceId, status });
 }

@@ -13,6 +13,7 @@ import {
   createR2DownloadUrl,
   createR2UploadUrl,
   deleteR2Object,
+  fetchR2,
   mediaObjectKey,
   r2Enabled,
 } from "./r2";
@@ -30,6 +31,17 @@ export type MediaRow = {
   upload_status: "pending" | "uploaded" | "failed";
   created_at: string;
   thumbnail_media_id?: string | null;
+  studio_template?: string | null;
+  studio_batch_id?: string | null;
+  studio_finished_at?: string | null;
+  studio_campaign_name?: string | null;
+  studio_platform_ids?: string[];
+  studio_platform_id?: string | null;
+  studio_aspect_ratio?: string | null;
+  /** JSON-encoded Record<platformId, caption> — parse before use. */
+  studio_platform_captions?: string | null;
+  studio_caption_brief?: string | null;
+  studio_caption_length?: string | null;
 };
 export type UploadTarget = {
   media_id: string;
@@ -85,10 +97,12 @@ export async function storeUpload(mediaId: string, sig: string, body: Buffer): P
       contentType: row.mime_type,
       contentLength: body.byteLength,
     });
-    const put = await fetch(uploadUrl, {
+    const put = await fetchR2(uploadUrl, {
       method: "PUT",
       headers: { "Content-Type": row.mime_type },
       body: new Uint8Array(body),
+    }).catch((e) => {
+      throw new Error(e instanceof Error ? `We couldn't save this file: ${e.message}` : "We couldn't save this file. Please try again.");
     });
     if (!put.ok) {
       const detail = (await put.text().catch(() => "")).slice(0, 300);
@@ -138,7 +152,7 @@ export async function readMediaBytes(mediaId: string): Promise<{ row: MediaRow; 
   if (!row) return null;
   if (r2Enabled()) {
     const url = await createR2DownloadUrl(mediaObjectKey(row.workspace_id, mediaId));
-    const res = await fetch(url);
+    const res = await fetchR2(url);
     if (!res.ok) return null;
     return { row, bytes: Buffer.from(await res.arrayBuffer()) };
   }
@@ -170,6 +184,58 @@ export async function setMediaThumbnail(workspaceId: string, mediaId: string, th
     id: mediaId,
     thumbnail_media_id: thumbnailMediaId,
   });
+}
+
+/** A Content Studio "Finish" step — marks one or more outputs as Library items. Returns the shared batch id. */
+export async function markMediaFinished(
+  workspaceId: string,
+  mediaIds: string[],
+  template: string,
+  metadata: {
+    campaignName?: string;
+    platformIds?: string[];
+    platformCaptions?: Record<string, string>;
+    captionBrief?: string;
+    captionLength?: "short" | "medium" | "long";
+    outputs?: { mediaId: string; platformId: string; aspectRatio: string }[];
+  } = {},
+): Promise<string> {
+  const batchId = `batch_${randomBytes(8).toString("hex")}`;
+  const captions = metadata.platformCaptions ?? {};
+  await convexMutation(api.media.markFinished, {
+    workspace_id: workspaceId,
+    ids: mediaIds,
+    template,
+    batch_id: batchId,
+    campaign_name: metadata.campaignName?.trim() || null,
+    platform_ids: metadata.platformIds ?? [],
+    platform_captions: Object.keys(captions).length > 0 ? JSON.stringify(captions) : null,
+    caption_brief: metadata.captionBrief?.trim() || null,
+    caption_length: metadata.captionLength ?? null,
+    output_metadata: metadata.outputs?.map((output) => ({ media_id: output.mediaId, platform_id: output.platformId, aspect_ratio: output.aspectRatio })) ?? [],
+  });
+  return batchId;
+}
+
+/** "Remove from Library" — clears the Finish marker only; the media itself is untouched. */
+export async function clearMediaFinished(workspaceId: string, mediaId: string): Promise<boolean> {
+  return await convexMutation<boolean>(api.media.clearFinished, { workspace_id: workspaceId, id: mediaId });
+}
+
+export async function listFinishedMedia(workspaceId: string, template: string): Promise<MediaRow[]> {
+  return await convexQuery<MediaRow[]>(api.media.listFinishedForWorkspace, { workspace_id: workspaceId, template });
+}
+
+// Templates whose Finish step produces a video (Slideshow and Thumbnail
+// Maker finish as images, so they're deliberately excluded).
+const VIDEO_STUDIO_TEMPLATES = ["grid-2x2", "fade-in", "ai-ugc"];
+
+/** Every finished Content Studio video, across every video template — the
+ *  pool a "Library" button offers wherever a studio picks a video clip to
+ *  reuse as source footage (never raw uploads or in-progress drafts). */
+export async function listFinishedStudioVideos(workspaceId: string): Promise<MediaRow[]> {
+  const lists = await Promise.all(VIDEO_STUDIO_TEMPLATES.map((template) => listFinishedMedia(workspaceId, template)));
+  return lists.flat().sort((a, b) => (b.studio_finished_at ?? "").localeCompare(a.studio_finished_at ?? ""));
 }
 
 export async function listMedia(workspaceId: string, limit = 50, offset = 0): Promise<{ data: MediaRow[]; count: number }> {
@@ -213,10 +279,12 @@ export async function saveBufferAsMedia(workspaceId: string, buf: Buffer, name: 
       contentType: mime,
       contentLength: buf.byteLength,
     });
-    const put = await fetch(uploadUrl, {
+    const put = await fetchR2(uploadUrl, {
       method: "PUT",
       headers: { "Content-Type": mime },
       body: new Uint8Array(buf),
+    }).catch((e) => {
+      throw new Error(e instanceof Error ? `Could not upload the rendered file: ${e.message}` : "Could not upload the rendered file.");
     });
     if (!put.ok) throw new Error(`Could not upload imported media (${put.status})`);
     return await convexMutation<MediaRow>(api.media.markUploaded, {

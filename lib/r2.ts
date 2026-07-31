@@ -4,6 +4,25 @@ import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 const R2_UPLOAD_TTL_SECONDS = 15 * 60;
 const R2_DOWNLOAD_TTL_SECONDS = 60 * 60;
 
+/** Presigned R2 requests occasionally fail at the network layer (DNS blip,
+ *  connection reset) rather than with a real HTTP error — `fetch` surfaces
+ *  that as a bare "fetch failed" with no status code to check. Every caller
+ *  here is a plain idempotent GET/PUT against a presigned URL, so a couple
+ *  of retries turns a transient hiccup into a non-event instead of losing
+ *  an entire render (source download) or a finished one (output upload). */
+export async function fetchR2(url: string, init?: RequestInit, attempts = 3): Promise<Response> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await fetch(url, init);
+    } catch (e) {
+      lastError = e;
+      if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, 400 * (attempt + 1)));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error("R2 request failed.");
+}
+
 function required(name: string): string {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is not set.`);

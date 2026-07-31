@@ -24,13 +24,10 @@ type NavItem = {
 
 const SECTIONS: { label: string; items: NavItem[] }[] = [
   {
-    label: "Discover",
-    items: [{ label: "Trend Finder", href: "/dashboard/tools/trend-finder", icon: "search" }],
-  },
-  {
     label: "Compose",
     items: [
       { label: "Studio", href: "/dashboard/content-studio", icon: "sparkles" },
+      { label: "Library", href: "/dashboard/library", icon: "folder" },
       { label: "Batch Scheduler", href: "/dashboard/batch-scheduler", icon: "stack" },
       { label: "Tools", href: "/dashboard/tools", icon: "wrench" },
     ],

@@ -72,6 +72,10 @@ export type StudioParams = {
   // Focal point for each clip's crop (0-1 per axis, 0.5 = centered), set via
   // the double-click reposition modal in the editor.
   grid_crop?: { x: number; y: number }[];
+  // grid-2x2 only: trims the composed timeline as a whole (all four clips
+  // stay in sync), not any one quadrant. end_s omitted/0 means "through the
+  // natural shortest-clip end".
+  grid_trim?: { start_s?: number; end_s?: number };
   // Video Editor Studio: clips may be split into source slices, then joined by
   // per-seam transitions (a hard cut or any xfade in lib/transitions.ts).
   // fade_transitions[i] is the seam *before* segment i — index 0 is the
@@ -187,6 +191,12 @@ export async function createStudioJob(
       if (Array.isArray(input.grid_crop) && input.grid_crop.length === 4) {
         const clamp01 = (n: unknown) => (Number.isFinite(Number(n)) ? Math.min(1, Math.max(0, Number(n))) : 0.5);
         params.grid_crop = input.grid_crop.map((o) => ({ x: clamp01(o?.x), y: clamp01(o?.y) }));
+      }
+      const gt = input.grid_trim;
+      if (gt) {
+        const start = Number.isFinite(Number(gt.start_s)) ? Math.max(0, Number(gt.start_s)) : 0;
+        const end = Number.isFinite(Number(gt.end_s)) ? Math.max(0, Number(gt.end_s)) : 0;
+        if (start > 0 || end > start) params.grid_trim = { start_s: start, end_s: end > start ? end : undefined };
       }
     }
     if (template === "fade-in") {
@@ -449,6 +459,10 @@ async function renderComposite(job: StudioJobRow, params: StudioParams): Promise
           { x: number; y: number },
           { x: number; y: number },
         ];
+      }
+      if (params.grid_trim) {
+        opts.trimStart = params.grid_trim.start_s;
+        opts.trimEnd = params.grid_trim.end_s;
       }
       await renderGrid(inputs as [string, string, string, string], out, opts);
     } else {

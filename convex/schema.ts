@@ -107,10 +107,35 @@ export default defineSchema({
     // media row (kind "image") to use as this video's cover. Optional so
     // existing rows, and every media kind that isn't a video, stay unset.
     thumbnail_media_id: v.optional(nullableString),
+    // Set by a Content Studio template's "Finish" step — this row belongs in
+    // the Library. studio_batch_id groups outputs finished together in the
+    // same action (Slideshow finishes N slides at once); studio_finished_at
+    // being non-null is what actually makes a row a Library item.
+    studio_template: v.optional(nullableString), // "grid-2x2" | "fade-in" | "ai-ugc" | "slideshow" | "thumbnail"
+    studio_batch_id: v.optional(nullableString),
+    studio_finished_at: v.optional(nullableString),
+    // Display metadata captured when a studio output is finished. This keeps
+    // Library cards human-readable without exposing generated file names.
+    studio_campaign_name: v.optional(nullableString),
+    studio_platform_ids: v.optional(v.array(v.string())),
+    // For multi-destination video renders, each output keeps the exact
+    // destination and aspect it was rendered for. Create Post reads these
+    // fields to avoid pairing a platform with the wrong exported video.
+    studio_platform_id: v.optional(nullableString),
+    studio_aspect_ratio: v.optional(nullableString),
+    // JSON-encoded Record<platformId, caption> written by the studio at
+    // Finish time — lets Create Post 2 preload each destination's caption
+    // when handed off from Publish/the Library, instead of starting blank.
+    studio_platform_captions: v.optional(nullableString),
+    // The source prompt and requested length used to generate the platform
+    // captions. Create Post restores both so creators can keep iterating.
+    studio_caption_brief: v.optional(nullableString),
+    studio_caption_length: v.optional(nullableString),
   })
     .index("by_legacy_id", ["id"])
     .index("by_workspace", ["workspace_id"])
-    .index("by_workspace_status", ["workspace_id", "upload_status"]),
+    .index("by_workspace_status", ["workspace_id", "upload_status"])
+    .index("by_workspace_template", ["workspace_id", "studio_template"]),
 
   posts: defineTable({
     id: v.string(),
@@ -238,6 +263,11 @@ export default defineSchema({
     title: v.string(),
     cover_image_url: nullableString,
     state: v.string(), // JSON blob of resumable wizard fields
+    // Set by the studio's Finish button (alongside marking the output media
+    // finished) — undefined/"drafting" is the normal editable state. Kept
+    // separate from `state` so flipping it never requires resending the
+    // whole resumable blob just to lock/unlock a draft.
+    status: v.optional(v.string()), // "drafting" | "finished"
     created_at: v.string(),
     updated_at: v.string(),
   })

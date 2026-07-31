@@ -486,6 +486,8 @@ export function ThumbnailStudio({ configuredProviders = {} }: ThumbnailStudioPro
 
   const [exportBusy, setExportBusy] = useState<"download" | "save" | null>(null);
   const [savedMediaId, setSavedMediaId] = useState<string | null>(null);
+  const [finishing, setFinishing] = useState(false);
+  const [finishedMediaId, setFinishedMediaId] = useState<string | null>(null);
   const [exportError, setExportError] = useState("");
   const [attachOpen, setAttachOpen] = useState(false);
   const [attachedTo, setAttachedTo] = useState<string | null>(null);
@@ -592,6 +594,27 @@ export function ThumbnailStudio({ configuredProviders = {} }: ThumbnailStudioPro
       return null;
     } finally {
       setExportBusy(null);
+    }
+  }
+
+  async function finish() {
+    if (finishing) return;
+    setFinishing(true);
+    setExportError("");
+    try {
+      const mediaId = savedMediaId ?? (await saveToLibrary());
+      if (!mediaId) return;
+      const res = await fetch("/api/app/studio/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ media_ids: [mediaId], template: "thumbnail" }),
+      });
+      if (!res.ok) throw new Error("Couldn't finish this thumbnail.");
+      setFinishedMediaId(mediaId);
+    } catch (e) {
+      setExportError(e instanceof Error ? e.message : "Couldn't finish this thumbnail.");
+    } finally {
+      setFinishing(false);
     }
   }
 
@@ -704,6 +727,19 @@ export function ThumbnailStudio({ configuredProviders = {} }: ThumbnailStudioPro
               <button type="button" onClick={() => setAttachOpen(true)} disabled={exportBusy !== null} className="btn-primary">
                 Attach to a video
               </button>
+              {finishedMediaId && finishedMediaId === savedMediaId ? (
+                <button
+                  type="button"
+                  onClick={() => window.location.assign(`/dashboard/create/image?media=${finishedMediaId}`)}
+                  className="btn-primary"
+                >
+                  Publish <Icon name="sparkles" size={14} />
+                </button>
+              ) : (
+                <button type="button" onClick={() => void finish()} disabled={finishing || exportBusy !== null} className="btn-primary">
+                  {finishing ? "Finishing…" : "Finish"}
+                </button>
+              )}
             </span>
           </div>
           {attachedTo && <p className="mt-2 text-xs font-semibold text-primary-deep">Set as the cover for &ldquo;{attachedTo}&rdquo;.</p>}

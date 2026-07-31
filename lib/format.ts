@@ -17,3 +17,25 @@ export function relativeTime(iso: string): string {
   const days = Math.floor(hours / 24);
   return `${days}d ago`;
 }
+
+// Shared "no scheduling into the past" helpers for every Publishing date/time
+// pair (Content Studio's five wizards, Create Post) — previously only the
+// Video Editor wizard enforced this, each with its own copy.
+
+/** Today's date as an `<input type="date">` value, in local time. */
+export function localDateInputValue(date = new Date()): string {
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+}
+
+/** One minute from now as an `<input type="time">` value, in local time. */
+export function nextMinuteInputValue(date = new Date()): string {
+  const next = new Date(date);
+  next.setSeconds(0, 0);
+  next.setMinutes(next.getMinutes() + 1);
+  return `${String(next.getHours()).padStart(2, "0")}:${String(next.getMinutes()).padStart(2, "0")}`;
+}
+
+export function isPastSchedule(date: string, time: string, now = new Date()): boolean {
+  const scheduled = new Date(`${date}T${time || "00:00"}`);
+  return !Number.isNaN(scheduled.getTime()) && scheduled.getTime() < now.getTime();
+}

@@ -12,9 +12,12 @@ import type { StudioDraftMode, StudioDraftRow } from "@/lib/studio-drafts";
 import { MODEL_PROVIDER, type ImageGenProvider } from "@/lib/image-gen";
 import { clamp, hexToRgba } from "@/lib/color";
 import { StudioChooseScreen } from "./studio-choose-screen";
+import { useEditGuard } from "./edit-guard";
+import { localDateInputValue, nextMinuteInputValue, isPastSchedule } from "@/lib/format";
+import { CaptionCopyButton } from "./caption-copy-button";
 
-const CUSTOM_STEPS = ["Settings", "Review & Launch"] as const;
-const TEMPLATE_STEPS = ["Templates", "Settings", "Images", "Launch"] as const;
+const CUSTOM_STEPS = ["Settings", "Review & Summary"] as const;
+const TEMPLATE_STEPS = ["Templates", "Settings", "Images", "Summary"] as const;
 const REFERENCE_MAX = 5;
 const CONTEXT_MAX = 1200;
 // Cap per-slide overlay text so it can't overflow the image. A short headline
@@ -2003,6 +2006,19 @@ export function SlideshowStudio({
     const now = new Date();
     return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
   });
+  const earliestPublishDate = localDateInputValue();
+  const earliestPublishTime = nextMinuteInputValue();
+  function updatePublishDate(value: string) {
+    if (!value || value < earliestPublishDate) return;
+    setPublishDate(value);
+    if (value === earliestPublishDate && publishTime < earliestPublishTime) {
+      setPublishTime(earliestPublishTime);
+    }
+  }
+  function updatePublishTime(value: string) {
+    if (!value || (publishDate === earliestPublishDate && value < earliestPublishTime)) return;
+    setPublishTime(value);
+  }
   const [context, setContext] = useState(initialSlideTexts?.join("\n") ?? "");
   const [contextBusy, setContextBusy] = useState(false);
   const [contextError, setContextError] = useState("");
@@ -2072,6 +2088,24 @@ export function SlideshowStudio({
     bgOpacity: DEFAULT_TEXT_LAYER_SETTINGS.bgOpacity,
   });
   const [downloadingSlide, setDownloadingSlide] = useState<number | null>(null);
+  const [finishing, setFinishing] = useState(false);
+  const [finishError, setFinishError] = useState("");
+  const [finishedMediaIds, setFinishedMediaIds] = useState<string[] | null>(null);
+  const [draftLocked, setDraftLocked] = useState(false);
+  const publishScheduleIsPast = !draftLocked && isPastSchedule(publishDate, publishTime);
+  async function unlockDraft() {
+    setDraftLocked(false);
+    if (draftIdRef.current) {
+      const id = draftIdRef.current;
+      await fetch(`/api/app/studio/drafts/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "drafting" }),
+      }).catch(() => {});
+      setDrafts((current) => current.map((d) => (d.id === id ? { ...d, status: "drafting" } : d)));
+    }
+  }
+  const editGuard = useEditGuard(draftLocked, () => void unlockDraft());
   const [captionBusy, setCaptionBusy] = useState<Record<string, boolean>>({});
   const [captionError, setCaptionError] = useState<Record<string, string>>({});
 
@@ -2318,6 +2352,50 @@ export function SlideshowStudio({
       // doesn't download; nothing else to clean up.
     } finally {
       setDownloadingSlide(null);
+    }
+  }
+
+  // Rasterize every slide of the active platform, upload each, then mark the
+  // whole set as one Library item (shared batch_id) via the finish endpoint.
+  async function finishSlideshow() {
+    if (finishing) return;
+    setFinishing(true);
+    setFinishError("");
+    try {
+      const mediaIds: string[] = [];
+      for (let i = 0; i < slideCount; i++) {
+        const blob = await renderSlideBlob({
+          aspect: slidesActiveAspect,
+          source: activeSlideData.sources[i] ?? "auto",
+          uploadedImage: activeSlideData.uploads[i],
+          show: showSlideText,
+          layers: activeSlideData.layers[i] ?? [],
+        });
+        const name = `${campaignName || "slideshow"}-${slidesActiveTab || "slide"}-slide-${i + 1}.png`;
+        const file = new File([blob], name, { type: "image/png" });
+        const uploaded = await uploadOneFile(file);
+        mediaIds.push(uploaded.id);
+      }
+      const res = await fetch("/api/app/studio/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ media_ids: mediaIds, template: "slideshow", campaign_name: campaignName, platform_ids: [...selectedPlatforms], platform_captions: Object.fromEntries(Object.entries(platformCaptions).filter(([id]) => selectedPlatforms.has(id))) }),
+      });
+      if (!res.ok) throw new Error("Could not finish this slideshow.");
+      setFinishedMediaIds(mediaIds);
+      if (draftIdRef.current) {
+        const id = draftIdRef.current;
+        await fetch(`/api/app/studio/drafts/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "finished" }),
+        }).catch(() => {});
+        setDrafts((current) => current.map((d) => (d.id === id ? { ...d, status: "finished" } : d)));
+      }
+    } catch (error) {
+      setFinishError(error instanceof Error ? error.message : "Could not finish this slideshow.");
+    } finally {
+      setFinishing(false);
     }
   }
 
@@ -2650,6 +2728,8 @@ export function SlideshowStudio({
     setSelectedTemplate(null);
     setDraftOrigin(next === "templates" ? "templates" : "custom");
     setDraftPlatform(null);
+    setFinishedMediaIds(null);
+    setDraftLocked(false);
   }
 
   // Pulls the real post (caption + cover image) server-side and evaluates it
@@ -2833,8 +2913,12 @@ export function SlideshowStudio({
     setSlideshowReference(p.slideshowReference ?? "");
     setSelectedAccountIds(new Set(p.selectedAccountIds ?? []));
     setDraftStatus("saved");
-    setMode(draft.mode === "templates" ? "templates" : "custom");
-    setStep(0);
+    const resumedMode = draft.mode === "templates" ? "templates" : "custom";
+    setMode(resumedMode);
+    // Slideshow doesn't persist `step` the way the other studios do — a
+    // finished draft still needs to land on its Review step, not Build.
+    setStep(draft.status === "finished" ? (resumedMode === "templates" ? 3 : 1) : 0);
+    setDraftLocked(draft.status === "finished");
   }
 
   async function deleteDraft(id: string) {
@@ -2991,7 +3075,7 @@ export function SlideshowStudio({
   );
 
   const header = (
-    <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="flex flex-wrap items-center justify-between gap-3" data-edit-guard-exempt>
       <div>
         {mode === "choose" ? (
           <Link
@@ -3016,7 +3100,10 @@ export function SlideshowStudio({
           Slide Show Studio
         </h1>
       </div>
-      {mode !== "choose" && draftStatusPill}
+      <div className="flex items-center gap-3">
+        {mode !== "choose" && draftLocked && <span className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-deep"><Icon name="check" size={13} /> Finished</span>}
+        {mode !== "choose" && draftStatusPill}
+      </div>
     </div>
   );
 
@@ -3068,7 +3155,7 @@ export function SlideshowStudio({
   }
 
   const stepBar = (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4" data-edit-guard-exempt>
       <div>
         <p className="text-xs font-bold uppercase tracking-[0.12em] text-muted">
           Step {displayStep + 1} of {displaySteps.length}
@@ -3090,9 +3177,24 @@ export function SlideshowStudio({
           <Icon name="chevronLeft" size={15} /> Back
         </button>
         {isReviewStep ? (
-          <button type="button" className="btn-primary !py-1.5 text-sm">
-            Launch <Icon name="sparkles" size={15} />
-          </button>
+          finishedMediaIds ? (
+            <div className="flex items-center gap-2">
+              <button type="button" disabled className="btn-subtle !py-1.5 text-sm text-primary-deep">
+                <Icon name="check" size={15} /> Finished
+              </button>
+              <button
+                type="button"
+                onClick={() => window.location.assign(`/dashboard/create/image?${new URLSearchParams({ media: finishedMediaIds.join(","), date: publishDate, time: publishTime })}`)}
+                className="btn-primary !py-1.5 text-sm"
+              >
+                Publish <Icon name="sparkles" size={15} />
+              </button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => void finishSlideshow()} disabled={finishing || publishScheduleIsPast} title={publishScheduleIsPast ? "Update the date and time on the Build step before finishing." : undefined} className="btn-primary !py-1.5 text-sm disabled:opacity-50">
+              {finishing ? "Finishing…" : publishScheduleIsPast ? <><Icon name="warningTriangle" size={15} /> Update schedule</> : <>Finish <Icon name="sparkles" size={15} /></>}
+            </button>
+          )
         ) : (
           <button
             type="button"
@@ -3115,10 +3217,11 @@ export function SlideshowStudio({
   );
 
   return (
-    <div className="fade-up mx-auto w-full max-w-7xl pb-10">
+    <div className="fade-up relative mx-auto w-full max-w-7xl pb-10" onClickCapture={editGuard.guard} onPointerDownCapture={editGuard.guard} onKeyDownCapture={editGuard.guard}>
+      {editGuard.dialog}
       {header}
 
-      <div className="card mt-5 px-6 py-5">
+      <div className="card mt-5 px-6 py-5" data-edit-guard-exempt>
         <Stepper steps={displaySteps} current={displayStep} />
       </div>
 
@@ -3169,17 +3272,20 @@ export function SlideshowStudio({
                 <div className="mt-2 flex items-center gap-2">
                   <input
                     type="date"
+                    min={earliestPublishDate}
                     value={publishDate}
-                    onChange={(e) => setPublishDate(e.target.value)}
+                    onChange={(e) => updatePublishDate(e.target.value)}
                     className="h-[42px] rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/25"
                   />
                   <input
                     type="time"
+                    min={publishDate === earliestPublishDate ? earliestPublishTime : undefined}
                     value={publishTime}
-                    onChange={(e) => setPublishTime(e.target.value)}
+                    onChange={(e) => updatePublishTime(e.target.value)}
                     className="h-[42px] rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/25"
                   />
                 </div>
+                {publishScheduleIsPast && <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-amber-700" role="alert"><Icon name="warningTriangle" size={14} />This scheduled time has already passed.</p>}
               </div>
             </div>
 
@@ -3930,6 +4036,7 @@ export function SlideshowStudio({
                             placeholder={`Description for ${platformOf(id)?.name ?? id}…`}
                           />
                           <div className="flex flex-wrap items-center gap-2 border-t border-line bg-white px-3 py-2">
+                            <CaptionCopyButton value={value} compact />
                             <button
                               type="button"
                               onClick={() => generatePlatformCaption(id)}
@@ -4272,14 +4379,33 @@ export function SlideshowStudio({
             );
           })()}
 
-        <div className="mt-8 flex items-center justify-between border-t border-line pt-5">
+        {finishError && (
+          <p className="mt-4 rounded-lg bg-red-50 px-3 py-2 text-sm font-semibold text-red-700">{finishError}</p>
+        )}
+
+        <div className="mt-8 flex items-center justify-between border-t border-line pt-5" data-edit-guard-exempt>
           <button type="button" onClick={goBack} className="btn-subtle !py-1.5 text-sm">
             <Icon name="chevronLeft" size={15} /> Back
           </button>
           {isReviewStep ? (
-            <button type="button" className="btn-primary !py-1.5 text-sm">
-              Launch <Icon name="sparkles" size={15} />
-            </button>
+            finishedMediaIds ? (
+              <div className="flex items-center gap-2">
+                <button type="button" disabled className="btn-subtle !py-1.5 text-sm text-primary-deep">
+                  <Icon name="check" size={15} /> Finished
+                </button>
+                <button
+                  type="button"
+                  onClick={() => window.location.assign(`/dashboard/create/image?${new URLSearchParams({ media: finishedMediaIds.join(","), date: publishDate, time: publishTime })}`)}
+                  className="btn-primary !py-1.5 text-sm"
+                >
+                  Publish <Icon name="sparkles" size={15} />
+                </button>
+              </div>
+            ) : (
+              <button type="button" onClick={() => void finishSlideshow()} disabled={finishing || publishScheduleIsPast} title={publishScheduleIsPast ? "Update the date and time on the Build step before finishing." : undefined} className="btn-primary !py-1.5 text-sm disabled:opacity-50">
+                {finishing ? "Finishing…" : publishScheduleIsPast ? <><Icon name="warningTriangle" size={15} /> Update schedule</> : <>Finish <Icon name="sparkles" size={15} /></>}
+              </button>
+            )
           ) : (
             <button
               type="button"

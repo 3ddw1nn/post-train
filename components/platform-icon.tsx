@@ -4,15 +4,19 @@ export function PlatformIcon({
   id,
   size = 18,
   colored = true,
+  darkSurface = false,
   className,
 }: {
   id: string;
   size?: number;
   colored?: boolean;
+  darkSurface?: boolean;
   className?: string;
 }) {
   const p = platform(id);
   if (!p) return null;
+  const needsLightMark =
+    darkSurface && (id === "twitter" || id === "tiktok" || id === "threads");
   return (
     <svg
       width={size}
@@ -22,7 +26,10 @@ export function PlatformIcon({
       role="img"
       aria-label={p.name}
     >
-      <path d={p.path} fill={colored ? p.hex : "currentColor"} />
+      <path
+        d={p.path}
+        fill={colored ? (needsLightMark ? "#ffffff" : p.hex) : "currentColor"}
+      />
     </svg>
   );
 }

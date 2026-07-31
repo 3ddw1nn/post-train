@@ -28,18 +28,20 @@ type PublishOutcome =
 
 type DestinationRow = SocialAccountRow & { dest_id: number; credentials?: string | null };
 
-async function loadPostMedia(postId: string): Promise<{ bytes: Buffer; mime: string; kind: string }[]> {
+type PublishMedia = { bytes: Buffer; mime: string; kind: string; studioPlatformId?: string | null };
+
+async function loadPostMedia(postId: string): Promise<PublishMedia[]> {
   const mediaIds = await convexQuery<string[]>(api.posts.getMediaIds, { post_id: postId });
   const files = await Promise.all(mediaIds.map((id) => readMediaBytes(id)));
   return files
     .filter((f): f is NonNullable<typeof f> => f !== null)
-    .map((f) => ({ bytes: f.bytes, mime: f.row.mime_type, kind: f.row.kind }));
+    .map((f) => ({ bytes: f.bytes, mime: f.row.mime_type, kind: f.row.kind, studioPlatformId: f.row.studio_platform_id }));
 }
 
 async function publishToPlatform(
   account: DestinationRow,
   post: PostRow,
-  media: { bytes: Buffer; mime: string; kind: string }[]
+  media: PublishMedia[]
 ): Promise<PublishOutcome> {
   if (account.status !== "active") {
     return {
@@ -390,7 +392,14 @@ export async function publishPost(post: PostRow): Promise<void> {
   }[] = [];
   let anySuccess = false;
   for (const account of destinations) {
-    const outcome = await publishToPlatform(account, post, media);
+    // Video Editor hands off one output per destination. If this is that
+    // kind of studio batch, publish only the render made for this account's
+    // platform; ordinary posts (which have no studioPlatformId) keep their
+    // existing full media set.
+    const destinationMedia = media.some((item) => item.studioPlatformId)
+      ? media.filter((item) => !item.studioPlatformId || item.studioPlatformId === account.platform)
+      : media;
+    const outcome = await publishToPlatform(account, post, destinationMedia);
     await convexMutation(api.publish.recordPublishResult, {
       id: uid(),
       post_id: post.id,

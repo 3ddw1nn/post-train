@@ -10,7 +10,8 @@ import { Icon } from "./icons";
 import { Select } from "./interactive";
 import { AccountAvatar, PlatformIcon } from "./platform-icon";
 import { MediaLibraryModal, MediaThumb, uploadOneFile, type ComposerMedia } from "./media";
-import { platform as platformOf, CAPTION_MAX_BY_PLATFORM } from "@/lib/platforms";
+import { platform as platformOf, CAPTION_MAX_BY_PLATFORM, CAPTION_MAX as PLATFORM_CAPTION_MAX } from "@/lib/platforms";
+import { checkAiTone, type AiToneResult } from "@/lib/ai-tone";
 import type { StudioDraftRow } from "@/lib/studio-drafts";
 import { VIDEO_ASPECTS, VIDEO_PRESETS, type VideoAspect, type VideoPresetId } from "@/lib/video-render-settings";
 import {
@@ -28,7 +29,10 @@ import {
   type TransitionId,
 } from "@/lib/transitions";
 import { clamp, hexToRgba as fadeHexToRgba } from "@/lib/color";
+import { localDateInputValue, nextMinuteInputValue, isPastSchedule } from "@/lib/format";
 import { StudioChooseScreen, StudioCtaCard } from "./studio-choose-screen";
+import { useEditGuard } from "./edit-guard";
+import { CaptionCopyButton } from "./caption-copy-button";
 
 type StudioJob = {
   id: string;
@@ -67,6 +71,11 @@ const SCRIPT_MAX = 600;
 const CAPTION_MAX = 200;
 const SLIDE_TEXT_MAX = 120;
 const SLIDE_MAX = 10;
+const CAPTION_LENGTHS = [
+  ["short", "Short"],
+  ["medium", "Medium"],
+  ["long", "Long"],
+] as const;
 
 /** Mirrors estimateAiUgcCost in lib/studio.ts (speech ≈ 15 chars/second). */
 function estimateSeconds(chars: number) {
@@ -857,6 +866,8 @@ type FadeDraftSnapshot = Partial<{
   renderSignatures: Record<string, string>;
   captionLayers: FadeTextLayer[];
   audioClips: FadeAudioClip[];
+  platformCaptions: Record<string, string>;
+  captionLength: "short" | "medium" | "long";
 }>;
 
 type FadeEditorSnapshot = {
@@ -1072,6 +1083,23 @@ function fadeFirstAvailableAudioRow(
   );
   return rowIndex >= 0 ? rowIndex : rows.length;
 }
+/** Where a pasted audio/caption item should land: stay on `preferred` (the
+ *  copied item's own row) if the paste's time range fits there, otherwise
+ *  the first free row *below* it — never above, so "paste over yourself"
+ *  reliably reads as "new row directly under the original." */
+function fadeFirstAvailableRowFrom<T extends { start: number; end: number }>(
+  rows: T[][],
+  start: number,
+  end: number,
+  preferred: number,
+): number {
+  const overlaps = (row: T[] | undefined) => (row ?? []).some((item) => start < item.end && end > item.start);
+  if (!overlaps(rows[preferred])) return preferred;
+  for (let index = preferred + 1; index < rows.length; index++) {
+    if (!overlaps(rows[index])) return index;
+  }
+  return rows.length;
+}
 
 const FADE_FALLBACK_WAVEFORM = Array.from({ length: 160 }, (_, index) => {
   const envelope = 0.18 + 0.82 * Math.pow(Math.sin((index / 159) * Math.PI), 0.65);
@@ -1148,7 +1176,7 @@ function FadeWaveform({ peaks, startRatio = 0, endRatio = 1, className = "", fil
   return <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" className={className}><path d={`M${top} L${bottom} Z`} fill={fill} /></svg>;
 }
 
-const FADE_WORKFLOW_STEPS = ["Build", "Captions", "Review & Launch"] as const;
+const FADE_WORKFLOW_STEPS = ["Build", "Captions", "Review & Summary"] as const;
 
 /** Custom drag types, so the timeline can tell our two drag gestures apart. */
 const TRANSITION_DND_TYPE = "application/x-transition";
@@ -1389,14 +1417,14 @@ function FadeUploadScopeDialog({ platformId, platformCount, onCurrent, onAll, on
 }
 
 /** A tab per rendered platform, showing that platform's own output — reused
- *  on Captions, Review & Launch, and inside the Build-step preview modal. */
+ *  on Captions, Review & Summary, and inside the Build-step preview modal. */
 function FadePlatformPreview({ platformOutputMediaIds, activePlatform, onSelectPlatform }: { platformOutputMediaIds: Record<string, string>; activePlatform: string | null; onSelectPlatform: (platformId: string) => void }) {
   const platformIds = Object.keys(platformOutputMediaIds);
   const active = (activePlatform && platformOutputMediaIds[activePlatform]) ? activePlatform : platformIds[0];
   const mediaId = active ? platformOutputMediaIds[active] : null;
   if (!mediaId) return null;
-  return <div className="overflow-hidden rounded-xl border border-line bg-ink">
-    {platformIds.length > 1 && <div className="flex flex-wrap items-center gap-1 border-b border-line bg-page/60 p-2">{platformIds.map((platformId) => <button key={platformId} type="button" onClick={() => onSelectPlatform(platformId)} className={`flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 text-xs font-bold ${active === platformId ? "border-primary bg-primary-soft text-primary-deep" : "border-line text-muted hover:border-primary/50"}`}><PlatformIcon id={platformId} size={13} />{platformOf(platformId)?.name ?? platformId}</button>)}</div>}
+  return <div className="overflow-hidden rounded-xl border border-neutral-800 bg-neutral-950">
+    {platformIds.length > 1 && <div className="flex flex-wrap items-center gap-1.5 border-b border-white/10 bg-neutral-950 p-2.5">{platformIds.map((platformId) => <button key={platformId} type="button" data-edit-guard-exempt onClick={() => onSelectPlatform(platformId)} className={`flex min-h-9 items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-neutral-950 ${active === platformId ? "border-primary bg-primary/20 text-white" : "border-white/15 bg-white/5 text-neutral-300 hover:border-primary/60 hover:bg-white/10 hover:text-white"}`}><PlatformIcon id={platformId} size={13} darkSurface />{platformOf(platformId)?.name ?? platformId}</button>)}</div>}
     <video key={mediaId} src={`/api/media-file/${mediaId}`} className="mx-auto max-h-[58vh] w-full object-contain" controls playsInline />
   </div>;
 }
@@ -1415,6 +1443,12 @@ function FadePreviewModal({ platformOutputMediaIds, activePlatform, onSelectPlat
 function FadeRenderScopeDialog({ platforms, defaultChecked, onClose, onRender }: { platforms: string[]; defaultChecked: string[]; onClose: () => void; onRender: (targets: string[]) => void }) {
   const [checked, setChecked] = useState(() => new Set(defaultChecked.length > 0 ? defaultChecked : platforms));
   const allChecked = platforms.length > 0 && platforms.every((platformId) => checked.has(platformId));
+  // defaultChecked only ever pre-checks platforms that still need a render
+  // (see the call site) — anything left out already has a current render, so
+  // that's a stable enough signal to badge it, even after the user toggles
+  // checkboxes around it.
+  const alreadyRendered = new Set(platforms.filter((platformId) => !defaultChecked.includes(platformId)));
+  const redundant = [...checked].filter((platformId) => alreadyRendered.has(platformId));
   return <div className="fixed inset-0 z-[120] flex items-center justify-center bg-ink/60 p-4" role="dialog" aria-modal="true" aria-labelledby="fade-render-scope-title" onClick={onClose}>
     <div className="card w-full max-w-md p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
       <h3 id="fade-render-scope-title" className="text-lg font-bold">Render for which destinations?</h3>
@@ -1427,8 +1461,21 @@ function FadeRenderScopeDialog({ platforms, defaultChecked, onClose, onRender }:
         {platforms.map((platformId) => <label key={platformId} className="flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-semibold hover:bg-page/60">
           <input type="checkbox" checked={checked.has(platformId)} onChange={(event) => setChecked((current) => { const next = new Set(current); event.target.checked ? next.add(platformId) : next.delete(platformId); return next; })} />
           <PlatformIcon id={platformId} size={14} />{platformOf(platformId)?.name ?? platformId}
+          {alreadyRendered.has(platformId) && (
+            <span className="ml-auto flex items-center gap-1 text-xs font-bold text-emerald-700">
+              <Icon name="check" size={12} /> Already rendered
+            </span>
+          )}
         </label>)}
       </div>
+      {redundant.length > 0 && (
+        <p className="mt-3 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+          <Icon name="warningTriangle" size={14} className="mt-0.5 shrink-0" />
+          {redundant.length === 1
+            ? `${platformOf(redundant[0])?.name ?? redundant[0]} already has a current render — this will re-render it again.`
+            : `${redundant.map((id) => platformOf(id)?.name ?? id).join(", ")} already have current renders — this will re-render them again.`}
+        </p>
+      )}
       <div className="mt-5 flex justify-end gap-2">
         <button type="button" onClick={onClose} className="btn-subtle">Cancel</button>
         <button type="button" onClick={() => onRender([...checked])} disabled={checked.size === 0} className="btn-primary disabled:opacity-50"><Icon name="sparkles" size={15} /> Render {checked.size > 0 ? `${checked.size} platform${checked.size === 1 ? "" : "s"}` : ""}</button>
@@ -1629,32 +1676,188 @@ function FadeCaptionLayerView({ layer, selected, frameRef, onSelect, onChange, o
 }
 
 function FadeStudioWorkflow({
-  accounts, selectedAccountIds, setSelectedAccountIds, activePlatform, setActivePlatform, platformFormatIds, setPlatformFormatIds, segments, activeSegment, setActiveSegmentId, splitAt, setSplitAt, splitActive, beginEditorEdit, setActiveTrim, duplicateActive, removeActive, setActiveVolume, muteSegmentAudio, undo, redo, canUndo, canRedo,
+  accounts, selectedAccountIds, setSelectedAccountIds, activePlatform, setActivePlatform, platformFormatIds, setPlatformFormatIds, segments, activeSegment, setActiveSegmentId, splitAt, setSplitAt, splitActive, beginEditorEdit, setActiveTrim, duplicateActive, removeActive, setActiveVolume, muteSegmentAudio, pasteSegment, undo, redo, canUndo, canRedo,
   transition, setTransition, transitionDuration, setTransitionDuration, closingSeam, setSegmentSeam, setSegmentGap, moveSegment,
   audioClips, setAudioClips, selectedAudioClipId, setSelectedAudioClipId, audioUploading, onAudioUpload, onAudioLibrary,
-  caption, setCaption, uploading, uploadStage, onUpload, onLibrary, onCrop, fileInput, onFile, error, rendering, outputMediaId, initialDraft, initialDraftId,
+  caption, setCaption, uploading, uploadStage, onUpload, onLibrary, onCrop, fileInput, onFile, error, setError, rendering, outputMediaId, initialDraft, initialDraftId, initialDraftStatus,
   platformOutputMediaIds, platformRenderStatuses, renderSignatures, rendersAreCurrent, dirtyRenderPlatforms, renderElapsedSeconds, renderStatusLabel, startRender,
   renderScopeOpen, setRenderScopeOpen, previewOpen, setPreviewOpen,
   captionLayers, setCaptionLayers, selectedCaptionId, setSelectedCaptionId,
 }: {
   accounts: FadeInAccount[]; selectedAccountIds: Set<number>; setSelectedAccountIds: (value: Set<number> | ((current: Set<number>) => Set<number>)) => void; activePlatform: string; setActivePlatform: (value: string) => void; platformFormatIds: Record<string, string>; setPlatformFormatIds: (value: Record<string, string> | ((current: Record<string, string>) => Record<string, string>)) => void; segments: FadeTimelineSegment[]; activeSegment: FadeTimelineSegment | null;
-  setActiveSegmentId: (id: string) => void; splitAt: number; setSplitAt: (value: number) => void; splitActive: () => void; beginEditorEdit: () => void; setActiveTrim: (start: number, end: number) => void; duplicateActive: () => void; removeActive: () => void; setActiveVolume: (value: number) => void; muteSegmentAudio: (segmentId: string, removed?: boolean) => void;
+  setActiveSegmentId: (id: string) => void; splitAt: number; setSplitAt: (value: number) => void; splitActive: () => void; beginEditorEdit: () => void; setActiveTrim: (start: number, end: number) => void; duplicateActive: () => void; removeActive: () => void; setActiveVolume: (value: number) => void; muteSegmentAudio: (segmentId: string) => void; pasteSegment: (segment: FadeTimelineSegment, afterSegmentId: string | null) => void;
   undo: () => void; redo: () => void; canUndo: boolean; canRedo: boolean;
   transition: FadeTransition; setTransition: (value: FadeTransition) => void; transitionDuration: number; setTransitionDuration: (value: number) => void; closingSeam: FadeSeam;
   setSegmentSeam: (index: number, seam: FadeSeam) => void; setSegmentGap: (id: string, gapBefore: number) => void; moveSegment: (from: number, to: number) => void;
   audioClips: FadeAudioClip[]; setAudioClips: (value: FadeAudioClip[] | ((current: FadeAudioClip[]) => FadeAudioClip[])) => void; selectedAudioClipId: string | null; setSelectedAudioClipId: (id: string | null) => void; audioUploading: boolean; onAudioUpload: () => void; onAudioLibrary: () => void;
   caption: string; setCaption: (value: string) => void; uploading: boolean; uploadStage: string; onUpload: () => void; onLibrary: () => void; onCrop: () => void; fileInput: RefObject<HTMLInputElement | null>; onFile: (file: File) => void;
-  error: string; rendering: boolean; outputMediaId: string | null; initialDraft?: FadeDraftSnapshot; initialDraftId?: string;
+  error: string; setError?: (value: string) => void; rendering: boolean; outputMediaId: string | null; initialDraft?: FadeDraftSnapshot; initialDraftId?: string; initialDraftStatus?: string;
   captionLayers: FadeTextLayer[]; setCaptionLayers: (value: FadeTextLayer[] | ((current: FadeTextLayer[]) => FadeTextLayer[])) => void; selectedCaptionId: string | null; setSelectedCaptionId: (id: string | null) => void;
   platformOutputMediaIds: Record<string, string>; platformRenderStatuses: Record<string, FadeJobStatus>; renderSignatures: Record<string, string>; rendersAreCurrent: boolean; dirtyRenderPlatforms: string[]; renderElapsedSeconds: number; renderStatusLabel: (status: FadeJobStatus | undefined) => string; startRender: (targets: string[]) => void;
   renderScopeOpen: boolean; setRenderScopeOpen: (value: boolean) => void; previewOpen: boolean; setPreviewOpen: (value: boolean) => void;
 }) {
   const [step, setStep] = useState(() => Math.max(0, Math.min(2, initialDraft?.step ?? 0)));
   const [previewPlatform, setPreviewPlatform] = useState<string | null>(null);
+  const [finishing, setFinishing] = useState(false);
+  // Seeded true when opened from the choose screen's "Finished" section, so
+  // the button reads "Finished" immediately rather than needing a fresh
+  // Finish click just because the page reloaded.
+  const [finishedMediaId, setFinishedMediaId] = useState<string | null>(() => (initialDraftStatus === "finished" ? outputMediaId : null));
+  // Nothing is visually locked — useEditGuard below intercepts the first real
+  // edit while this is true and prompts before flipping it back off.
+  const [draftLocked, setDraftLocked] = useState(() => initialDraftStatus === "finished");
+  async function finish(): Promise<boolean> {
+    if (!outputMediaId || finishing) return false;
+    const renderedOutputs = Object.entries(platformOutputMediaIds)
+      .filter(([platformId, mediaId]) => selectedPlatforms.includes(platformId) && !!mediaId)
+      .map(([platformId, mediaId]) => ({
+        media_id: mediaId,
+        platform_id: platformId,
+        aspect_ratio: fadeFormatFor(platformId, platformFormatIds).aspect.name,
+      }));
+    const mediaIds = [...new Set(renderedOutputs.map((output) => output.media_id).concat(outputMediaId))];
+    // The per-platform captions are the preferred post copy. When a creator
+    // only wrote the Studio's main caption, carry that into every selected
+    // destination so Create Post never opens with empty overrides.
+    const captionsForPublish = Object.fromEntries(
+      selectedPlatforms.flatMap((platformId) => {
+        const text = platformCaptions[platformId]?.trim() || caption.trim();
+        return text ? [[platformId, text]] : [];
+      })
+    );
+    setFinishing(true);
+    try {
+      const res = await fetch("/api/app/studio/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          media_ids: mediaIds,
+          template: "fade-in",
+          campaign_name: campaignName,
+          platform_ids: selectedPlatforms,
+          platform_captions: captionsForPublish,
+          caption_brief: caption,
+          caption_length: captionLength,
+          output_metadata: renderedOutputs,
+        }),
+      });
+      if (res.ok) {
+        setFinishedMediaId(outputMediaId);
+        if (draftId.current) {
+          await fetch(`/api/app/studio/drafts/${draftId.current}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "finished" }),
+          }).catch(() => {});
+        }
+        return true;
+      }
+      setError?.("Couldn’t save the rendered videos to your Library. Please try again.");
+      return false;
+    } catch {
+      setError?.("Couldn’t save the rendered videos to your Library. Check your connection and try again.");
+      return false;
+    } finally {
+      setFinishing(false);
+    }
+  }
+  async function publish() {
+    // Re-save here as well: it backfills destination metadata for a draft
+    // finished before this hand-off existed, then opens Create Post only when
+    // every rendered variant can be identified safely.
+    if (!(await finish())) return;
+    const mediaIds = [...new Set(Object.values(platformOutputMediaIds).concat(outputMediaId ?? "").filter(Boolean))];
+    window.location.assign(`/dashboard/create/video?${new URLSearchParams({ media: mediaIds.join(","), date: publishDate, time: publishTime })}`);
+  }
+  async function unlockDraft() {
+    setDraftLocked(false);
+    if (draftId.current) {
+      await fetch(`/api/app/studio/drafts/${draftId.current}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "drafting" }),
+      }).catch(() => {});
+    }
+  }
+  const editGuard = useEditGuard(draftLocked, () => void unlockDraft());
   const [campaignName, setCampaignName] = useState(() => initialDraft?.campaignName ?? "");
   const [publishDate, setPublishDate] = useState(() => initialDraft?.publishDate ?? new Date().toISOString().slice(0, 10));
   const [publishTime, setPublishTime] = useState(() => initialDraft?.publishTime ?? new Date().toTimeString().slice(0, 5));
+  const earliestPublishDate = localDateInputValue();
+  const earliestPublishTime = nextMinuteInputValue();
+  const publishScheduleIsPast = !draftLocked && isPastSchedule(publishDate, publishTime);
+
+  function updatePublishDate(value: string) {
+    if (!value || value < earliestPublishDate) return;
+    setPublishDate(value);
+    if (value === earliestPublishDate && publishTime < earliestPublishTime) {
+      setPublishTime(earliestPublishTime);
+    }
+  }
+
+  function updatePublishTime(value: string) {
+    if (!value || (publishDate === earliestPublishDate && value < earliestPublishTime)) return;
+    setPublishTime(value);
+  }
+
   const [draftStatus, setDraftStatus] = useState<"idle" | "saving" | "saved">("idle");
+  // Per-platform post captions — one box per selected destination platform,
+  // same shape/AI-fill flow as grid-2x2's. `caption` above is just the brief
+  // fed to Auto-fill, not sent anywhere itself.
+  const [platformCaptions, setPlatformCaptions] = useState<Record<string, string>>(() => initialDraft?.platformCaptions ?? {});
+  const [captionLength, setCaptionLength] = useState<"short" | "medium" | "long">(() => initialDraft?.captionLength ?? "medium");
+  const [captionBusy, setCaptionBusy] = useState<Record<string, boolean>>({});
+  const [captionError, setCaptionError] = useState<Record<string, string>>({});
+  const [toneResults, setToneResults] = useState<Record<string, AiToneResult>>({});
+  const [improveBusy, setImproveBusy] = useState<Record<string, boolean>>({});
+  async function generateCaption(platformId: string) {
+    if (captionBusy[platformId] || !caption.trim()) return;
+    setCaptionBusy((c) => ({ ...c, [platformId]: true }));
+    setCaptionError((c) => ({ ...c, [platformId]: "" }));
+    try {
+      const res = await fetch("/api/app/studio/platform-caption", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: platformId, context: caption, campaignName, length: captionLength, format: "video" }),
+      });
+      const data = (await res.json()) as { text?: string; error?: { message?: string } };
+      if (!res.ok || !data.text) throw new Error(data.error?.message ?? "Couldn't generate a caption.");
+      setPlatformCaptions((c) => ({ ...c, [platformId]: data.text as string }));
+      setToneResults((r) => {
+        const next = { ...r };
+        delete next[platformId];
+        return next;
+      });
+    } catch (e) {
+      setCaptionError((c) => ({ ...c, [platformId]: e instanceof Error ? e.message : "Couldn't generate a caption." }));
+    } finally {
+      setCaptionBusy((c) => ({ ...c, [platformId]: false }));
+    }
+  }
+  function checkTone(platformId: string) {
+    const text = platformCaptions[platformId] ?? "";
+    if (!text.trim()) return;
+    setToneResults((r) => ({ ...r, [platformId]: checkAiTone(text) }));
+  }
+  async function improveCaption(platformId: string) {
+    const text = platformCaptions[platformId] ?? "";
+    if (improveBusy[platformId] || !text.trim()) return;
+    setImproveBusy((c) => ({ ...c, [platformId]: true }));
+    try {
+      const res = await fetch("/api/app/studio/improve-caption", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ platform: platformId, text, flagged: toneResults[platformId]?.matches ?? [] }),
+      });
+      const data = (await res.json()) as { text?: string; error?: { message?: string } };
+      if (res.ok && data.text) {
+        setPlatformCaptions((c) => ({ ...c, [platformId]: data.text as string }));
+        setToneResults((r) => ({ ...r, [platformId]: checkAiTone(data.text as string) }));
+      }
+    } finally {
+      setImproveBusy((c) => ({ ...c, [platformId]: false }));
+    }
+  }
   const [editorTool, setEditorTool] = useState<"clip" | "trim" | "transition" | "volume" | "audio" | "captions">("clip");
   const [advancedCaptionOpen, setAdvancedCaptionOpen] = useState(false);
   // Seam N sits before segment N, so the first selectable seam is 1.
@@ -1705,15 +1908,42 @@ function FadeStudioWorkflow({
     splitAt?: number;
   } | null>(null);
   const draftId = useRef<string | undefined>(initialDraftId);
+  // Cmd/Ctrl+C/V clipboard for the timeline — a ref, not state, since copying
+  // shouldn't trigger a render and the value only ever needs to be read back
+  // synchronously inside the paste handler.
+  const timelineClipboard = useRef<
+    | { kind: "clip"; segment: FadeTimelineSegment }
+    | { kind: "audio"; clip: FadeAudioClip }
+    | { kind: "caption"; layer: FadeTextLayer }
+    | null
+  >(null);
   const buildReady = segments.length > 0 && selectedAccountIds.size > 0 && campaignName.trim().length > 0;
-  const buildHint = !campaignName.trim() ? "Add a campaign name to continue." : selectedAccountIds.size === 0 ? "Choose at least one destination under Post To." : segments.length === 0 ? "Upload a video to start building." : !rendersAreCurrent ? "Render the video for every selected destination to continue." : "";
+  // Continuing past Build only needs ONE rendered output to exist — not a
+  // current render for every selected destination. rendersAreCurrent (the
+  // per-platform staleness prop) still drives the Render/Re-render label so
+  // users can see which destinations need a fresh render, just not whether
+  // they're allowed to move on and add captions.
+  const hasRenderedOutput = Object.keys(platformOutputMediaIds).length > 0;
+  const buildHint = !campaignName.trim() ? "Add a campaign name to continue." : selectedAccountIds.size === 0 ? "Choose at least one destination under Post To." : segments.length === 0 ? "Upload a video to start building." : !hasRenderedOutput ? "Render the video to continue." : "";
   const schedule = new Date(`${publishDate}T${publishTime || "00:00"}`).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
-  const goTo = (target: number) => { if (target <= step || (buildReady && rendersAreCurrent)) setStep(target); };
+  const goTo = (target: number) => { if (target <= step || (buildReady && hasRenderedOutput)) setStep(target); };
   const selectedPlatforms = Array.from(new Set([...selectedAccountIds].map((id) => accounts.find((account) => account.id === id)?.platform).filter((platform): platform is string => !!platform)));
   const currentPlatform = selectedPlatforms.includes(activePlatform) ? activePlatform : selectedPlatforms[0] ?? "";
   const transitionOverlaps = fadeTransitionOverlaps(segments);
   const segmentOffsets = fadeSegmentOffsets(segments);
-  const timelineDuration = fadeTimelineDuration(segments);
+  // "Start your edit" is a first-visit screen only. Once a clip has been added,
+  // deleting them all leaves the editor mounted (it has its own Add Clip /
+  // Upload / Library controls) instead of throwing the user back to a screen
+  // that reads like their draft was reset. A ref, not state: it only ever
+  // flips false -> true and is read in the same render that sets it.
+  const hasAddedClip = useRef(segments.length > 0);
+  if (segments.length > 0) hasAddedClip.current = true;
+  // With every clip deleted the ruler still has to lay out whatever audio and
+  // text rows are left over, so it needs a real span — fadeTimelineDuration's
+  // 0.1s empty floor would stretch those rows to thousands of percent wide.
+  const timelineDuration = segments.length > 0
+    ? fadeTimelineDuration(segments)
+    : Math.max(10, ...audioClips.map((clip) => clip.end), ...captionLayers.map((layer) => layer.end));
   const previewLocation = locateFadeTimelinePosition(segments, previewTime);
   const previewInGap = segments.length > 0 && previewLocation === null;
   const activeIndex = activeSegment ? segments.findIndex((segment) => segment.id === activeSegment.id) : -1;
@@ -1925,6 +2155,64 @@ function FadeStudioWorkflow({
           redo();
           return;
         }
+        if (key === "c") {
+          if (editorTool === "captions" && selectedCaptionId) {
+            const layer = captionLayers.find((item) => item.id === selectedCaptionId);
+            if (layer) {
+              event.preventDefault();
+              timelineClipboard.current = { kind: "caption", layer };
+            }
+          } else if (editorTool === "audio" && selectedAudioClipId) {
+            const clip = audioClips.find((item) => item.id === selectedAudioClipId);
+            if (clip) {
+              event.preventDefault();
+              timelineClipboard.current = { kind: "audio", clip };
+            }
+          } else if ((editorTool === "clip" || editorTool === "trim") && activeSegment) {
+            event.preventDefault();
+            timelineClipboard.current = { kind: "clip", segment: activeSegment };
+          }
+          return;
+        }
+        // Paste always uses whatever's in the clipboard, regardless of which
+        // tool is active right now — matching how copy/paste works everywhere
+        // else, rather than requiring the matching tool to be selected first.
+        if (key === "v" && timelineClipboard.current) {
+          const clipboard = timelineClipboard.current;
+          event.preventDefault();
+          if (clipboard.kind === "caption") {
+            beginEditorEdit();
+            const duration = clipboard.layer.end - clipboard.layer.start;
+            const start = previewTime;
+            const end = start + duration;
+            const rows = fadeCaptionRows(captionLayers);
+            const originalRow = rows.findIndex((row) => row.some((item) => item.id === clipboard.layer.id));
+            const row = fadeFirstAvailableRowFrom(rows, start, end, originalRow >= 0 ? originalRow : rows.length);
+            const pasted: FadeTextLayer = { ...clipboard.layer, id: crypto.randomUUID(), start, end, row };
+            setCaptionLayers((current) => [...current, pasted]);
+            setSelectedCaptionId(pasted.id);
+            setSelectedAudioClipId(null);
+            setEditorTool("captions");
+          } else if (clipboard.kind === "audio") {
+            beginEditorEdit();
+            const duration = clipboard.clip.end - clipboard.clip.start;
+            const start = previewTime;
+            const end = start + duration;
+            const rows = fadeAudioRows(audioClips);
+            const originalRow = rows.findIndex((row) => row.some((item) => item.id === clipboard.clip.id));
+            const row = fadeFirstAvailableRowFrom(rows, start, end, originalRow >= 0 ? originalRow : rows.length);
+            const pasted: FadeAudioClip = { ...clipboard.clip, id: crypto.randomUUID(), start, end, row };
+            setAudioClips((current) => [...current, pasted]);
+            setSelectedAudioClipId(pasted.id);
+            setSelectedCaptionId(null);
+            setEditorTool("audio");
+          } else {
+            const located = locateFadeTimelinePosition(segments, previewTime);
+            pasteSegment(clipboard.segment, located?.segment.id ?? null);
+            setEditorTool("clip");
+          }
+          return;
+        }
       }
       // Space also backs off a focused button (so it doesn't just re-click
       // whatever was last clicked, the standard browser behavior) — Delete
@@ -1962,7 +2250,7 @@ function FadeStudioWorkflow({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [step, segments.length, editorTool, selectedCaptionId, selectedAudioClipId, activeSegment, activeSeam.type, seamIndex, transitionDuration, beginEditorEdit, removeActive, undo, redo, canUndo, canRedo, setCaptionLayers, setSelectedCaptionId, setAudioClips, setSelectedAudioClipId, setSegmentSeam]);
+  }, [step, segments, editorTool, selectedCaptionId, selectedAudioClipId, activeSegment, activeSeam.type, seamIndex, transitionDuration, captionLayers, audioClips, previewTime, beginEditorEdit, removeActive, pasteSegment, undo, redo, canUndo, canRedo, setCaptionLayers, setSelectedCaptionId, setAudioClips, setSelectedAudioClipId, setSegmentSeam, setEditorTool]);
 
   useEffect(() => {
     if (!campaignName.trim() && segments.length === 0) return;
@@ -1978,7 +2266,7 @@ function FadeStudioWorkflow({
             mode: "custom",
             title: campaignName || UNTITLED_DRAFT_TITLE,
             cover_image_url: null,
-            state: { step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds: [...selectedAccountIds], activePlatform, platformFormatIds, platformOutputMediaIds, renderSignatures, captionLayers, audioClips },
+            state: { step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds: [...selectedAccountIds], activePlatform, platformFormatIds, platformOutputMediaIds, renderSignatures, captionLayers, audioClips, platformCaptions, captionLength },
           }),
         });
         if (!response.ok) throw new Error("Draft save failed.");
@@ -1988,7 +2276,7 @@ function FadeStudioWorkflow({
       } catch { setDraftStatus("idle"); }
     }, 750);
     return () => window.clearTimeout(timer);
-  }, [step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds, activePlatform, platformFormatIds, platformOutputMediaIds, renderSignatures, captionLayers, audioClips]);
+  }, [step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds, activePlatform, platformFormatIds, platformOutputMediaIds, renderSignatures, captionLayers, audioClips, platformCaptions, captionLength]);
 
   if (step === 0) {
     const selectedCaptionLayer = captionLayers.find((layer) => layer.id === selectedCaptionId) ?? null;
@@ -2110,9 +2398,14 @@ function FadeStudioWorkflow({
       if (isActiveLayer) {
         const end = segment.end ?? segment.duration ?? segment.start;
         event.currentTarget.currentTime = Math.min(end, Math.max(segment.start, splitAt));
+        // A freshly loaded element defaults to volume 1 — set it from the
+        // segment's own (possibly muted) volume before play() can start it
+        // audible, rather than waiting on the volume-sync effect's next run.
+        event.currentTarget.volume = Math.min(1, Math.max(0, (segment.volume ?? 1) * (1 - transitionProgress)));
         if (timelinePlaying) void event.currentTarget.play().catch(() => undefined);
       } else {
         event.currentTarget.currentTime = segment.start + transitionProgress * activeTransitionOverlap;
+        event.currentTarget.volume = Math.min(1, Math.max(0, (segment.volume ?? 1) * (nextSeam.type === "cut" ? 1 : transitionProgress)));
         if (timelinePlaying && transitionProgress > 0) void event.currentTarget.play().catch(() => undefined);
       }
     };
@@ -2141,6 +2434,7 @@ function FadeStudioWorkflow({
       setPreviewTime(position);
       if (activeSegment?.id === located.segment.id && previewRef.current) {
         previewRef.current.currentTime = located.sourceTime;
+        previewRef.current.volume = Math.min(1, Math.max(0, activeSegment.volume ?? 1));
         void previewRef.current.play();
       }
     };
@@ -2514,6 +2808,13 @@ function FadeStudioWorkflow({
       const index = segments.findIndex((s) => s.id === detachPending.segmentId);
       if (segment && index !== -1) {
         beginEditorEdit();
+        // Silence the live preview element immediately, rather than only
+        // updating segment state and waiting on the volume-sync effect's next
+        // run — belt-and-suspenders against any effect-timing gap, since an
+        // audible clip playing on top of its own newly-detached track is a
+        // much worse failure mode than a redundant volume=0 assignment.
+        if (activeSegment?.id === segment.id && previewRef.current) previewRef.current.volume = 0;
+        if (nextSegment?.id === segment.id && transitionPreviewRef.current) transitionPreviewRef.current.volume = 0;
         const offset = segmentOffsets[index];
         const duration = fadeSegmentDuration(segment);
         const clip: FadeAudioClip = {
@@ -2522,7 +2823,7 @@ function FadeStudioWorkflow({
           start: offset, end: offset + duration, volume: segment.volume ?? 1, sourceSegmentId: segment.id,
         };
         if (detachPending.action === "delete") {
-          muteSegmentAudio(segment.id, true);
+          muteSegmentAudio(segment.id);
           setSelectedAudioClipId(null);
           setEditorTool("clip");
         } else if (detachPending.action === "split") {
@@ -2701,15 +3002,16 @@ function FadeStudioWorkflow({
     }
     toggleTimelinePlaybackRef.current = playTimeline;
     advancePreviewLayerRef.current = advancePreviewLayer;
-    return <div className="fade-up mx-auto w-full max-w-6xl pb-10">
-      <button type="button" onClick={() => history.back()} className="inline-flex items-center gap-1 text-sm font-medium text-muted hover:text-primary-deep"><Icon name="chevronLeft" size={15} /> Content Studio</button>
-      <div className="mt-2 flex flex-wrap items-end justify-between gap-3"><div><h1 className="flex items-center gap-2 text-2xl font-bold"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white"><Icon name="video" size={18} /></span>Video Editor Studio</h1><p className="mt-1 text-sm text-muted">Edit your sequence, then tailor it for every selected destination.</p></div><div className="flex items-center gap-3">{draftStatus !== "idle" && <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted">{draftStatus === "saving" ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary/25 border-t-primary" /> : <Icon name="check" size={13} className="text-primary" />}{draftStatus === "saving" ? "Saving draft…" : "Saved as draft"}</span>}</div></div>
-      <div className="card mt-5 px-6 py-5"><div className="flex items-center">{FADE_WORKFLOW_STEPS.map((label, index) => <div key={label} className="flex flex-1 items-center last:flex-none"><button type="button" onClick={() => goTo(index)} className="flex min-h-11 min-w-11 flex-col items-center gap-2 rounded-lg px-1"><span className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-black ${index === 0 ? "border-primary bg-primary-soft text-primary-deep ring-4 ring-primary-soft/70" : "border-line bg-white text-muted"}`}>{index + 1}</span><span className={`text-xs font-black uppercase tracking-[0.12em] ${index === 0 ? "text-primary-deep" : "text-muted"}`}>{label}</span></button>{index < 2 && <span className="mx-4 mb-8 h-0.5 flex-1 bg-line sm:mx-8" />}</div>)}</div></div>
+    return <div className="fade-up relative mx-auto w-full max-w-6xl pb-10" onClickCapture={editGuard.guard} onPointerDownCapture={editGuard.guard} onKeyDownCapture={editGuard.guard}>
+      {editGuard.dialog}
+      <button type="button" onClick={() => history.back()} data-edit-guard-exempt className="inline-flex items-center gap-1 text-sm font-medium text-muted hover:text-primary-deep"><Icon name="chevronLeft" size={15} /> Content Studio</button>
+      <div className="mt-2 flex flex-wrap items-end justify-between gap-3"><div><h1 className="flex items-center gap-2 text-2xl font-bold"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white"><Icon name="video" size={18} /></span>Video Editor Studio</h1><p className="mt-1 text-sm text-muted">Edit your sequence, then tailor it for every selected destination.</p></div><div className="flex items-center gap-3">{draftLocked && <span className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-deep"><Icon name="check" size={13} /> Finished</span>}{draftStatus !== "idle" && <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted">{draftStatus === "saving" ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary/25 border-t-primary" /> : <Icon name="check" size={13} className="text-primary" />}{draftStatus === "saving" ? "Saving draft…" : "Saved as draft"}</span>}</div></div>
+      <div className="card mt-5 px-6 py-5" data-edit-guard-exempt><div className="flex items-center">{FADE_WORKFLOW_STEPS.map((label, index) => <div key={label} className="flex flex-1 items-center last:flex-none"><button type="button" onClick={() => goTo(index)} className="flex min-h-11 min-w-11 flex-col items-center gap-2 rounded-lg px-1"><span className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-black ${index === 0 ? "border-primary bg-primary-soft text-primary-deep ring-4 ring-primary-soft/70" : "border-line bg-white text-muted"}`}>{index + 1}</span><span className={`text-xs font-black uppercase tracking-[0.12em] ${index === 0 ? "text-primary-deep" : "text-muted"}`}>{label}</span></button>{index < 2 && <span className="mx-4 mb-8 h-0.5 flex-1 bg-line sm:mx-8" />}</div>)}</div></div>
       <section className="mt-4 rounded-2xl border border-line bg-white shadow-[0_16px_42px_rgba(18,34,43,0.08)]">
-        <div className="grid gap-4 border-b border-line px-5 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end"><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Campaign name</span><input className="input mt-2" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Name this video" /></label><div className="flex flex-wrap gap-2"><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Publish date</span><input type="date" className="input mt-2" value={publishDate} onChange={(event) => setPublishDate(event.target.value)} /></label><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Time</span><input type="time" className="input mt-2" value={publishTime} onChange={(event) => setPublishTime(event.target.value)} /></label></div></div>
+        <div className="grid gap-4 border-b border-line px-5 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end"><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Campaign name</span><input className="input mt-2" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Name this video" /></label><div><div className="flex flex-wrap gap-2"><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Publish date</span><input type="date" min={earliestPublishDate} className="input mt-2" value={publishDate} onChange={(event) => updatePublishDate(event.target.value)} /></label><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Time</span><input type="time" min={publishDate === earliestPublishDate ? earliestPublishTime : undefined} className="input mt-2" value={publishTime} onChange={(event) => updatePublishTime(event.target.value)} /></label></div>{publishScheduleIsPast && <p className="mt-2 flex items-center justify-end gap-1.5 text-xs font-semibold text-amber-700" role="alert"><Icon name="warningTriangle" size={14} />This scheduled time has already passed.</p>}</div></div>
         <div className="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Post to</span>{accounts.map((account) => <button key={account.id} type="button" aria-pressed={selectedAccountIds.has(account.id)} onClick={() => setSelectedAccountIds((current) => { const next = new Set(current); next.has(account.id) ? next.delete(account.id) : next.add(account.id); return next; })} className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-xs font-bold transition-colors ${selectedAccountIds.has(account.id) ? "border-primary bg-primary-soft text-primary-deep" : "border-line text-muted hover:border-primary/50"}`}><AccountAvatar username={account.username} platformId={account.platform} avatarUrl={account.avatar_url} selected={selectedAccountIds.has(account.id)} size={25} /><span className="max-w-24 truncate">{account.username}</span></button>)}</div>
-        {segments.length === 0 ? <div className="flex min-h-80 flex-col items-center justify-center p-8 text-center"><span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-soft text-primary-deep"><Icon name="video" size={27} /></span><h2 className="mt-4 text-xl font-bold">Start your edit</h2><p className="mt-1 max-w-md text-sm text-muted">Add a video, then use the timeline to split clips and control transitions.</p><div className="mt-5 flex gap-2"><button type="button" onClick={onUpload} className="btn-primary"><Icon name="upload" size={15} /> Upload video</button><button type="button" onClick={onLibrary} className="btn-subtle">Library</button></div>{uploading && <p className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-primary-deep"><span className="h-4 w-4 animate-spin rounded-full border-2 border-primary/25 border-t-primary" />{uploadStage}</p>}</div> : <div className="bg-[#080808] text-white">
-          {selectedPlatforms.length > 0 && <div className="flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#101010] px-4 py-3"><span className="mr-1 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">Preview format</span>{selectedPlatforms.map((platformId) => { const format = fadeFormatFor(platformId, platformFormatIds); return <div key={platformId} className={`flex items-center rounded-lg border text-xs font-semibold ${currentPlatform === platformId ? "border-primary bg-primary/15 text-white" : "border-white/10 bg-white/5 text-neutral-400"}`}><button type="button" onClick={() => setActivePlatform(platformId)} className="flex items-center gap-1.5 self-stretch px-3 py-2"><PlatformIcon id={platformId} size={14} />{platformOf(platformId)?.name ?? platformId}</button><Select value={format.id} ariaLabel={`${platformOf(platformId)?.name ?? platformId} aspect ratio`} onChange={(value) => { setPlatformFormatIds((current) => ({ ...current, [platformId]: value })); setActivePlatform(platformId); }} options={fadeFormatOptions(platformId).map((option) => ({ value: option.id, label: option.aspect.name }))} tone="dark" width={148} align="right" className="min-h-9 w-[76px] rounded-l-none border-y-0 border-r-0 border-l border-white/10 bg-transparent px-2 py-1.5 text-xs hover:bg-white/10" /></div>; })}</div>}
+        {segments.length === 0 && !hasAddedClip.current ? <div className="flex min-h-80 flex-col items-center justify-center p-8 text-center"><span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-soft text-primary-deep"><Icon name="video" size={27} /></span><h2 className="mt-4 text-xl font-bold">Start your edit</h2><p className="mt-1 max-w-md text-sm text-muted">Add a video, then use the timeline to split clips and control transitions.</p><div className="mt-5 flex gap-2"><button type="button" onClick={onUpload} className="btn-primary"><Icon name="upload" size={15} /> Upload video</button><button type="button" onClick={onLibrary} className="btn-subtle">Library</button></div>{uploading && <p className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-primary-deep"><span className="h-4 w-4 animate-spin rounded-full border-2 border-primary/25 border-t-primary" />{uploadStage}</p>}</div> : <div className="bg-[#080808] text-white">
+          {selectedPlatforms.length > 0 && <div className="flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#101010] px-4 py-3"><span className="mr-1 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">Preview format</span>{selectedPlatforms.map((platformId) => { const format = fadeFormatFor(platformId, platformFormatIds); return <div key={platformId} className={`flex items-center rounded-lg border text-xs font-semibold ${currentPlatform === platformId ? "border-primary bg-primary/15 text-white" : "border-white/10 bg-white/5 text-neutral-400"}`}><button type="button" onClick={() => setActivePlatform(platformId)} className="flex items-center gap-1.5 self-stretch px-3 py-2"><PlatformIcon id={platformId} size={14} darkSurface />{platformOf(platformId)?.name ?? platformId}</button><Select value={format.id} ariaLabel={`${platformOf(platformId)?.name ?? platformId} aspect ratio`} onChange={(value) => { setPlatformFormatIds((current) => ({ ...current, [platformId]: value })); setActivePlatform(platformId); }} options={fadeFormatOptions(platformId).map((option) => ({ value: option.id, label: option.aspect.name }))} tone="dark" width={148} align="right" className="min-h-9 w-[76px] rounded-l-none border-y-0 border-r-0 border-l border-white/10 bg-transparent px-2 py-1.5 text-xs hover:bg-white/10" /></div>; })}</div>}
           <div className="relative flex min-h-[410px] items-center justify-center border-b border-white/10 bg-black px-4 py-5 sm:min-h-[500px]">
             <button type="button" onClick={onCrop} className="absolute right-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-2 text-xs font-semibold text-white backdrop-blur hover:bg-white/15"><Icon name="expand" size={14} /> Recrop</button>
             <div ref={captionFrameRef} className="relative max-h-[450px] max-w-full overflow-hidden rounded-lg bg-neutral-950 [container-type:inline-size]" style={{ aspectRatio: `${currentAspect.width}/${currentAspect.height}`, width: `${Math.min(760, 450 * currentAspect.width / currentAspect.height)}px` }}>
@@ -2756,7 +3058,7 @@ function FadeStudioWorkflow({
               <button type="button" onClick={undo} disabled={!canUndo} className="flex h-9 w-9 items-center justify-center rounded-lg text-neutral-300 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-30" aria-label="Undo last edit" title="Undo (Ctrl+Z / ⌘Z)"><Icon name="undo" size={18} /></button>
               <button type="button" onClick={redo} disabled={!canRedo} className="flex h-9 w-9 items-center justify-center rounded-lg text-neutral-300 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-30" aria-label="Redo last edit" title="Redo (Ctrl+Y / ⌘⇧Z)"><Icon name="redo" size={18} /></button>
             </div>
-            <div className="flex items-center gap-3 justify-self-center"><button type="button" onClick={playTimeline} className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-black shadow-sm hover:bg-neutral-200" aria-label={timelinePlaying ? "Pause timeline" : "Play timeline"}><Icon name={timelinePlaying ? "pause" : "play"} size={16} /></button><span className="min-w-32 font-mono text-sm text-neutral-300">{formatFadeTime(previewTime, true)} / {formatFadeTime(timelineDuration, true)}</span></div>
+            <div className="flex items-center gap-3 justify-self-center"><button type="button" data-edit-guard-exempt onClick={playTimeline} className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-black shadow-sm hover:bg-neutral-200" aria-label={timelinePlaying ? "Pause timeline" : "Play timeline"}><Icon name={timelinePlaying ? "pause" : "play"} size={16} /></button><span className="min-w-32 font-mono text-sm text-neutral-300">{formatFadeTime(previewTime, true)} / {formatFadeTime(timelineDuration, true)}</span></div>
             <div className="flex items-center gap-1 justify-self-end"><span className="mr-1 text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">Zoom {Math.round(timelineZoom * 100)}%</span><button type="button" onClick={() => setTimelineZoom((current) => clampTimelineZoom(current - TIMELINE_ZOOM_STEP))} disabled={timelineZoom <= TIMELINE_ZOOM_MIN} className="flex h-8 w-8 items-center justify-center rounded-lg text-lg leading-none text-neutral-300 hover:bg-white/10 disabled:opacity-30" aria-label="Zoom timeline out">−</button><button type="button" onClick={() => setTimelineZoom((current) => clampTimelineZoom(current + TIMELINE_ZOOM_STEP))} disabled={timelineZoom >= TIMELINE_ZOOM_MAX} className="flex h-8 w-8 items-center justify-center rounded-lg text-neutral-300 hover:bg-white/10 disabled:opacity-30" aria-label="Zoom timeline in"><Icon name="plus" size={14} /></button></div>
           </div>
           <div className="border-b border-white/10 bg-[#0b0b0b] px-4 py-4">
@@ -2999,6 +3301,11 @@ function FadeStudioWorkflow({
                 </div>
                 <div className="relative h-7 border-b border-white/10 bg-[#0a0a0a]" aria-label="Original clip audio track (attached, shorter than a full audio row)">
                   {segments.map((segment, index) => {
+                    // Detaching or deleting sets audioRemoved, so this row stays
+                    // gone even after the detached clip it moved into is itself
+                    // deleted — it used to reappear (looking re-attached) the
+                    // moment that clip went away. The second check now only
+                    // covers drafts saved before that fix.
                     if (segment.audioRemoved) return null;
                     if (audioClips.some((clip) => clip.kind === "detached" && clip.sourceSegmentId === segment.id)) return null;
                     const segmentDuration = fadeSegmentDuration(segment);
@@ -3278,16 +3585,23 @@ function FadeStudioWorkflow({
                   </div>
                 </div>
                 <label className="mt-4 block max-w-xl text-xs font-semibold text-neutral-300">
-                  Volume · {Math.round((activeSegment.volume ?? 1) * 100)}%
+                  {activeSegment.audioRemoved
+                    ? "Audio removed from this clip"
+                    : `Volume · ${Math.round((activeSegment.volume ?? 1) * 100)}%`}
+                  {/* Once this clip's audio has been detached or deleted it lives
+                      somewhere else (an audio row, or nowhere) — dragging this
+                      slider would silently bring it back on top of the detached
+                      copy, which is the double-audio bug. Undo is the way back. */}
                   <input
                     type="range"
                     min="0"
                     max="2"
                     step="0.05"
                     value={activeSegment.volume ?? 1}
+                    disabled={activeSegment.audioRemoved}
                     onChange={(event) => setActiveVolume(Number(event.target.value))}
-                    title="Browsers cap live preview volume at 100% — the exported video plays at the full level you set here."
-                    className="mt-3 w-full accent-primary"
+                    title={activeSegment.audioRemoved ? "This clip's audio was removed — undo to bring it back." : "Browsers cap live preview volume at 100% — the exported video plays at the full level you set here."}
+                    className="mt-3 w-full accent-primary disabled:opacity-40"
                   />
                   {(activeSegment.volume ?? 1) > 1 && (
                     <span className="mt-1.5 block text-[11px] font-normal text-neutral-500">
@@ -3514,13 +3828,13 @@ function FadeStudioWorkflow({
           ))}
         </div>}
         {rendering && <div className="flex flex-wrap items-center gap-2 border-t border-line px-5 py-3 text-xs font-semibold text-muted"><span className="flex items-center gap-2"><span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary" />Rendering</span>{Object.keys(platformRenderStatuses).map((platformId) => <span key={platformId} className="inline-flex items-center gap-1 rounded-full border border-line bg-page px-2 py-1"><PlatformIcon id={platformId} size={12} />{platformOf(platformId)?.name ?? platformId} · {renderStatusLabel(platformRenderStatuses[platformId])}</span>)}<span className="tabular-nums">{renderElapsedSeconds}s elapsed</span><span className="hidden xl:inline">You can leave while this runs.</span></div>}
-        {!buildReady || !rendersAreCurrent ? <p className="px-5 py-3 text-sm font-semibold text-muted">{buildHint}</p> : null}
+        {!buildReady || !hasRenderedOutput ? <p className="px-5 py-3 text-sm font-semibold text-muted">{buildHint}</p> : null}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-4">
           <button type="button" onClick={() => history.back()} className="btn-subtle"><Icon name="chevronLeft" size={15} /> Back</button>
           <div className="flex items-center gap-2">
             {segments.length > 0 && selectedPlatforms.length > 0 && <button type="button" onClick={() => setRenderScopeOpen(true)} disabled={rendering} className="btn-subtle disabled:opacity-50"><Icon name="sparkles" size={15} /> {rendersAreCurrent ? "Re-render" : "Render"}</button>}
-            {Object.keys(platformOutputMediaIds).length > 0 && <button type="button" onClick={() => setPreviewOpen(true)} className="btn-subtle"><Icon name="play" size={15} /> Preview</button>}
-            <button type="button" onClick={() => setStep(1)} disabled={!buildReady || !rendersAreCurrent || uploading} title={buildHint || undefined} className="btn-primary disabled:opacity-50">Continue to captions <Icon name="chevronRight" size={15} /></button>
+            {Object.keys(platformOutputMediaIds).length > 0 && <button type="button" data-edit-guard-exempt onClick={() => setPreviewOpen(true)} className="btn-subtle"><Icon name="play" size={15} /> Preview</button>}
+            <button type="button" onClick={() => setStep(1)} disabled={!buildReady || !hasRenderedOutput || uploading} title={buildHint || undefined} className="btn-primary disabled:opacity-50">Continue to captions <Icon name="chevronRight" size={15} /></button>
           </div>
         </div>
         <input ref={fileInput} type="file" accept="video/*" className="hidden" onChange={(event) => { if (event.target.files?.[0]) onFile(event.target.files[0]); event.target.value = ""; }} />
@@ -3532,22 +3846,179 @@ function FadeStudioWorkflow({
     </div>;
   }
 
-  return <div className="fade-up mx-auto w-full max-w-5xl pb-10">
-    <button type="button" onClick={() => history.back()} className="inline-flex items-center gap-1 text-sm font-medium text-muted hover:text-primary-deep"><Icon name="chevronLeft" size={15} /> Content Studio</button>
-    <div className="mt-2"><h1 className="flex items-center gap-2 text-2xl font-bold"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white"><Icon name="video" size={18} /></span>Video Editor Studio</h1><p className="mt-1 text-sm text-muted">Build a short sequence, split clips, and control how every transition lands.</p></div>
-    <div className="card mt-5 px-6 py-5"><div className="flex items-center">{FADE_WORKFLOW_STEPS.map((label, index) => <div key={label} className="flex flex-1 items-center last:flex-none"><button type="button" onClick={() => goTo(index)} className="group flex min-h-11 min-w-11 flex-col items-center gap-2 rounded-lg px-1"><span className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-black ${index < step ? "border-primary bg-primary text-white" : index === step ? "border-primary bg-primary-soft text-primary-deep ring-4 ring-primary-soft/70" : "border-line bg-white text-muted"}`}>{index < step ? <Icon name="check" size={17} /> : index + 1}</span><span className={`text-xs font-black uppercase tracking-[0.12em] ${index === step ? "text-primary-deep" : index < step ? "text-ink" : "text-muted"}`}>{label}</span></button>{index < 2 && <span className={`mx-4 mb-8 h-0.5 flex-1 sm:mx-8 ${index < step ? "bg-primary" : "bg-line"}`} />}</div>)}</div></div>
+  return <div className="fade-up relative mx-auto w-full max-w-5xl pb-10" onClickCapture={editGuard.guard} onPointerDownCapture={editGuard.guard} onKeyDownCapture={editGuard.guard}>
+    {editGuard.dialog}
+    <button type="button" onClick={() => history.back()} data-edit-guard-exempt className="inline-flex items-center gap-1 text-sm font-medium text-muted hover:text-primary-deep"><Icon name="chevronLeft" size={15} /> Content Studio</button>
+    <div className="mt-2 flex flex-wrap items-end justify-between gap-3"><div><h1 className="flex items-center gap-2 text-2xl font-bold"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white"><Icon name="video" size={18} /></span>Video Editor Studio</h1><p className="mt-1 text-sm text-muted">Build a short sequence, split clips, and control how every transition lands.</p></div>{draftLocked && <span className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-deep"><Icon name="check" size={13} /> Finished</span>}</div>
+    <div className="card mt-5 px-6 py-5" data-edit-guard-exempt><div className="flex items-center">{FADE_WORKFLOW_STEPS.map((label, index) => <div key={label} className="flex flex-1 items-center last:flex-none"><button type="button" onClick={() => goTo(index)} className="group flex min-h-11 min-w-11 flex-col items-center gap-2 rounded-lg px-1"><span className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-black ${index < step ? "border-primary bg-primary text-white" : index === step ? "border-primary bg-primary-soft text-primary-deep ring-4 ring-primary-soft/70" : "border-line bg-white text-muted"}`}>{index < step ? <Icon name="check" size={17} /> : index + 1}</span><span className={`text-xs font-black uppercase tracking-[0.12em] ${index === step ? "text-primary-deep" : index < step ? "text-ink" : "text-muted"}`}>{label}</span></button>{index < 2 && <span className={`mx-4 mb-8 h-0.5 flex-1 sm:mx-8 ${index < step ? "bg-primary" : "bg-line"}`} />}</div>)}</div></div>
     {draftStatus !== "idle" && <div className="mt-3 flex justify-end"><span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted">{draftStatus === "saving" ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary/25 border-t-primary" /> : <Icon name="check" size={13} className="text-primary" />}{draftStatus === "saving" ? "Saving draft…" : "Saved as draft"}</span></div>}
     <div className="card mt-4 p-5 sm:p-6"><div className="flex items-center justify-between gap-3 border-b border-line pb-4"><div><p className="text-xs font-bold uppercase tracking-[0.12em] text-muted">Step {step + 1} of 3</p><h2 className="text-lg font-bold">{FADE_WORKFLOW_STEPS[step]}</h2></div>{uploading && <span className="inline-flex items-center gap-2 text-sm font-semibold text-primary-deep"><span className="h-4 w-4 animate-spin rounded-full border-2 border-primary/25 border-t-primary" /> {uploadStage}</span>}</div>
-      {step === 1 && <div className="mt-5"><FadePlatformPreview platformOutputMediaIds={platformOutputMediaIds} activePlatform={previewPlatform} onSelectPlatform={setPreviewPlatform} /><div className="mt-5"><div className="flex items-center justify-between"><p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Caption (optional)</p><span className="text-xs font-semibold text-muted">{caption.length}/{CAPTION_MAX}</span></div><textarea value={caption} maxLength={CAPTION_MAX} onChange={(event) => setCaption(event.target.value)} className="input mt-2 h-28 resize-y" placeholder="Describe the video, audience, and key message…" /><p className="mt-2 text-sm text-muted">Post text only — sent with the video, not rendered into it.</p></div></div>}
-      {step === 2 && <div className="mt-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Campaign</p><h3 className="text-xl font-bold">{campaignName}</h3></div><span className="rounded-lg border border-line bg-page px-3 py-2 text-sm font-semibold text-muted">{schedule}</span></div><div className="mt-5 overflow-hidden rounded-xl border border-line bg-white"><div className="border-b border-line px-4 py-3 text-sm font-semibold">{selectedAccountIds.size} selected destination{selectedAccountIds.size === 1 ? "" : "s"}</div><div className="p-4"><FadePlatformPreview platformOutputMediaIds={platformOutputMediaIds} activePlatform={previewPlatform} onSelectPlatform={setPreviewPlatform} /></div></div></div>}
+      {step === 1 && (
+        <div className="mt-5">
+          <FadePlatformPreview platformOutputMediaIds={platformOutputMediaIds} activePlatform={previewPlatform} onSelectPlatform={setPreviewPlatform} />
+          <div className="mt-5">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">AI caption brief</p>
+              {selectedPlatforms.length > 0 && (
+                <div className="flex items-center gap-1 rounded-lg bg-page p-0.5">
+                  {CAPTION_LENGTHS.map(([id, label]) => (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => setCaptionLength(id)}
+                      className={`rounded-lg px-2.5 py-1 text-xs font-bold transition-colors ${captionLength === id ? "bg-white text-primary-deep shadow-sm" : "text-muted hover:text-ink"}`}
+                      title={`AI Auto-fill writes a ${label.toLowerCase()} caption`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+            <textarea value={caption} onChange={(event) => setCaption(event.target.value)} className="input mt-2 h-20 resize-y" placeholder="Describe the video, audience, and key message…" />
+            <p className="mt-2 text-sm text-muted">This is an AI prompt used by Auto-fill to write platform-specific captions below.</p>
+          </div>
+          <div className="mt-6">
+            <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Platform captions (optional)</p>
+            {selectedPlatforms.length === 0 ? (
+              <p className="mt-2 text-sm text-muted">Select accounts under Post To on the Build step to write a caption for each platform.</p>
+            ) : (
+              <div className="mt-3 flex flex-col gap-3">
+                {selectedPlatforms.map((id) => {
+                  const max = CAPTION_MAX_BY_PLATFORM[id as keyof typeof CAPTION_MAX_BY_PLATFORM] ?? PLATFORM_CAPTION_MAX;
+                  const value = platformCaptions[id] ?? "";
+                  const tone = toneResults[id];
+                  const rendered = !!platformOutputMediaIds[id];
+                  return (
+                    <div key={id}>
+                      <div className="flex items-center justify-between">
+                        <label className="flex items-center gap-1.5 text-sm font-bold text-ink">
+                          <PlatformIcon id={id} size={14} /> {platformOf(id)?.name ?? id}
+                        </label>
+                        <span className={`text-xs font-semibold ${value.length >= max ? "text-red-600" : "text-muted"}`}>
+                          {value.length}/{max}
+                        </span>
+                      </div>
+                      {!rendered && (
+                        <p className="mt-1 flex items-center gap-1.5 text-xs font-semibold text-amber-700">
+                          <Icon name="sparkles" size={12} /> Render the video for {platformOf(id)?.name ?? id} before this caption can be used.
+                        </p>
+                      )}
+                      <div className="mt-1 overflow-hidden rounded-xl border border-line bg-white shadow-sm">
+                        <textarea
+                          className="h-20 w-full resize-y border-0 bg-white px-3 py-2 text-sm text-ink outline-none placeholder:text-muted focus:ring-0"
+                          maxLength={max}
+                          value={value}
+                          onChange={(event) => {
+                            setPlatformCaptions((c) => ({ ...c, [id]: event.target.value }));
+                            setToneResults((r) => {
+                              if (!(id in r)) return r;
+                              const next = { ...r };
+                              delete next[id];
+                              return next;
+                            });
+                          }}
+                          placeholder={`Caption for ${platformOf(id)?.name ?? id}…`}
+                        />
+                        <div className="flex flex-wrap items-center gap-2 border-t border-line bg-white px-3 py-2">
+                          <CaptionCopyButton value={value} compact />
+                          <button type="button" onClick={() => generateCaption(id)} disabled={captionBusy[id] || !caption.trim()} title={!caption.trim() ? "Add an AI caption brief above first" : undefined} className="btn-subtle !py-1 text-xs disabled:opacity-50">
+                            {captionBusy[id] ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-muted/40 border-t-transparent" /> : <Icon name="sparkles" size={12} />}
+                            {captionBusy[id] ? "Writing…" : "AI Auto-fill"}
+                          </button>
+                          <button type="button" onClick={() => checkTone(id)} disabled={!value.trim()} className="btn-subtle !py-1 text-xs disabled:opacity-50">
+                            <Icon name="search" size={12} /> Check Tone
+                          </button>
+                          {tone && tone.level !== "natural" && (
+                            <button type="button" onClick={() => improveCaption(id)} disabled={improveBusy[id]} className="btn-subtle !py-1 text-xs disabled:opacity-50">
+                              {improveBusy[id] ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-muted/40 border-t-transparent" /> : <Icon name="sparkles" size={12} />}
+                              {improveBusy[id] ? "Improving…" : "Make it sound less AI"}
+                            </button>
+                          )}
+                        </div>
+                        {tone && (
+                          <div className="border-t border-line bg-page/50 px-3 py-2">
+                            <p className={`text-xs font-bold ${tone.level === "high" ? "text-red-600" : tone.level === "some" ? "text-amber-700" : "text-emerald-700"}`}>
+                              {tone.level === "high" ? "Sounds very AI-generated" : tone.level === "some" ? "A little AI-ish" : "Sounds natural"}
+                            </p>
+                            {tone.matches.length > 0 && <p className="mt-0.5 text-xs text-muted">Flagged: &ldquo;{tone.matches.join("”, “")}&rdquo;</p>}
+                          </div>
+                        )}
+                      </div>
+                      {captionError[id] && <p className="mt-1 text-xs font-semibold text-red-600">{captionError[id]}</p>}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+      {step === 2 && (() => {
+        const reviewPlatformIds = Object.keys(platformOutputMediaIds);
+        const activeReviewPlatform = (previewPlatform && platformOutputMediaIds[previewPlatform]) ? previewPlatform : reviewPlatformIds[0];
+        const activeReviewCaption = activeReviewPlatform ? platformCaptions[activeReviewPlatform] ?? "" : "";
+        const activeReviewMax = activeReviewPlatform ? CAPTION_MAX_BY_PLATFORM[activeReviewPlatform as keyof typeof CAPTION_MAX_BY_PLATFORM] ?? PLATFORM_CAPTION_MAX : PLATFORM_CAPTION_MAX;
+        const notRendered = selectedPlatforms.filter((id) => !platformOutputMediaIds[id]);
+        return (
+          <div className="mt-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Campaign</p>
+                <h3 className="text-xl font-bold">{campaignName}</h3>
+              </div>
+              <div className="text-right"><span className={`inline-flex rounded-lg border px-3 py-2 text-sm font-semibold ${publishScheduleIsPast ? "border-amber-200 bg-amber-50 text-amber-800" : "border-line bg-page text-muted"}`}>{schedule}</span>{publishScheduleIsPast && <p className="mt-1.5 flex items-center justify-end gap-1.5 text-xs font-semibold text-amber-700" role="alert"><Icon name="warningTriangle" size={14} />This scheduled time has passed.</p>}</div>
+            </div>
+            <div className="mt-3 flex flex-wrap items-center gap-1.5">
+              {selectedPlatforms.map((id) => (
+                <span key={id} className={`inline-flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-xs font-bold ${platformOutputMediaIds[id] ? "border-line bg-page text-ink" : "border-amber-200 bg-amber-50 text-amber-800"}`}>
+                  <PlatformIcon id={id} size={13} />{platformOf(id)?.name ?? id}
+                  {!platformOutputMediaIds[id] && <Icon name="warningTriangle" size={11} />}
+                </span>
+              ))}
+            </div>
+            {notRendered.length > 0 && (
+              <p className="mt-2 flex items-start gap-1.5 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-semibold text-amber-800">
+                <Icon name="warningTriangle" size={14} className="mt-0.5 shrink-0" />
+                {notRendered.length === 1
+                  ? `${platformOf(notRendered[0])?.name ?? notRendered[0]} hasn't been rendered yet — go back and render it before finishing.`
+                  : `${notRendered.map((id) => platformOf(id)?.name ?? id).join(", ")} haven't been rendered yet — go back and render them before finishing.`}
+              </p>
+            )}
+            <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
+              <div className="overflow-hidden rounded-xl border border-line bg-white">
+                <div className="border-b border-line px-4 py-3 text-sm font-semibold">{selectedAccountIds.size} selected destination{selectedAccountIds.size === 1 ? "" : "s"}</div>
+                <div className="p-4"><FadePlatformPreview platformOutputMediaIds={platformOutputMediaIds} activePlatform={previewPlatform} onSelectPlatform={setPreviewPlatform} /></div>
+              </div>
+              <div className="rounded-xl border border-line bg-white p-4">
+                {activeReviewPlatform ? (
+                  <>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="flex items-center gap-1.5 text-sm font-bold text-ink"><PlatformIcon id={activeReviewPlatform} size={14} /> {platformOf(activeReviewPlatform)?.name ?? activeReviewPlatform} caption</p>
+                      <span className={`text-xs font-semibold ${activeReviewCaption.length >= activeReviewMax ? "text-red-600" : "text-muted"}`}>{activeReviewCaption.length}/{activeReviewMax}</span>
+                    </div>
+                    {activeReviewCaption ? (
+                      <p className="mt-2 whitespace-pre-wrap text-sm text-ink">{activeReviewCaption}</p>
+                    ) : (
+                      <p className="mt-2 text-sm italic text-muted">No caption written for {platformOf(activeReviewPlatform)?.name ?? activeReviewPlatform} yet — go back to Captions to add one.</p>
+                    )}
+                  </>
+                ) : (
+                  <p className="text-sm text-muted">Render a video to preview its captions here.</p>
+                )}
+              </div>
+            </div>
+          </div>
+        );
+      })()}
       {error && <p className="mt-5 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm font-semibold text-danger">{error}</p>}
-      <div className="mt-8 flex items-center justify-between border-t border-line pt-5"><button type="button" onClick={() => setStep((current) => current - 1)} className="btn-subtle"><Icon name="chevronLeft" size={15} /> Back</button>{step === 1 ? <button type="button" onClick={() => setStep(2)} className="btn-primary">Review <Icon name="chevronRight" size={15} /></button> : <button type="button" onClick={() => window.location.assign(`/dashboard/create/video?media=${outputMediaId}`)} disabled={!outputMediaId} className="btn-primary disabled:opacity-50">Launch <Icon name="sparkles" size={15} /></button>}</div>
+      <div className="mt-8 flex items-center justify-between border-t border-line pt-5" data-edit-guard-exempt><button type="button" onClick={() => setStep((current) => current - 1)} className="btn-subtle"><Icon name="chevronLeft" size={15} /> Back</button>{step === 1 ? <button type="button" onClick={() => setStep(2)} className="btn-primary">Review <Icon name="chevronRight" size={15} /></button> : <div className="flex items-center gap-2">{!!outputMediaId && finishedMediaId === outputMediaId ? <button type="button" disabled className="btn-subtle text-primary-deep"><Icon name="check" size={15} /> Finished</button> : <button type="button" onClick={() => void finish()} disabled={!outputMediaId || finishing || publishScheduleIsPast} title={publishScheduleIsPast ? "Update the date and time on the Build step before finishing." : undefined} className="btn-primary disabled:opacity-50">{finishing ? "Finishing…" : publishScheduleIsPast ? <><Icon name="warningTriangle" size={15} /> Update schedule</> : "Finish"}</button>}{!!outputMediaId && finishedMediaId === outputMediaId && <button type="button" onClick={() => void publish()} disabled={finishing} className="btn-primary disabled:opacity-50">{finishing ? "Preparing…" : <>Publish <Icon name="sparkles" size={15} /></>}</button>}</div>}</div>
       <input ref={fileInput} type="file" accept="video/*" className="hidden" onChange={(event) => { if (event.target.files?.[0]) onFile(event.target.files[0]); event.target.value = ""; }} />
     </div>
   </div>;
 }
 
-function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initialDraft, initialDraftId }: { onExit: () => void; accounts: FadeInAccount[]; initialClip: ComposerMedia | null; initialCaption: string; initialDraft?: FadeDraftSnapshot; initialDraftId?: string }) {
+function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initialDraft, initialDraftId, initialDraftStatus }: { onExit: () => void; accounts: FadeInAccount[]; initialClip: ComposerMedia | null; initialCaption: string; initialDraft?: FadeDraftSnapshot; initialDraftId?: string; initialDraftStatus?: string }) {
   const [segments, setSegments] = useState<FadeTimelineSegment[]>(() => initialDraft?.segments?.length
     // Drafts saved before per-seam transitions get the old whole-sequence
     // setting backfilled onto every seam (segment 0 from the old dedicated
@@ -3613,7 +4084,14 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
   // for anything (autosave, back-compat) that just wants "the" job.
   const [jobId, setJobId] = useState<string | null>(null);
   const [status, setStatus] = useState<FadeJobStatus>("idle");
-  const [outputMediaId, setOutputMediaId] = useState<string | null>(null);
+  // Unlike platformOutputMediaIds, this scalar was never itself saved to the
+  // draft — so a draft reopened after every platform finished rendering in a
+  // PREVIOUS session came back with this stuck at null (Finish gates on it)
+  // until something rendered again this session. Seed it from whichever
+  // platform output the draft already restored.
+  const [outputMediaId, setOutputMediaId] = useState<string | null>(
+    () => Object.values(initialDraft?.platformOutputMediaIds ?? {})[0] ?? null,
+  );
   const [error, setError] = useState("");
   const undoStack = useRef<FadeEditorSnapshot[]>([]);
   const redoStack = useRef<FadeEditorSnapshot[]>([]);
@@ -3934,7 +4412,7 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
   const cropFlowKey = cropFlow?.keys[cropFlow.current] ?? currentPlatform;
   const cropFlowFormat = cropFlowKey === "default" ? { aspect: VIDEO_ASPECTS[0] } : fadeFormatFor(cropFlowKey, platformFormatIds);
   const scopeOpen = pendingScopeMedia !== null || cropTargetId !== null;
-  return <><FadeStudioWorkflow accounts={accounts} selectedAccountIds={selectedAccountIds} setSelectedAccountIds={setSelectedAccountIds} activePlatform={activePlatform} setActivePlatform={setActivePlatform} platformFormatIds={platformFormatIds} setPlatformFormatIds={setPlatformFormatIds} segments={segments} activeSegment={activeSegment} setActiveSegmentId={setActiveSegmentId} splitAt={splitAt} setSplitAt={setSplitAt} splitActive={splitActive} beginEditorEdit={rememberEditorState} setActiveTrim={(start, end) => { if (!activeSegment) return; setSegments((current) => current.map((segment) => segment.id === activeSegment.id ? { ...segment, start, end } : segment)); }} duplicateActive={duplicateActive} removeActive={() => { if (!activeSegment) return; rememberEditorState(); setSegments((current) => current.filter((segment) => segment.id !== activeSegment.id)); }} setActiveVolume={(volume) => { if (!activeSegment) return; rememberEditorState(); setSegments((current) => current.map((segment) => segment.id === activeSegment.id ? { ...segment, volume, audioRemoved: false } : segment)); }} muteSegmentAudio={(segmentId, removed = false) => setSegments((current) => current.map((segment) => segment.id === segmentId ? { ...segment, volume: 0, audioRemoved: removed || segment.audioRemoved } : segment))} undo={undoEdit} redo={redoEdit} canUndo={historyState.canUndo} canRedo={historyState.canRedo} transition={transition} setTransition={(value) => { rememberEditorState(); setTransition(value); }} transitionDuration={transitionDuration} setTransitionDuration={(value) => { rememberEditorState(); setTransitionDuration(value); }} closingSeam={closingSeam} setSegmentSeam={setSegmentSeam} setSegmentGap={setSegmentGap} moveSegment={moveSegment} audioClips={audioClips} setAudioClips={setAudioClips} selectedAudioClipId={selectedAudioClipId} setSelectedAudioClipId={setSelectedAudioClipId} audioUploading={audioUploading} onAudioUpload={() => audioInput.current?.click()} onAudioLibrary={() => setAudioLibraryOpen(true)} caption={caption} setCaption={setCaption} uploading={uploading} uploadStage={uploadStage} onUpload={() => input.current?.click()} onLibrary={() => setLibraryOpen(true)} onCrop={() => activeSegment && setCropTargetId(activeSegment.id)} fileInput={input} onFile={addFile} error={error} rendering={rendering} outputMediaId={outputMediaId} initialDraft={initialDraft} initialDraftId={initialDraftId}
+  return <><FadeStudioWorkflow accounts={accounts} selectedAccountIds={selectedAccountIds} setSelectedAccountIds={setSelectedAccountIds} activePlatform={activePlatform} setActivePlatform={setActivePlatform} platformFormatIds={platformFormatIds} setPlatformFormatIds={setPlatformFormatIds} segments={segments} activeSegment={activeSegment} setActiveSegmentId={setActiveSegmentId} splitAt={splitAt} setSplitAt={setSplitAt} splitActive={splitActive} beginEditorEdit={rememberEditorState} setActiveTrim={(start, end) => { if (!activeSegment) return; setSegments((current) => current.map((segment) => segment.id === activeSegment.id ? { ...segment, start, end } : segment)); }} duplicateActive={duplicateActive} removeActive={() => { if (!activeSegment) return; rememberEditorState(); setSegments((current) => current.filter((segment) => segment.id !== activeSegment.id)); }} setActiveVolume={(volume) => { if (!activeSegment) return; rememberEditorState(); setSegments((current) => current.map((segment) => segment.id === activeSegment.id ? { ...segment, volume, audioRemoved: false } : segment)); }} muteSegmentAudio={(segmentId) => setSegments((current) => current.map((segment) => segment.id === segmentId ? { ...segment, volume: 0, audioRemoved: true } : segment))} pasteSegment={(segment, afterSegmentId) => { if (segments.length >= MAX_FADE_SEGMENTS) return; rememberEditorState(); const pasted = { ...segment, id: crypto.randomUUID(), gapBefore: 0, transitionIn: { type: "cut", duration: transitionDuration } }; setSegments((current) => { const afterIndex = afterSegmentId ? current.findIndex((s) => s.id === afterSegmentId) : -1; const next = [...current]; next.splice(afterIndex >= 0 ? afterIndex + 1 : current.length, 0, pasted); return next; }); setActiveSegmentId(pasted.id); }} undo={undoEdit} redo={redoEdit} canUndo={historyState.canUndo} canRedo={historyState.canRedo} transition={transition} setTransition={(value) => { rememberEditorState(); setTransition(value); }} transitionDuration={transitionDuration} setTransitionDuration={(value) => { rememberEditorState(); setTransitionDuration(value); }} closingSeam={closingSeam} setSegmentSeam={setSegmentSeam} setSegmentGap={setSegmentGap} moveSegment={moveSegment} audioClips={audioClips} setAudioClips={setAudioClips} selectedAudioClipId={selectedAudioClipId} setSelectedAudioClipId={setSelectedAudioClipId} audioUploading={audioUploading} onAudioUpload={() => audioInput.current?.click()} onAudioLibrary={() => setAudioLibraryOpen(true)} caption={caption} setCaption={setCaption} uploading={uploading} uploadStage={uploadStage} onUpload={() => input.current?.click()} onLibrary={() => setLibraryOpen(true)} onCrop={() => activeSegment && setCropTargetId(activeSegment.id)} fileInput={input} onFile={addFile} error={error} rendering={rendering} outputMediaId={outputMediaId} initialDraft={initialDraft} initialDraftId={initialDraftId} initialDraftStatus={initialDraftStatus}
     platformOutputMediaIds={platformOutputMediaIds} platformRenderStatuses={platformRenderStatuses} renderSignatures={renderSignatures} rendersAreCurrent={rendersAreCurrent} dirtyRenderPlatforms={dirtyRenderPlatforms} renderElapsedSeconds={renderElapsedSeconds} renderStatusLabel={renderStatusLabel} startRender={(targets) => void startRender(targets)}
     renderScopeOpen={renderScopeOpen} setRenderScopeOpen={setRenderScopeOpen} previewOpen={previewOpen} setPreviewOpen={setPreviewOpen}
     captionLayers={captionLayers} setCaptionLayers={setCaptionLayers} selectedCaptionId={selectedCaptionId} setSelectedCaptionId={setSelectedCaptionId} />{libraryOpen && <MediaLibraryModal kind="video" onClose={() => setLibraryOpen(false)} onPick={(media) => { setLibraryOpen(false); setPendingScopeMedia(media); }} />}{audioLibraryOpen && <MediaLibraryModal kind="audio" onClose={() => setAudioLibraryOpen(false)} onPick={(media) => { rememberEditorState(); const timelineDuration = fadeTimelineDuration(segments); const sourceEnd = timelineDuration || 30; const id = crypto.randomUUID(); setAudioClips((current) => [...current, { id, kind: "soundtrack", mediaId: media.id, name: media.name, sourceStart: 0, sourceEnd, start: 0, end: sourceEnd, volume: 1, row: fadeFirstAvailableAudioRow(current, 0, sourceEnd) }]); setSelectedAudioClipId(id); setAudioLibraryOpen(false); }} />}<input ref={audioInput} type="file" accept="audio/*" className="hidden" onChange={(event) => { if (event.target.files?.[0]) void addAudioFile(event.target.files[0]); event.target.value = ""; }} />{scopeOpen && <FadeUploadScopeDialog platformId={currentPlatform} platformCount={selectedPlatforms.length} onCurrent={() => beginCropFlow(false)} onAll={() => beginCropFlow(true)} onCancel={() => { setPendingScopeMedia(null); setCropTargetId(null); }} />}{cropFlow && <FadeCropModal segment={cropFlow.segment} targetAspect={cropFlowFormat.aspect} initial={cropFlow.segment.crops[cropFlowKey] ?? { x: 0.5, y: 0.5 }} progressLabel={cropFlow.keys.length > 1 ? `Crop ${cropFlow.current + 1} of ${cropFlow.keys.length} · ${platformOf(cropFlowKey)?.name ?? cropFlowKey}` : undefined} actionLabel={cropFlow.current < cropFlow.keys.length - 1 ? "Next crop" : "Save"} onClose={() => setCropFlow(null)} onSave={(crop) => { const updated = { ...cropFlow.segment, crops: { ...cropFlow.segment.crops, [cropFlowKey]: crop } }; if (cropFlow.current < cropFlow.keys.length - 1) { setCropFlow({ ...cropFlow, segment: updated, current: cropFlow.current + 1 }); } else { rememberEditorState(); setSegments((current) => current.some((segment) => segment.id === updated.id) ? current.map((segment) => segment.id === updated.id ? updated : segment) : [...current, updated]); setActiveSegmentId(updated.id); setCropFlow(null); } }} />}</>;
@@ -3944,7 +4422,7 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
 
 export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) {
   const [mode, setMode] = useState<"choose" | "wizard">("choose");
-  const [resumeDraft, setResumeDraft] = useState<{ id: string; state: FadeDraftSnapshot } | null>(null);
+  const [resumeDraft, setResumeDraft] = useState<{ id: string; state: FadeDraftSnapshot; status?: string } | null>(null);
   const [step, setStep] = useState(0);
   const [clip, setClip] = useState<ComposerMedia | null>(null);
   const [campaignName, setCampaignName] = useState("");
@@ -3976,12 +4454,15 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
   const rendering = jobStatus === "queued" || jobStatus === "generating" || jobStatus === "compositing";
   const schedule = new Date(`${publishDate}T${publishTime || "00:00"}`).toLocaleString(undefined, { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" });
 
-  useEffect(() => {
-    fetch("/api/app/studio/drafts")
+  function refetchDrafts() {
+    return fetch("/api/app/studio/drafts")
       .then((response) => response.ok ? response.json() : null)
       .then((data) => setDrafts((data?.data ?? []).filter((draft: StudioDraftRow) => draft.template === "fade-in")))
       .catch(() => {})
       .finally(() => setDraftsLoading(false));
+  }
+  useEffect(() => {
+    void refetchDrafts();
   }, []);
 
   useEffect(() => {
@@ -4047,6 +4528,7 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
           campaignName: raw.campaignName ?? (LEGACY_UNTITLED_DRAFT_TITLES.includes(draft.title) ? "" : draft.title),
           segments,
         },
+        status: draft.status,
       });
       setMode("wizard");
     } catch {}
@@ -4061,8 +4543,48 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
     }
     if (wasCurrent) reset();
   }
+  async function publishFinishedDraft(draft: StudioDraftRow) {
+    try {
+      const state = JSON.parse(draft.state) as FadeDraftSnapshot & { outputMediaId?: string | null };
+      const mediaIds = [...new Set(Object.values(state.platformOutputMediaIds ?? {}).concat(state.outputMediaId ?? "").filter(Boolean))];
+      if (mediaIds.length > 0) {
+        const selectedAccountIds = new Set(state.selectedAccountIds ?? []);
+        const platformIds = [...new Set(accounts.filter((account) => selectedAccountIds.has(account.id)).map((account) => account.platform))];
+        const outputMetadata = Object.entries(state.platformOutputMediaIds ?? {}).map(([platformId, mediaId]) => ({
+          media_id: mediaId,
+          platform_id: platformId,
+          aspect_ratio: fadeFormatFor(platformId, state.platformFormatIds ?? {}).aspect.name,
+        }));
+        const platformCaptions = Object.fromEntries(platformIds.flatMap((platformId) => {
+          const text = state.platformCaptions?.[platformId]?.trim() || state.caption?.trim();
+          return text ? [[platformId, text]] : [];
+        }));
+        const response = await fetch("/api/app/studio/finish", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            media_ids: mediaIds,
+            template: "fade-in",
+            campaign_name: state.campaignName ?? draft.title,
+            platform_ids: platformIds,
+            platform_captions: platformCaptions,
+            caption_brief: state.caption ?? "",
+            caption_length: state.captionLength ?? "medium",
+            output_metadata: outputMetadata,
+          }),
+        });
+        if (!response.ok) throw new Error("Couldn’t prepare the finished video for publishing.");
+        const params: Record<string, string> = { media: mediaIds.join(",") };
+        if (state.publishDate) params.date = state.publishDate;
+        if (state.publishTime) params.time = state.publishTime;
+        window.location.assign(`/dashboard/create/video?${new URLSearchParams(params)}`);
+      }
+    } catch {
+      // The draft can still be opened normally if an old/corrupt state has no render ids.
+    }
+  }
 
-  if (mode === "wizard") return <FadeVideoEditor onExit={() => setMode("choose")} accounts={accounts} initialClip={resumeDraft?.state.segments?.[0]?.media ?? clip} initialCaption={resumeDraft?.state.caption ?? caption} initialDraft={resumeDraft?.state} initialDraftId={resumeDraft?.id} />;
+  if (mode === "wizard") return <FadeVideoEditor onExit={() => { setMode("choose"); void refetchDrafts(); }} accounts={accounts} initialClip={resumeDraft?.state.segments?.[0]?.media ?? clip} initialCaption={resumeDraft?.state.caption ?? caption} initialDraft={resumeDraft?.state} initialDraftId={resumeDraft?.id} initialDraftStatus={resumeDraft?.status} />;
 
   if (mode === "choose")
     return (
@@ -4093,6 +4615,7 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
           );
         }}
         onResume={resume}
+        onPublish={publishFinishedDraft}
         onDelete={deleteDraft}
       />
     );

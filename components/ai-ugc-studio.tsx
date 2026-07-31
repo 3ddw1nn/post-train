@@ -10,7 +10,6 @@
 // FORM: Existing Studio wizard extension; Operate mode; no new visual world.
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./icons";
 import { AccountAvatar, PlatformIcon } from "./platform-icon";
@@ -27,6 +26,9 @@ import {
 } from "@/lib/platforms";
 import type { StudioDraftRow } from "@/lib/studio-drafts";
 import { StudioChooseScreen, StudioCtaCard } from "./studio-choose-screen";
+import { useEditGuard } from "./edit-guard";
+import { localDateInputValue, nextMinuteInputValue, isPastSchedule } from "@/lib/format";
+import { CaptionCopyButton } from "./caption-copy-button";
 
 export type AiUgcAccount = {
   id: number;
@@ -65,7 +67,7 @@ type UgcDraftSnapshot = {
   generatedSignature?: string | null;
 };
 
-const STEPS = ["Create", "Captions", "Review & Launch"] as const;
+const STEPS = ["Create", "Captions", "Review & Summary"] as const;
 const SCRIPT_MAX = 600;
 
 function defaultPublishing() {
@@ -284,7 +286,6 @@ export function AiUgcStudio({
   aiUsed: number;
   aiCap: number;
 }) {
-  const router = useRouter();
   const initialPublishing = useMemo(defaultPublishing, []);
   const [mode, setMode] = useState<"choose" | "wizard">("choose");
   const [step, setStep] = useState(0);
@@ -292,6 +293,19 @@ export function AiUgcStudio({
   const [campaignName, setCampaignName] = useState("");
   const [publishDate, setPublishDate] = useState(initialPublishing.date);
   const [publishTime, setPublishTime] = useState(initialPublishing.time);
+  const earliestPublishDate = localDateInputValue();
+  const earliestPublishTime = nextMinuteInputValue();
+  function updatePublishDate(value: string) {
+    if (!value || value < earliestPublishDate) return;
+    setPublishDate(value);
+    if (value === earliestPublishDate && publishTime < earliestPublishTime) {
+      setPublishTime(earliestPublishTime);
+    }
+  }
+  function updatePublishTime(value: string) {
+    if (!value || (publishDate === earliestPublishDate && value < earliestPublishTime)) return;
+    setPublishTime(value);
+  }
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<number>>(new Set());
 
   const [personas, setPersonas] = useState<Persona[] | null>(null);
@@ -322,6 +336,22 @@ export function AiUgcStudio({
 
   const [launching, setLaunching] = useState(false);
   const [launchError, setLaunchError] = useState("");
+  const [finishedMediaId, setFinishedMediaId] = useState<string | null>(null);
+  const [draftLocked, setDraftLocked] = useState(false);
+  const publishScheduleIsPast = !draftLocked && isPastSchedule(publishDate, publishTime);
+  async function unlockDraft() {
+    setDraftLocked(false);
+    if (draftIdRef.current) {
+      const id = draftIdRef.current;
+      await fetch(`/api/app/studio/drafts/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "drafting" }),
+      }).catch(() => {});
+      setDrafts((current) => current.map((d) => (d.id === id ? { ...d, status: "drafting" } : d)));
+    }
+  }
+  const editGuard = useEditGuard(draftLocked, () => void unlockDraft());
 
   const selectedAccounts = accounts.filter((account) => selectedAccountIds.has(account.id));
   const selectedPlatforms = Array.from(new Set(selectedAccounts.map((account) => account.platform)));
@@ -534,6 +564,8 @@ export function AiUgcStudio({
     setGeneratedSignature(null);
     setGenerationError("");
     setLaunchError("");
+    setFinishedMediaId(null);
+    setDraftLocked(false);
     draftIdRef.current = undefined;
     setDraftStatus("idle");
   }
@@ -565,6 +597,8 @@ export function AiUgcStudio({
       setGenerationError("");
       setLaunchError("");
       setDraftStatus("saved");
+      setDraftLocked(draft.status === "finished");
+      setFinishedMediaId(draft.status === "finished" ? (state.outputMediaId ?? null) : null);
       setMode("wizard");
     } catch {
       // Ignore malformed legacy draft rows.
@@ -689,46 +723,33 @@ export function AiUgcStudio({
     setStep(Math.max(0, Math.min(STEPS.length - 1, next)));
   }
 
-  async function launch() {
-    if (!outputIsCurrent || launching || selectedAccounts.length === 0) return;
+  async function finish() {
+    if (!outputIsCurrent || launching) return;
     setLaunching(true);
     setLaunchError("");
     try {
-      const scheduled = new Date(`${publishDate}T${publishTime}`);
-      if (Number.isNaN(scheduled.getTime())) throw new Error("Choose a valid publishing date and time.");
-      const firstCaption = (
-        selectedPlatforms.map((platform) => platformCaptions[platform] ?? "").find(Boolean) ?? ""
-      )
-        .trim()
-        .slice(0, CAPTION_MAX);
-      const response = await fetch("/api/app/posts", {
+      const response = await fetch("/api/app/studio/finish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          type: "video",
-          caption: firstCaption,
-          media: [outputMediaId],
-          social_accounts: selectedAccounts.map((account) => account.id),
-          scheduled_at: scheduled.toISOString(),
-          account_configurations: selectedAccounts
-            .map((account) => ({
-              account_id: account.id,
-              caption: platformCaptions[account.platform]?.trim() ?? "",
-            }))
-            .filter((configuration) => configuration.caption),
-        }),
+        body: JSON.stringify({ media_ids: [outputMediaId], template: "ai-ugc", campaign_name: campaignName, platform_ids: selectedPlatforms, platform_captions: Object.fromEntries(Object.entries(platformCaptions).filter(([id]) => selectedPlatforms.includes(id))) }),
       });
       const data = await response.json().catch(() => null);
-      if (!response.ok) throw new Error(data?.error?.message ?? "Could not schedule this post.");
+      if (!response.ok) throw new Error(data?.error?.message ?? "Could not finish this video.");
+      // Marks the draft finished rather than deleting it — it now belongs in
+      // the choose screen's "Finished" section, resumable/publishable later,
+      // not thrown away the way the old direct-post flow used to.
       if (draftIdRef.current) {
-        await fetch(`/api/app/studio/drafts/${draftIdRef.current}`, { method: "DELETE" }).catch(
-          () => {},
-        );
+        const id = draftIdRef.current;
+        await fetch(`/api/app/studio/drafts/${id}`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ status: "finished" }),
+        }).catch(() => {});
+        setDrafts((current) => current.map((d) => (d.id === id ? { ...d, status: "finished" } : d)));
       }
-      router.push("/dashboard/posts?status=scheduled");
-      router.refresh();
+      setFinishedMediaId(outputMediaId);
     } catch (error) {
-      setLaunchError(error instanceof Error ? error.message : "Could not schedule this post.");
+      setLaunchError(error instanceof Error ? error.message : "Could not finish this video.");
     } finally {
       setLaunching(false);
     }
@@ -747,7 +768,7 @@ export function AiUgcStudio({
     );
 
   const header = (
-    <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="flex flex-wrap items-center justify-between gap-3" data-edit-guard-exempt>
       <div>
         {mode === "choose" ? (
           <Link
@@ -772,7 +793,10 @@ export function AiUgcStudio({
           AI UGC Video Studio
         </h1>
       </div>
-      {draftStatusPill}
+      <div className="flex items-center gap-3">
+        {draftLocked && <span className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-deep"><Icon name="check" size={13} /> Finished</span>}
+        {draftStatusPill}
+      </div>
     </div>
   );
 
@@ -809,9 +833,10 @@ export function AiUgcStudio({
   }
 
   return (
-    <div className="fade-up mx-auto w-full max-w-7xl pb-10">
+    <div className="fade-up relative mx-auto w-full max-w-7xl pb-10" onClickCapture={editGuard.guard} onPointerDownCapture={editGuard.guard} onKeyDownCapture={editGuard.guard}>
+      {editGuard.dialog}
       {header}
-      <WizardStepper current={step} onNavigate={goToStep} />
+      <div data-edit-guard-exempt><WizardStepper current={step} onNavigate={goToStep} /></div>
 
       <div className="card mt-4 p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
@@ -851,18 +876,21 @@ export function AiUgcStudio({
                   <input
                     type="date"
                     aria-label="Publishing date"
+                    min={earliestPublishDate}
                     value={publishDate}
-                    onChange={(event) => setPublishDate(event.target.value)}
+                    onChange={(event) => updatePublishDate(event.target.value)}
                     className="h-[42px] rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/25"
                   />
                   <input
                     type="time"
                     aria-label="Publishing time"
+                    min={publishDate === earliestPublishDate ? earliestPublishTime : undefined}
                     value={publishTime}
-                    onChange={(event) => setPublishTime(event.target.value)}
+                    onChange={(event) => updatePublishTime(event.target.value)}
                     className="h-[42px] rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/25"
                   />
                 </div>
+                {publishScheduleIsPast && <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-amber-700" role="alert"><Icon name="warningTriangle" size={14} />This scheduled time has already passed.</p>}
               </div>
             </div>
 
@@ -1131,6 +1159,7 @@ export function AiUgcStudio({
                     placeholder={`Write the ${platformOf(currentPlatform)?.name ?? "platform"} caption…`}
                   />
                   <div className="mt-3 flex flex-wrap items-center gap-3">
+                    <CaptionCopyButton value={activeCaption} />
                     <button
                       type="button"
                       onClick={() => void generateCaption(currentPlatform)}
@@ -1323,7 +1352,7 @@ export function AiUgcStudio({
           </div>
         )}
 
-        <div className="mt-8 flex items-center justify-between gap-3 border-t border-line pt-5">
+        <div className="mt-8 flex items-center justify-between gap-3 border-t border-line pt-5" data-edit-guard-exempt>
           <button type="button" onClick={goBack} className="btn-subtle !py-1.5 text-sm">
             <Icon name="chevronLeft" size={15} /> Back
           </button>
@@ -1348,22 +1377,28 @@ export function AiUgcStudio({
             <button type="button" onClick={() => void goNext()} className="btn-primary !py-1.5 text-sm">
               Review <Icon name="chevronRight" size={15} />
             </button>
+          ) : !!outputMediaId && finishedMediaId === outputMediaId ? (
+            <div className="flex items-center gap-2">
+              <button type="button" disabled className="btn-subtle !py-1.5 text-sm text-primary-deep">
+                <Icon name="check" size={15} /> Finished
+              </button>
+              <button
+                type="button"
+                onClick={() => window.location.assign(`/dashboard/create/video?${new URLSearchParams({ media: outputMediaId ?? "", date: publishDate, time: publishTime })}`)}
+                className="btn-primary !py-1.5 text-sm"
+              >
+                Publish <Icon name="sparkles" size={15} />
+              </button>
+            </div>
           ) : (
             <button
               type="button"
-              onClick={() => void launch()}
-              disabled={!outputIsCurrent || launching || selectedAccounts.length === 0}
+              onClick={() => void finish()}
+              disabled={!outputIsCurrent || launching || publishScheduleIsPast}
               className="btn-primary !py-1.5 text-sm disabled:opacity-50"
-              title={
-                selectedAccounts.length === 0
-                  ? "Choose at least one connected destination."
-                  : !outputIsCurrent
-                    ? "Wait for the current video to finish generating."
-                    : undefined
-              }
+              title={!outputIsCurrent ? "Wait for the current video to finish generating." : publishScheduleIsPast ? "Update the date and time on the Build step before finishing." : undefined}
             >
-              {launching ? "Scheduling…" : "Launch"}
-              <Icon name="send" size={15} />
+              {launching ? "Finishing…" : publishScheduleIsPast ? <>Update schedule <Icon name="warningTriangle" size={15} /></> : <>Finish <Icon name="send" size={15} /></>}
             </button>
           )}
         </div>

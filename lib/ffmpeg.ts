@@ -111,6 +111,12 @@ export type GridOptions = {
   // default). Mirrors CSS object-position so the editor's live preview and
   // the render agree pixel-for-pixel.
   cropOffsets?: [GridCropOffset, GridCropOffset, GridCropOffset, GridCropOffset];
+  // Trims the composed timeline as a whole (applied equally to all four
+  // clips plus the optional audio track, so they stay in sync) — not a
+  // per-clip trim. trimEnd is relative to the untrimmed timeline; omitted
+  // means "through the natural (shortest-clip) end".
+  trimStart?: number;
+  trimEnd?: number;
 }
 
 // Interior "+" separators drawn over the packed grid with drawbox, so the color
@@ -154,7 +160,12 @@ export async function renderGrid(
     .join(";");
   const border = gridBorderChain(outputWidth, outputHeight, opts.border);
   const videoGraph = `${scaled};[v0][v1][v2][v3]xstack=inputs=4:layout=0_0|w0_0|0_h0|w0_h0${border}[v]`;
-  const args = [...inputs.flatMap((f) => ["-i", f])]; // clip inputs occupy 0-3
+  // Trimming the start moves every input's own seek point in lockstep (video
+  // + its own audio together), so the four quadrants and the optional track
+  // below stay frame-aligned exactly as they were pre-trim.
+  const trimStart = Math.max(0, opts.trimStart ?? 0);
+  const seek = trimStart > 0 ? ["-ss", String(trimStart)] : [];
+  const args = [...inputs.flatMap((f) => [...seek, "-i", f])]; // clip inputs occupy 0-3
 
   // Collect every audio stream to mix: each selected clip that actually has
   // audio, then the uploaded track (appended as the next input). A silence
@@ -165,7 +176,7 @@ export async function renderGrid(
     if ((await probe(inputs[idx])).has_audio) sources.push(`${idx}:a`);
   }
   if (opts.audioPath) {
-    args.push("-i", opts.audioPath);
+    args.push(...seek, "-i", opts.audioPath);
     sources.push("4:a"); // next input index after the four clips
   }
 
@@ -183,10 +194,12 @@ export async function renderGrid(
     audioMap = "[aout]";
   }
 
+  const trimDuration = opts.trimEnd !== undefined && opts.trimEnd > trimStart ? opts.trimEnd - trimStart : undefined;
   await runFfmpeg([
     ...args,
     "-filter_complex", `${videoGraph}${audioGraph}`,
     "-map", "[v]", "-map", audioMap, "-shortest",
+    ...(trimDuration !== undefined ? ["-t", String(trimDuration)] : []),
     ...ENCODE, out,
   ]);
 }

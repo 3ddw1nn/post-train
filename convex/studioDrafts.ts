@@ -38,6 +38,16 @@ export const listForWorkspace = query({
   },
 });
 
+export const setStatus = mutation({
+  args: { id: v.string(), workspace_id: v.string(), status: v.string() },
+  handler: async (ctx, args) => {
+    const row = await byLegacyId(ctx, "studio_drafts", args.id);
+    if (!row || row.workspace_id !== args.workspace_id) return null;
+    await ctx.db.patch(row._id, { status: args.status, updated_at: now() });
+    return await ctx.db.get(row._id);
+  },
+});
+
 export const remove = mutation({
   args: { id: v.string(), workspace_id: v.string() },
   handler: async (ctx, args) => {

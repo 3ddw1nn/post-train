@@ -5,7 +5,6 @@ import { studioAccess } from "@/lib/entitlements";
 import { platformsForType, type PostType } from "@/lib/platforms";
 import { Icon } from "@/components/icons";
 import { PlatformIconRow } from "@/components/platform-icon";
-import { StudioJobsList } from "@/components/studio";
 
 export const metadata = { title: "Content Studio" };
 
@@ -22,7 +21,7 @@ const TEMPLATES: {
     id: "ai-ugc",
     title: "AI UGC Video Studio",
     desc: "Pick a persona, add your hook text and CTA clip — ship UGC-style videos at volume.",
-    tags: ["AI-powered"],
+    tags: ["AI avatar video"],
     icon: "sparkles",
     featured: true,
     postType: "video",
@@ -33,7 +32,7 @@ const TEMPLATES: {
     id: "video-editor",
     title: "Video Editor",
     desc: "Build a sequence on a timeline — trim, reorder, and drop a transition on every cut.",
-    tags: ["Updated"],
+    tags: ["Timeline editing"],
     icon: "video",
     postType: "video",
   },
@@ -41,7 +40,7 @@ const TEMPLATES: {
     id: "grid-2x2",
     title: "2x2 Grid Video",
     desc: "Four clips playing in a satisfying grid — a proven short-form format.",
-    tags: ["Trending"],
+    tags: ["4 clips at once"],
     icon: "grid",
     postType: "video",
   },
@@ -49,7 +48,7 @@ const TEMPLATES: {
     id: "slideshow",
     title: "Slideshow",
     desc: "Drop your own photos into a proven slide structure, with hook text baked onto each one.",
-    tags: ["Photo posts"],
+    tags: ["Photos + hook text"],
     icon: "image",
     postType: "image",
   },
@@ -57,7 +56,7 @@ const TEMPLATES: {
     id: "thumbnail",
     title: "Thumbnail Maker",
     desc: "Design or AI-generate a video thumbnail — upload a background, grab a video frame, or generate one — then attach it to a video.",
-    tags: ["New"],
+    tags: ["AI + frame capture"],
     icon: "image",
     postType: "image",
   },
@@ -150,8 +149,6 @@ export default async function StudioPage() {
             </div>
           ))}
         </div>
-
-        {unlocked && <StudioJobsList />}
       </div>
     </div>
   );

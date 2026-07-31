@@ -3,11 +3,12 @@
 // Full 2x2 Grid Video studio, mirroring Slideshow Studio's shape: a choose
 // screen with resumable Drafts, then a three-step wizard — Build (campaign,
 // publishing, post-to accounts, composition, and render), Captions (with a
-// rendered-video preview), and Review & Launch. Audio can mix any subset of
+// rendered-video preview), and Review & Summary. Audio can mix any subset of
 // clips plus an uploaded track; optional colored separators sit between
 // quadrants. Renders go through /api/app/studio/jobs (ffmpeg); clips/audio/
 // output all live in the shared media pipeline (R2 when configured). The
-// Launch button is a placeholder for now, matching Slideshow.
+// last step's Finish button marks the render as a Library item; Publish
+// then hands it to Create Post 2.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
@@ -30,7 +31,10 @@ import {
 } from "@/lib/video-render-settings";
 import { checkAiTone, type AiToneResult } from "@/lib/ai-tone";
 import type { StudioDraftRow } from "@/lib/studio-drafts";
+import { localDateInputValue, nextMinuteInputValue, isPastSchedule } from "@/lib/format";
 import { StudioChooseScreen, StudioCtaCard } from "./studio-choose-screen";
+import { useEditGuard } from "./edit-guard";
+import { CaptionCopyButton } from "./caption-copy-button";
 
 export type GridAccount = { id: number; platform: string; username: string; avatar_url: string | null };
 type JobStatus = "idle" | "queued" | "generating" | "compositing" | "done" | "failed";
@@ -51,6 +55,8 @@ type GridDraftSnapshot = Partial<{
   borderWidth: number;
   borderOpacity: number;
   cropOffsets: CropOffsetMap;
+  trimStart: number;
+  trimEnd: number | null;
   activePresetId: VideoPresetId;
   activePlatform: string;
   fps: number;
@@ -71,7 +77,7 @@ type GridDraftSnapshot = Partial<{
   platformVideoFormatIds: Record<string, string>;
 }>;
 
-const STEPS = ["Build", "Captions", "Review & Launch"] as const;
+const STEPS = ["Build", "Captions", "Review & Summary"] as const;
 const CELLS = [{ label: "Top left" }, { label: "Top right" }, { label: "Bottom left" }, { label: "Bottom right" }] as const;
 const BORDER_MIN = 1;
 const BORDER_MAX = 40;
@@ -636,6 +642,7 @@ function Cell({
   onEnded,
   cropOffset,
   onReposition,
+  hideOverlays,
 }: {
   index: number;
   media: ComposerMedia | null;
@@ -651,20 +658,23 @@ function Cell({
   onEnded?: () => void;
   cropOffset: CropOffset;
   onReposition: () => void;
+  hideOverlays: boolean;
 }) {
   const cell = CELLS[index];
   return (
     <div className={`group relative overflow-hidden ${media ? "bg-ink" : "bg-white hover:bg-primary-soft/30"}`}>
-      <div className="pointer-events-none absolute left-1.5 top-1.5 z-10 flex items-center gap-1">
-        <span className={`flex h-5 min-w-5 items-center justify-center rounded-md px-1 text-[11px] font-black ${media ? "bg-black/55 text-white" : "bg-page text-muted"}`}>
-          {index + 1}
-        </span>
-        {isAudio && (
-          <span className="flex items-center gap-1 rounded-md bg-primary px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-white">
-            <Icon name="audio" size={10} /> Audio
+      {!hideOverlays && (
+        <div className="pointer-events-none absolute left-1.5 top-1.5 z-10 flex items-center gap-1">
+          <span className={`flex h-5 min-w-5 items-center justify-center rounded-md px-1 text-[11px] font-black ${media ? "bg-black/55 text-white" : "bg-page text-muted"}`}>
+            {index + 1}
           </span>
-        )}
-      </div>
+          {isAudio && (
+            <span className="flex items-center gap-1 rounded-md bg-primary px-1.5 py-0.5 text-[10px] font-black uppercase tracking-wide text-white">
+              <Icon name="audio" size={10} /> Audio
+            </span>
+          )}
+        </div>
+      )}
 
       {media ? (
         <>
@@ -683,25 +693,29 @@ function Cell({
             onEnded={onEnded}
             onDoubleClick={onReposition}
           />
-          <button
-            type="button"
-            onClick={onRemove}
-            aria-label={`Remove ${cell.label} clip`}
-            className="absolute right-1.5 top-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-black/55 text-white opacity-80 transition hover:bg-black/80 hover:opacity-100"
-          >
-            <Icon name="x" size={13} />
-          </button>
-          <div className="absolute inset-x-0 bottom-0 z-10 flex items-center gap-2 bg-gradient-to-t from-black/75 to-transparent px-2 pb-1.5 pt-5">
-            <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-white/90">{media.name}</span>
-            <div className="flex shrink-0 gap-1">
-              <button type="button" onClick={onUpload} className="rounded bg-white/15 px-1.5 py-0.5 text-[10px] font-bold text-white transition hover:bg-white/25">
-                Replace
+          {!hideOverlays && (
+            <>
+              <button
+                type="button"
+                onClick={onRemove}
+                aria-label={`Remove ${cell.label} clip`}
+                className="absolute right-1.5 top-1.5 z-10 flex h-6 w-6 items-center justify-center rounded-md bg-black/55 text-white opacity-80 transition hover:bg-black/80 hover:opacity-100"
+              >
+                <Icon name="x" size={13} />
               </button>
-              <button type="button" onClick={onLibrary} className="rounded bg-white/15 px-1.5 py-0.5 text-[10px] font-bold text-white transition hover:bg-white/25">
-                Library
-              </button>
-            </div>
-          </div>
+              <div className="absolute inset-x-0 bottom-0 z-10 flex items-center gap-2 bg-gradient-to-t from-black/75 to-transparent px-2 pb-1.5 pt-5">
+                <span className="min-w-0 flex-1 truncate text-[11px] font-medium text-white/90">{media.name}</span>
+                <div className="flex shrink-0 gap-1">
+                  <button type="button" onClick={onUpload} className="rounded bg-white/15 px-1.5 py-0.5 text-[10px] font-bold text-white transition hover:bg-white/25">
+                    Replace
+                  </button>
+                  <button type="button" onClick={onLibrary} className="rounded bg-white/15 px-1.5 py-0.5 text-[10px] font-bold text-white transition hover:bg-white/25">
+                    Library
+                  </button>
+                </div>
+              </div>
+            </>
+          )}
         </>
       ) : (
         <div className="flex h-full flex-col items-center justify-center gap-2 px-2.5">
@@ -794,8 +808,13 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
   const [previewPlatform, setPreviewPlatform] = useState<string>("");
   const [platformVideoFormatIds, setPlatformVideoFormatIds] = useState<Record<string, string>>({});
   const [previewExpanded, setPreviewExpanded] = useState(false);
+  const [hideOverlays, setHideOverlays] = useState(false);
   const [cropOffsets, setCropOffsets] = useState<CropOffsetMap>({});
   const [cropFlow, setCropFlow] = useState<{ index: number; keys: string[]; current: number } | null>(null);
+  // Trims the composed timeline as a whole (all four clips together), not
+  // any one quadrant — trimEnd null means "through the natural end".
+  const [trimStart, setTrimStartRaw] = useState(0);
+  const [trimEnd, setTrimEndRaw] = useState<number | null>(null);
 
   // Render
   const [jobId, setJobId] = useState<string | null>(null);
@@ -820,6 +839,19 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
     const n = new Date();
     return `${String(n.getHours()).padStart(2, "0")}:${String(n.getMinutes()).padStart(2, "0")}`;
   });
+  const earliestPublishDate = localDateInputValue();
+  const earliestPublishTime = nextMinuteInputValue();
+  function updatePublishDate(value: string) {
+    if (!value || value < earliestPublishDate) return;
+    setPublishDate(value);
+    if (value === earliestPublishDate && publishTime < earliestPublishTime) {
+      setPublishTime(earliestPublishTime);
+    }
+  }
+  function updatePublishTime(value: string) {
+    if (!value || (publishDate === earliestPublishDate && value < earliestPublishTime)) return;
+    setPublishTime(value);
+  }
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<number>>(new Set());
   const [description, setDescription] = useState("");
   const [captionLength, setCaptionLength] = useState<"short" | "medium" | "long">("medium");
@@ -828,6 +860,50 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
   const [captionError, setCaptionError] = useState<Record<string, string>>({});
   const [toneResults, setToneResults] = useState<Record<string, AiToneResult>>({});
   const [improveBusy, setImproveBusy] = useState<Record<string, boolean>>({});
+
+  // Finish / Publish
+  const [finishing, setFinishing] = useState(false);
+  const [finishedMediaId, setFinishedMediaId] = useState<string | null>(null);
+  const [draftLocked, setDraftLocked] = useState(false);
+  const publishScheduleIsPast = !draftLocked && isPastSchedule(publishDate, publishTime);
+  async function finish() {
+    if (!outputMediaId || finishing) return;
+    setFinishing(true);
+    try {
+      const res = await fetch("/api/app/studio/finish", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ media_ids: [outputMediaId], template: "grid-2x2", campaign_name: campaignName, platform_ids: [...selectedPlatforms], platform_captions: Object.fromEntries(Object.entries(platformCaptions).filter(([id]) => selectedPlatforms.has(id))) }),
+      });
+      if (res.ok) {
+        setFinishedMediaId(outputMediaId);
+        if (draftIdRef.current) {
+          const id = draftIdRef.current;
+          await fetch(`/api/app/studio/drafts/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ status: "finished" }),
+          }).catch(() => {});
+          setDrafts((current) => current.map((d) => (d.id === id ? { ...d, status: "finished" } : d)));
+        }
+      }
+    } finally {
+      setFinishing(false);
+    }
+  }
+  async function unlockDraft() {
+    setDraftLocked(false);
+    if (draftIdRef.current) {
+      const id = draftIdRef.current;
+      await fetch(`/api/app/studio/drafts/${id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: "drafting" }),
+      }).catch(() => {});
+      setDrafts((current) => current.map((d) => (d.id === id ? { ...d, status: "drafting" } : d)));
+    }
+  }
+  const editGuard = useEditGuard(draftLocked, () => void unlockDraft());
 
   // Drafts
   const [drafts, setDrafts] = useState<StudioDraftRow[]>([]);
@@ -848,6 +924,26 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
   const driverIndex = clips.findIndex((m) => m !== null);
   const knownDurations = clipDurations.filter((d): d is number => d != null);
   const previewDuration = knownDurations.length > 0 ? Math.min(...knownDurations) : 0;
+  // Whole seconds — plenty precise for trimming a short-form clip, and keeps
+  // the slider/number pair (which step by 1) always in sync with the state.
+  const maxTrimSeconds = Math.max(0, Math.floor(previewDuration));
+  const clampedTrimStart = Math.max(0, Math.min(Math.round(trimStart), maxTrimSeconds));
+  const effectiveTrimEnd = trimEnd !== null ? Math.max(clampedTrimStart, Math.min(Math.round(trimEnd), maxTrimSeconds)) : maxTrimSeconds;
+  function setTrimStart(value: number) {
+    setTrimStartRaw(Math.max(0, Math.min(Math.round(value), effectiveTrimEnd)));
+  }
+  function setTrimEnd(value: number) {
+    const rounded = Math.round(value);
+    if (rounded >= maxTrimSeconds) {
+      setTrimEndRaw(null); // back at the natural end — nothing left to carry
+      return;
+    }
+    setTrimEndRaw(Math.max(clampedTrimStart, rounded));
+  }
+  function resetTrim() {
+    setTrimStartRaw(0);
+    setTrimEndRaw(null);
+  }
   const activePreset = videoPresetById(activePresetId) ?? VIDEO_PRESETS[0];
   const activeAspect = activePreset.aspect;
 
@@ -1040,6 +1136,8 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
     borderWidth,
     borderOpacity,
     cropOffsets,
+    trimStart,
+    trimEnd,
     activePresetId,
     fps,
     campaignName,
@@ -1163,6 +1261,10 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
               grid_audio: { clips: audioClips, ...(audioTrack ? { track_media_id: audioTrack.id } : {}) },
               grid_border: borderOn ? { width: borderWidth, color: borderColor, opacity: borderOpacity / 100 } : undefined,
               grid_crop: cropOffsets[platformId] ?? DEFAULT_CROP_SET,
+              // Omitted entirely when untouched — sending a no-op {0, floor(duration)}
+              // would truncate the default "-shortest" render to a whole-second
+              // boundary for every video, not just ones someone actually trimmed.
+              grid_trim: clampedTrimStart > 0 || trimEnd !== null ? { start_s: clampedTrimStart, end_s: effectiveTrimEnd } : undefined,
             }),
           });
           const data = await response.json();
@@ -1248,6 +1350,8 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
       borderWidth,
       borderOpacity,
       cropOffsets,
+      trimStart,
+      trimEnd,
       activePresetId,
       fps,
       campaignName,
@@ -1309,6 +1413,8 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
     // Guards against pre-existing drafts saved when cropOffsets was still a
     // flat per-quadrant array rather than a per-tab map.
     setCropOffsets(!Array.isArray(p.cropOffsets) && p.cropOffsets ? p.cropOffsets : {});
+    setTrimStartRaw(typeof p.trimStart === "number" ? p.trimStart : 0);
+    setTrimEndRaw(typeof p.trimEnd === "number" ? p.trimEnd : null);
     setActivePresetId(
       videoPresetById(p.activePresetId)?.id ??
         (typeof p.activePlatform === "string" ? videoPresetForLegacyPlatform(p.activePlatform).id : DEFAULT_VIDEO_PRESET)
@@ -1334,6 +1440,8 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
     setPlatformVideoFormatIds(p.platformVideoFormatIds ?? {});
     setDraftStatus("saved");
     setStep(Math.max(0, Math.min(STEPS.length - 1, p.step ?? 0)));
+    setDraftLocked(draft.status === "finished");
+    setFinishedMediaId(draft.status === "finished" ? (p.outputMediaId ?? null) : null);
     setMode("wizard");
   }
 
@@ -1363,6 +1471,8 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
     setBorderWidth(2);
     setBorderOpacity(100);
     setCropOffsets({});
+    setTrimStartRaw(0);
+    setTrimEndRaw(null);
     setActivePresetId(DEFAULT_VIDEO_PRESET);
     setFps(60);
     setJobId(null);
@@ -1383,6 +1493,8 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
     setPlatformCaptions({});
     setToneResults({});
     setPlatformVideoFormatIds({});
+    setFinishedMediaId(null);
+    setDraftLocked(false);
     draftIdRef.current = undefined;
     setDraftStatus("idle");
   }
@@ -1442,7 +1554,7 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
     );
 
   const header = (
-    <div className="flex flex-wrap items-center justify-between gap-3">
+    <div className="flex flex-wrap items-center justify-between gap-3" data-edit-guard-exempt>
       <div>
         {mode === "choose" ? (
           <Link href="/dashboard/content-studio" className="inline-flex items-center gap-1 text-sm font-medium text-muted transition-colors hover:text-primary-deep">
@@ -1460,7 +1572,10 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
           2×2 Grid Video Studio
         </h1>
       </div>
-      {draftStatusPill}
+      <div className="flex items-center gap-3">
+        {draftLocked && <span className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-deep"><Icon name="check" size={13} /> Finished</span>}
+        {draftStatusPill}
+      </div>
     </div>
   );
 
@@ -1514,7 +1629,7 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
   );
 
   const stepBar = (
-    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4">
+    <div className="flex flex-wrap items-center justify-between gap-3 border-b border-line pb-4" data-edit-guard-exempt>
       <div>
         <p className="text-xs font-bold uppercase tracking-[0.12em] text-muted">
           Step {step + 1} of {STEPS.length}
@@ -1532,9 +1647,16 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
           <Icon name="chevronLeft" size={15} /> Back
         </button>
         {step === STEPS.length - 1 ? (
-          <button type="button" disabled={jobStatus !== "done" || !outputMediaId} className="btn-primary !py-1.5 text-sm disabled:opacity-50">
-            Launch <Icon name="sparkles" size={15} />
-          </button>
+          !!outputMediaId && finishedMediaId === outputMediaId ? (
+            <div className="flex items-center gap-2">
+              <button type="button" disabled className="btn-subtle !py-1.5 text-sm text-primary-deep"><Icon name="check" size={15} /> Finished</button>
+              <button type="button" onClick={() => window.location.assign(`/dashboard/create/video?${new URLSearchParams({ media: outputMediaId ?? "", date: publishDate, time: publishTime })}`)} className="btn-primary !py-1.5 text-sm">Publish <Icon name="sparkles" size={15} /></button>
+            </div>
+          ) : (
+            <button type="button" onClick={() => void finish()} disabled={jobStatus !== "done" || !outputMediaId || finishing || publishScheduleIsPast} title={publishScheduleIsPast ? "Update the date and time on the Build step before finishing." : undefined} className="btn-primary !py-1.5 text-sm disabled:opacity-50">
+              {finishing ? "Finishing…" : publishScheduleIsPast ? <><Icon name="warningTriangle" size={15} /> Update schedule</> : "Finish"}
+            </button>
+          )
         ) : (
           nextButton
         )}
@@ -1543,10 +1665,11 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
   );
 
   return (
-    <div className="fade-up mx-auto w-full max-w-4xl pb-10">
+    <div className="fade-up relative mx-auto w-full max-w-4xl pb-10" onClickCapture={editGuard.guard} onPointerDownCapture={editGuard.guard} onKeyDownCapture={editGuard.guard}>
+      {editGuard.dialog}
       {header}
 
-      <div className="card mt-5 px-6 py-5">
+      <div className="card mt-5 px-6 py-5" data-edit-guard-exempt>
         <Stepper steps={STEPS} current={step} onNavigate={goToStep} />
       </div>
 
@@ -1564,9 +1687,10 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
               <div>
                 <FieldLabel icon="calendar">Publishing</FieldLabel>
                 <div className="mt-2 flex items-center gap-2">
-                  <input type="date" value={publishDate} onChange={(e) => setPublishDate(e.target.value)} className="h-[42px] rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/25" />
-                  <input type="time" value={publishTime} onChange={(e) => setPublishTime(e.target.value)} className="h-[42px] rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/25" />
+                  <input type="date" min={earliestPublishDate} value={publishDate} onChange={(e) => updatePublishDate(e.target.value)} className="h-[42px] rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/25" />
+                  <input type="time" min={publishDate === earliestPublishDate ? earliestPublishTime : undefined} value={publishTime} onChange={(e) => updatePublishTime(e.target.value)} className="h-[42px] rounded-lg border border-line bg-white px-3 text-sm font-semibold text-ink outline-none focus:border-primary focus:ring-2 focus:ring-primary/25" />
                 </div>
+                {publishScheduleIsPast && <p className="mt-2 flex items-center gap-1.5 text-xs font-semibold text-amber-700" role="alert"><Icon name="warningTriangle" size={14} />This scheduled time has already passed.</p>}
               </div>
             </div>
 
@@ -1710,6 +1834,7 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
                           onEnded={i === driverIndex ? pausePreview : undefined}
                           cropOffset={activeCropOffsets[i]}
                           onReposition={() => openCropFlow(i, false)}
+                          hideOverlays={hideOverlays}
                         />
                       ))}
                     </div>
@@ -1761,6 +1886,20 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
                     >
                       <Icon name="expand" size={12} />
                       {previewExpanded ? "Collapse" : "Expand"}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setHideOverlays((v) => !v)}
+                      aria-pressed={hideOverlays}
+                      title={hideOverlays ? "Show clip controls" : "Hide clip controls for a clean preview"}
+                      className={`flex items-center gap-1 rounded-md border px-1.5 py-0.5 text-xs font-semibold transition-colors ${
+                        hideOverlays
+                          ? "border-primary bg-primary text-primary-contrast hover:bg-primary-hover"
+                          : "border-line bg-white text-muted hover:border-primary/40 hover:text-primary-deep"
+                      }`}
+                    >
+                      <Icon name="eye" size={12} />
+                      {hideOverlays ? "Show controls" : "Hide controls"}
                     </button>
                   </div>
                 </div>
@@ -1840,6 +1979,27 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
                     <SliderRow label="Width" value={borderWidth} min={BORDER_MIN} max={BORDER_MAX} suffix="px" onChange={setBorderWidth} />
                     <SliderRow label="Opacity" value={borderOpacity} min={0} max={100} suffix="%" onChange={setBorderOpacity} />
                   </div>
+                )}
+              </div>
+
+              <div>
+                <div className="flex items-center justify-between">
+                  <FieldLabel icon="trim">Trim</FieldLabel>
+                  {(clampedTrimStart > 0 || trimEnd !== null) && (
+                    <button type="button" onClick={resetTrim} className="text-xs font-bold text-primary-deep hover:underline">
+                      Reset
+                    </button>
+                  )}
+                </div>
+                <p className="mt-1 text-xs text-muted">Trims the composed video as a whole — all four quadrants together, not one at a time.</p>
+                {maxTrimSeconds > 0 ? (
+                  <div className="mt-3 flex flex-col gap-3">
+                    <SliderRow label="Start" value={clampedTrimStart} min={0} max={Math.max(0, effectiveTrimEnd - 1)} suffix="s" onChange={setTrimStart} />
+                    <SliderRow label="End" value={effectiveTrimEnd} min={Math.min(maxTrimSeconds, clampedTrimStart + 1)} max={maxTrimSeconds} suffix="s" onChange={setTrimEnd} />
+                    <p className="text-xs font-medium text-primary-deep">{formatTime(effectiveTrimEnd - clampedTrimStart)} final length</p>
+                  </div>
+                ) : (
+                  <p className="mt-2 text-xs text-muted">Add clips to set a trim range.</p>
                 )}
               </div>
 
@@ -1996,6 +2156,7 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
                             placeholder={`Caption for ${platformOf(id)?.name ?? id}…`}
                           />
                           <div className="flex flex-wrap items-center gap-2 border-t border-line bg-white px-3 py-2">
+                            <CaptionCopyButton value={value} compact />
                             <button type="button" onClick={() => generateCaption(id)} disabled={captionBusy[id] || !description.trim()} title={!description.trim() ? "Add a description above first" : undefined} className="btn-subtle !py-1 text-xs disabled:opacity-50">
                               {captionBusy[id] ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-muted/40 border-t-transparent" /> : <Icon name="sparkles" size={12} />}
                               {captionBusy[id] ? "Writing…" : "AI Auto-fill"}
@@ -2150,7 +2311,7 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
           </div>
         )}
 
-        <div className="mt-8 border-t border-line pt-5">
+        <div className="mt-8 border-t border-line pt-5" data-edit-guard-exempt>
           {step === 0 && rendering && (
             <div className="mb-4 flex flex-wrap items-center gap-2 text-xs font-semibold text-muted">
                 <span className="flex items-center gap-2">
@@ -2172,9 +2333,16 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
               <Icon name="chevronLeft" size={15} /> Back
             </button>
             {step === STEPS.length - 1 ? (
-              <button type="button" disabled={!rendersAreCurrent} className="btn-primary !py-1.5 text-sm disabled:opacity-50">
-                Launch <Icon name="sparkles" size={15} />
-              </button>
+              !!outputMediaId && finishedMediaId === outputMediaId ? (
+                <div className="flex items-center gap-2">
+                  <button type="button" disabled className="btn-subtle !py-1.5 text-sm text-primary-deep"><Icon name="check" size={15} /> Finished</button>
+                  <button type="button" onClick={() => window.location.assign(`/dashboard/create/video?${new URLSearchParams({ media: outputMediaId ?? "", date: publishDate, time: publishTime })}`)} className="btn-primary !py-1.5 text-sm">Publish <Icon name="sparkles" size={15} /></button>
+                </div>
+              ) : (
+                <button type="button" onClick={() => void finish()} disabled={!outputMediaId || finishing || publishScheduleIsPast} title={publishScheduleIsPast ? "Update the date and time on the Build step before finishing." : undefined} className="btn-primary !py-1.5 text-sm disabled:opacity-50">
+                  {finishing ? "Finishing…" : publishScheduleIsPast ? <><Icon name="warningTriangle" size={15} /> Update schedule</> : "Finish"}
+                </button>
+              )
             ) : (
               <button type="button" onClick={goNext} disabled={nextDisabled} title={nextTitle || undefined} className="btn-primary !py-1.5 text-sm disabled:opacity-50">
                 {nextLabel} <Icon name="chevronRight" size={15} />

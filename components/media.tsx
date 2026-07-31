@@ -108,23 +108,31 @@ export function MediaThumb({
   media,
   size,
   full,
+  aspectRatio,
   onClick,
 }: {
   media: ComposerMedia;
   size: number;
   full?: boolean;
+  /** A known Studio output ratio (e.g. "9:16") sizes the preview frame to the actual render. */
+  aspectRatio?: string;
   onClick?: () => void;
 }) {
   const url = `/api/media-file/${media.id}`;
+  const validAspectRatio = aspectRatio && /^\d+(?:\.\d+)?:\d+(?:\.\d+)?$/.test(aspectRatio)
+    ? aspectRatio.replace(":", " / ")
+    : undefined;
   const cls = full
-    ? "h-64 w-full rounded-xl object-contain bg-page"
+    ? media.kind === "video"
+      ? "h-auto w-full rounded-xl bg-black object-contain"
+      : "h-64 w-full rounded-xl object-contain bg-page"
     : "rounded-lg object-cover cursor-pointer";
   if (media.kind === "video") {
     return (
       <video
         src={url}
         className={cls}
-        style={full ? undefined : { width: size, height: size }}
+        style={full && validAspectRatio ? { aspectRatio: validAspectRatio } : full ? undefined : { width: size, height: size }}
         onClick={onClick}
         controls={full}
         muted
@@ -164,11 +172,16 @@ export function MediaLibraryModal({
   kind?: string;
 }) {
   const [items, setItems] = useState<ComposerMedia[] | null>(null);
+  // Picking a video clip means picking a *finished Content Studio video* to
+  // reuse as source footage, not any random upload — Slideshow/Thumbnail
+  // Maker outputs and in-progress drafts are excluded server-side.
+  const studioVideo = kind === "video";
   useEffect(() => {
-    fetch("/api/app/media")
+    setItems(null);
+    fetch(studioVideo ? "/api/app/media?studio=video" : "/api/app/media")
       .then((r) => r.json())
       .then((d) => setItems(d.data ?? []));
-  }, []);
+  }, [studioVideo]);
   const visible = items?.filter((m) => !kind || m.kind === kind) ?? null;
   return (
     <div
@@ -176,15 +189,25 @@ export function MediaLibraryModal({
       onClick={onClose}
     >
       <div
-        className="card max-h-[70vh] w-full max-w-lg overflow-y-auto p-5"
+        className="card relative max-h-[70vh] w-full max-w-lg overflow-y-auto p-5"
         onClick={(e) => e.stopPropagation()}
       >
-        <p className="font-bold">Media library</p>
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          className="btn-subtle absolute right-3 top-3 !px-2.5 !py-2.5"
+        >
+          <Icon name="x" size={16} />
+        </button>
+        <p className="pr-10 font-bold">Media library</p>
         {visible === null ? (
           <p className="py-10 text-center text-sm text-muted">Loading…</p>
         ) : visible.length === 0 ? (
           <p className="py-10 text-center text-sm text-muted">
-            Nothing here yet — media you upload gets reusable across posts.
+            {studioVideo
+              ? "Nothing finished yet — finish a video in Content Studio to reuse it here."
+              : "Nothing here yet — media you upload gets reusable across posts."}
           </p>
         ) : (
           <div className="mt-3 grid grid-cols-4 gap-2">
