@@ -14,6 +14,7 @@ import {
   createR2UploadUrl,
   deleteR2Object,
   fetchR2,
+  headR2Object,
   mediaObjectKey,
   r2Enabled,
 } from "./r2";
@@ -174,11 +175,24 @@ export async function createUploadUrl(
     normalizeStorageError(error);
   }
   const complete_url = `${origin}/api/uploads/${id}?sig=${sign(`complete:${id}`)}`;
+  const storage = r2Enabled() ? "r2" : "local";
+  const upload_url = storage === "r2"
+    ? await createR2UploadUrl({
+        key: mediaObjectKey(
+          workspaceId,
+          id,
+          kindFromMime(opts.mime_type),
+          path.extname(opts.name).toLowerCase(),
+        ),
+        contentType: opts.mime_type,
+        contentLength: opts.size_bytes,
+      })
+    : `${origin}/api/uploads/${id}?sig=${sign(`upload:${id}`)}`;
   return {
     media_id: id,
-    upload_url: `${origin}/api/uploads/${id}?sig=${sign(`upload:${id}`)}`,
+    upload_url,
     complete_url,
-    storage: r2Enabled() ? "r2" : "local",
+    storage,
   };
 }
 
@@ -220,10 +234,23 @@ export async function completeUpload(mediaId: string, sig: string): Promise<Medi
   if (sign(`complete:${mediaId}`) !== sig) throw new Error("Invalid upload signature.");
   const row = await convexQuery<MediaRow | null>(api.media.getById, { id: mediaId });
   if (!row) throw new Error("Unknown media id.");
-  if (row.upload_status !== "uploaded") {
-    throw new Error("This upload is still processing. Please try again in a moment.");
+  if (row.upload_status === "uploaded") return row;
+  if (r2Enabled()) {
+    const object = await headR2Object(
+      mediaObjectKey(row.workspace_id, mediaId, row.kind, path.extname(row.name).toLowerCase())
+    ).catch(() => null);
+    if (!object) {
+      throw new Error("The uploaded file was not found. Please try the upload again.");
+    }
+    if (object.size !== row.size_bytes) {
+      throw new Error("The uploaded file size doesn't match the reserved upload.");
+    }
+    return await convexMutation<MediaRow>(api.media.markUploaded, {
+      id: mediaId,
+      size_bytes: object.size,
+    });
   }
-  return row;
+  throw new Error("This upload is still processing. Please try again in a moment.");
 }
 
 export async function getMediaRedirectUrl(mediaId: string): Promise<{ row: MediaRow; url: string } | null> {

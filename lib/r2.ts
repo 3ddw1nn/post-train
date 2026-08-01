@@ -1,6 +1,7 @@
 import {
   DeleteObjectCommand,
   GetObjectCommand,
+  HeadObjectCommand,
   ListObjectsV2Command,
   PutObjectCommand,
   S3Client,
@@ -100,6 +101,20 @@ export async function createR2DownloadUrl(key: string) {
     }),
     { expiresIn: R2_DOWNLOAD_TTL_SECONDS }
   );
+}
+
+/** Confirms a browser upload reached R2 before its media row is made usable. */
+export async function headR2Object(key: string) {
+  const object = await r2Client().send(
+    new HeadObjectCommand({
+      Bucket: r2Bucket(),
+      Key: key,
+    })
+  );
+  return {
+    size: object.ContentLength ?? 0,
+    contentType: object.ContentType ?? null,
+  };
 }
 
 export type R2ObjectListing = {

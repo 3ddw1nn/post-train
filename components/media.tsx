@@ -101,7 +101,9 @@ export async function uploadOneFile(file: File): Promise<ComposerMedia> {
   }
   const data = await res.json().catch(() => null);
   if (!res.ok) throw new Error(data?.error?.message ?? "Couldn't prepare this upload. Please try again.");
-  if (!data?.upload_url || !data?.media_id) throw new Error("The upload service returned an incomplete response. Please try again.");
+  if (!data?.upload_url || !data?.complete_url || !data?.media_id) {
+    throw new Error("The upload service returned an incomplete response. Please try again.");
+  }
   let put: Response;
   try {
     put = await fetch(data.upload_url, {
@@ -113,6 +115,15 @@ export async function uploadOneFile(file: File): Promise<ComposerMedia> {
     throw new Error("Couldn't upload this file. Check your connection and try again.");
   }
   if (!put.ok) throw new Error(await uploadError(put, "Couldn't upload this file. Please try again."));
+  let complete: Response;
+  try {
+    complete = await fetch(data.complete_url, { method: "POST" });
+  } catch {
+    throw new Error("The file uploaded, but we couldn't finish saving it. Please try again.");
+  }
+  if (!complete.ok) {
+    throw new Error(await uploadError(complete, "The file uploaded, but we couldn't finish saving it. Please try again."));
+  }
   return {
     id: data.media_id,
     name: file.name,
