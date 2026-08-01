@@ -71,11 +71,6 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
   },
 ];
 
-const DASHBOARD_PREFETCH_HREFS = [
-  "/dashboard/create",
-  ...SECTIONS.flatMap((section) => section.items.map((item) => item.href)),
-];
-
 function isActive(item: NavItem, path: string): boolean {
   const matches = item.match ?? [item.href];
   if (item.exclude?.some((e) => path === e || path.startsWith(e + "/"))) return false;
@@ -347,10 +342,6 @@ export function Sidebar({
       return next;
     });
   }
-
-  useEffect(() => {
-    for (const href of DASHBOARD_PREFETCH_HREFS) router.prefetch(href);
-  }, [router]);
 
   function primeRoute(href: string) {
     router.prefetch(href);
