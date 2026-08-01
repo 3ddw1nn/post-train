@@ -19,8 +19,29 @@ export function getConvexClient(): ConvexHttpClient {
   return convexGlobal.__ptConvex;
 }
 
+/** Convex queries occasionally fail with a generic "Server Error" under bursts of
+ *  concurrent page loads — this app currently points at Convex's free dev
+ *  deployment for production traffic (see docs/TODO.md's Convex-to-production
+ *  item), which has lower throughput headroom than a real production deployment.
+ *  Retrying a read is always safe, so a couple of attempts turns a transient
+ *  blip into a non-event instead of a broken page — same idea as fetchR2's
+ *  retry in lib/r2.ts. Mutations aren't retried this way: a lost response after
+ *  a write that actually succeeded would double it. */
+async function retryTransient<T>(fn: () => Promise<T>, attempts = 3): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    try {
+      return await fn();
+    } catch (e) {
+      lastError = e;
+      if (attempt < attempts - 1) await new Promise((resolve) => setTimeout(resolve, 300 * (attempt + 1)));
+    }
+  }
+  throw lastError;
+}
+
 export async function convexQuery<T>(fn: unknown, args: Record<string, unknown> = {}) {
-  return (await getConvexClient().query(fn as never, args as never)) as T;
+  return await retryTransient(() => getConvexClient().query(fn as never, args as never) as Promise<T>);
 }
 
 export async function convexMutation<T>(fn: unknown, args: Record<string, unknown> = {}) {
