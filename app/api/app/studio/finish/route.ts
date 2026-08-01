@@ -3,6 +3,7 @@ import { currentWorkspace } from "@/lib/workspaces";
 import { DomainError } from "@/lib/posts";
 import { jsonError } from "@/lib/api-auth";
 import { markMediaFinished, clearMediaFinished } from "@/lib/media";
+import { setStudioDraftStatus } from "@/lib/studio-drafts";
 
 const TEMPLATES = ["grid-2x2", "fade-in", "ai-ugc", "slideshow", "thumbnail"];
 
@@ -17,6 +18,7 @@ export async function POST(req: Request) {
     const ws = await currentWorkspace(user);
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const mediaIds = Array.isArray(body.media_ids) ? [...new Set(body.media_ids.filter((id): id is string => typeof id === "string"))].slice(0, 12) : [];
+    const draftId = typeof body.draft_id === "string" ? body.draft_id : null;
     const template = typeof body.template === "string" ? body.template : "";
     const campaignName = typeof body.campaign_name === "string" ? body.campaign_name.trim().slice(0, 160) : "";
     const captionBrief = typeof body.caption_brief === "string" ? body.caption_brief.trim().slice(0, 2200) : "";
@@ -51,7 +53,9 @@ export async function POST(req: Request) {
       captionBrief,
       captionLength,
       outputs: outputMetadata,
+      draftId: draftId ?? undefined,
     });
+    if (draftId) await setStudioDraftStatus(ws.id, draftId, "finished", mediaIds);
     return Response.json({ ok: true, batch_id: batchId });
   } catch (e) {
     return jsonError(e);

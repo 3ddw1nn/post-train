@@ -874,7 +874,7 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
       const res = await fetch("/api/app/studio/finish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ media_ids: [outputMediaId], template: "grid-2x2", campaign_name: campaignName, platform_ids: [...selectedPlatforms], platform_captions: Object.fromEntries(Object.entries(platformCaptions).filter(([id]) => selectedPlatforms.has(id))) }),
+        body: JSON.stringify({ draft_id: draftIdRef.current, media_ids: [outputMediaId], template: "grid-2x2", campaign_name: campaignName, platform_ids: [...selectedPlatforms], platform_captions: Object.fromEntries(Object.entries(platformCaptions).filter(([id]) => selectedPlatforms.has(id))) }),
       });
       if (res.ok) {
         setFinishedMediaId(outputMediaId);
@@ -899,7 +899,10 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
       await fetch(`/api/app/studio/drafts/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "drafting" }),
+        body: JSON.stringify({
+          status: "drafting",
+          finished_media_ids: [...new Set(Object.values(platformOutputMediaIds).concat(outputMediaId ?? "").filter(Boolean))],
+        }),
       }).catch(() => {});
       setDrafts((current) => current.map((d) => (d.id === id ? { ...d, status: "drafting" } : d)));
     }
@@ -1255,6 +1258,7 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               template: "grid-2x2",
+              output_platform_id: platformId === "default" ? "video" : platformId,
               media_ids: ids,
               video_preset_id: preset.id,
               aspect_ratio: aspect.id,
@@ -1726,6 +1730,7 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
 
             {visiblePlatformTabs.length > 0 ? (
               <div className="flex flex-wrap items-center gap-1.5">
+                <AspectLegendPopover />
               {visiblePlatformTabs.map((pid) => {
                 const isActive = pid === slidesActiveTab;
                 const formatOptions = videoFormatOptionsForPlatform(pid);
@@ -1800,7 +1805,6 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
                   </div>
                 );
               })}
-                <AspectLegendPopover />
               </div>
             ) : (
               <p className="text-xs text-muted">Select accounts under Post To to choose a video format.</p>

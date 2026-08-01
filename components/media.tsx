@@ -2,10 +2,33 @@
 
 // Shared media-library UI + upload helper, used by the Composer and the
 // Content Studio wizards (extracted from composer.tsx unchanged).
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Icon } from "./icons";
+import { PlatformIconRow } from "./platform-icon";
+import { platform as platformOf } from "@/lib/platforms";
 
-export type ComposerMedia = { id: string; name: string; mime_type: string; kind: string };
+export type ComposerMedia = {
+  id: string;
+  name: string;
+  mime_type: string;
+  kind: string;
+  width?: number | null;
+  height?: number | null;
+  studio_aspect_ratio?: string | null;
+  studio_platform_id?: string | null;
+  studio_platform_ids?: string[];
+};
+
+function aspectLabel(media: ComposerMedia) {
+  if (media.studio_aspect_ratio) return media.studio_aspect_ratio;
+  if (!media.width || !media.height) return null;
+  const ratio = media.width / media.height;
+  const closest = ["9:16", "2:3", "4:5", "1:1", "16:9"].map((value) => {
+    const [width, height] = value.split(":").map(Number);
+    return { value, difference: Math.abs(ratio - width / height) };
+  }).sort((a, b) => a.difference - b.difference)[0];
+  return closest?.difference < 0.035 ? closest.value : `${media.width}:${media.height}`;
+}
 
 const VIDEO_MIME_BY_EXTENSION: Record<string, string> = {
   "3g2": "video/3gpp2",
@@ -108,12 +131,15 @@ export function MediaThumb({
   media,
   size,
   full,
+  fill,
   aspectRatio,
   onClick,
 }: {
   media: ComposerMedia;
   size: number;
   full?: boolean;
+  /** Fill the parent preview stage (used by media-library cards). */
+  fill?: boolean;
   /** A known Studio output ratio (e.g. "9:16") sizes the preview frame to the actual render. */
   aspectRatio?: string;
   onClick?: () => void;
@@ -126,13 +152,15 @@ export function MediaThumb({
     ? media.kind === "video"
       ? "h-auto w-full rounded-xl bg-black object-contain"
       : "h-64 w-full rounded-xl object-contain bg-page"
-    : "rounded-lg object-cover cursor-pointer";
+    : fill
+      ? "h-full w-full object-cover"
+      : "rounded-lg object-cover cursor-pointer";
   if (media.kind === "video") {
     return (
       <video
         src={url}
         className={cls}
-        style={full && validAspectRatio ? { aspectRatio: validAspectRatio } : full ? undefined : { width: size, height: size }}
+        style={full && validAspectRatio ? { aspectRatio: validAspectRatio } : full || fill ? undefined : { width: size, height: size }}
         onClick={onClick}
         controls={full}
         muted
@@ -143,7 +171,7 @@ export function MediaThumb({
     return (
       <span
         className={`flex items-center justify-center bg-page text-muted ${cls}`}
-        style={full ? { height: 256 } : { width: size, height: size }}
+        style={full ? { height: 256 } : fill ? undefined : { width: size, height: size }}
         onClick={onClick}
       >
         <Icon name={media.kind === "audio" ? "audio" : "file"} size={full ? 40 : 22} />
@@ -156,7 +184,7 @@ export function MediaThumb({
       src={url}
       alt={media.name}
       className={cls}
-      style={full ? undefined : { width: size, height: size }}
+      style={full || fill ? undefined : { width: size, height: size }}
       onClick={onClick}
     />
   );
@@ -166,12 +194,15 @@ export function MediaLibraryModal({
   onClose,
   onPick,
   kind,
+  allowedAspectRatios,
 }: {
   onClose: () => void;
   onPick: (m: ComposerMedia) => void;
   kind?: string;
+  allowedAspectRatios?: string[];
 }) {
   const [items, setItems] = useState<ComposerMedia[] | null>(null);
+  const [activeTab, setActiveTab] = useState<"photo" | "video">(kind === "video" ? "video" : "photo");
   // Picking a video clip means picking a *finished Content Studio video* to
   // reuse as source footage, not any random upload — Slideshow/Thumbnail
   // Maker outputs and in-progress drafts are excluded server-side.
@@ -182,14 +213,23 @@ export function MediaLibraryModal({
       .then((r) => r.json())
       .then((d) => setItems(d.data ?? []));
   }, [studioVideo]);
-  const visible = items?.filter((m) => !kind || m.kind === kind) ?? null;
+  const showPhotoTab = kind !== "video";
+  const visible = useMemo(() => {
+    if (items === null) return null;
+    const mediaType = kind === "video" ? "video" : activeTab === "photo" ? "image" : "video";
+    return items.filter((media) => {
+      if (media.kind !== mediaType) return false;
+      if (mediaType !== "video" || !allowedAspectRatios?.length) return true;
+      return !!aspectLabel(media) && allowedAspectRatios.includes(aspectLabel(media)!);
+    });
+  }, [activeTab, allowedAspectRatios, items, kind]);
   return (
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 p-4"
       onClick={onClose}
     >
       <div
-        className="card relative max-h-[70vh] w-full max-w-lg overflow-y-auto p-5"
+        className="card relative flex max-h-[82vh] w-full max-w-5xl flex-col overflow-hidden p-6"
         onClick={(e) => e.stopPropagation()}
       >
         <button
@@ -200,7 +240,14 @@ export function MediaLibraryModal({
         >
           <Icon name="x" size={16} />
         </button>
-        <p className="pr-10 font-bold">Media library</p>
+        <div className="flex items-center justify-between gap-4 pr-12">
+          <p className="font-bold">Media library</p>
+          <div className="flex items-center gap-1 rounded-lg border border-line bg-page p-1" role="tablist" aria-label="Media type">
+            {showPhotoTab && <button type="button" role="tab" aria-selected={activeTab === "photo"} onClick={() => setActiveTab("photo")} className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${activeTab === "photo" ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}><Icon name="image" size={14} /> Photos</button>}
+            <button type="button" role="tab" aria-selected={activeTab === "video"} onClick={() => setActiveTab("video")} className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${activeTab === "video" ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}><Icon name="video" size={14} /> Videos</button>
+          </div>
+        </div>
+        {allowedAspectRatios?.length ? <p className="mt-2 text-xs font-medium text-muted">Showing videos supported by the selected platform: {allowedAspectRatios.join(", ")}.</p> : null}
         {visible === null ? (
           <p className="py-10 text-center text-sm text-muted">Loading…</p>
         ) : visible.length === 0 ? (
@@ -210,15 +257,42 @@ export function MediaLibraryModal({
               : "Nothing here yet — media you upload gets reusable across posts."}
           </p>
         ) : (
-          <div className="mt-3 grid grid-cols-4 gap-2">
+          <div className="mt-4 grid min-h-0 grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3 lg:grid-cols-4">
             {visible.map((m) => (
-              <button key={m.id} type="button" onClick={() => onPick(m)} title={m.name}>
-                <MediaThumb media={m} size={100} />
-              </button>
+              <MediaLibraryItem key={m.id} media={m} onPick={onPick} />
             ))}
           </div>
         )}
       </div>
     </div>
+  );
+}
+
+function MediaLibraryItem({ media, onPick }: { media: ComposerMedia; onPick: (media: ComposerMedia) => void }) {
+  // Finished Studio outputs retain every platform selected at Finish. Older
+  // one-platform outputs use the original per-file field, so include it too.
+  const formattedPlatformIds = [...new Set([
+    ...(media.studio_platform_ids ?? []),
+    ...(media.studio_platform_id ? [media.studio_platform_id] : []),
+  ])];
+  const formattedPlatformNames = formattedPlatformIds
+    .map((id) => platformOf(id)?.name ?? id)
+    .join(", ");
+
+  return (
+    <button type="button" onClick={() => onPick(media)} title={media.name} className="group overflow-hidden rounded-xl border border-line bg-white text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+      <div className="relative grid aspect-square place-items-center overflow-hidden bg-ink">
+        <MediaThumb media={media} size={220} fill />
+        {aspectLabel(media) && <span className="absolute bottom-2 left-2 rounded-md bg-ink/85 px-1.5 py-1 text-[11px] font-bold text-white shadow-sm">{aspectLabel(media)}</span>}
+      </div>
+      <span className="flex min-w-0 items-center gap-1.5 px-2.5 py-2 text-xs font-semibold text-muted">
+        <span className="shrink-0">Last formatted for</span>
+        {formattedPlatformIds.length > 0 ? (
+          <span className="min-w-0" aria-label={`Last formatted for ${formattedPlatformNames}`}>
+            <PlatformIconRow ids={formattedPlatformIds} size={15} />
+          </span>
+        ) : null}
+      </span>
+    </button>
   );
 }

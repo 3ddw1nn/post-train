@@ -1,7 +1,19 @@
 // @ts-nocheck
 import { queryGeneric as query, mutationGeneric as mutation } from "convex/server";
 import { v } from "convex/values";
+import type { MutationCtx, QueryCtx } from "./_generated/server";
 import { byLegacyId, nextNumericId, now } from "./model";
+
+type QueueSlotCtx = Pick<QueryCtx, "db"> | Pick<MutationCtx, "db">;
+
+async function slotForWorkspace(ctx: QueueSlotCtx, workspaceId: string, id: number) {
+  return await ctx.db
+    .query("queue_slots")
+    .withIndex("by_workspace_and_id", (q) =>
+      q.eq("workspace_id", workspaceId).eq("id", id)
+    )
+    .unique();
+}
 
 export const slotsForWorkspace = query({
   args: { workspace_id: v.string() },
@@ -36,7 +48,7 @@ export const upsertSlot = mutation({
   args: { workspace_id: v.string(), id: v.optional(v.number()), time_local: v.string(), days: v.string() },
   handler: async (ctx, args) => {
     const id = args.id ?? await nextNumericId(ctx, "queue_slots");
-    const existing = await byLegacyId(ctx, "queue_slots", id);
+    const existing = await slotForWorkspace(ctx, args.workspace_id, id);
     if (existing) {
       await ctx.db.patch(existing._id, { time_local: args.time_local, days: args.days });
       return await ctx.db.get(existing._id);
@@ -52,11 +64,21 @@ export const upsertSlot = mutation({
   },
 });
 
+export const updateSlotDays = mutation({
+  args: { workspace_id: v.string(), id: v.number(), days: v.string() },
+  handler: async (ctx, args) => {
+    const slot = await slotForWorkspace(ctx, args.workspace_id, args.id);
+    if (!slot) return null;
+    await ctx.db.patch(slot._id, { days: args.days });
+    return await ctx.db.get(slot._id);
+  },
+});
+
 export const deleteSlot = mutation({
   args: { workspace_id: v.string(), id: v.number() },
   handler: async (ctx, args) => {
-    const slot = await byLegacyId(ctx, "queue_slots", args.id);
-    if (!slot || slot.workspace_id !== args.workspace_id) return false;
+    const slot = await slotForWorkspace(ctx, args.workspace_id, args.id);
+    if (!slot) return false;
     await ctx.db.delete(slot._id);
     return true;
   },

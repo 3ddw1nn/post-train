@@ -1,10 +1,7 @@
 import { requireOnboardedUser } from "@/lib/auth";
-import { getSubscription } from "@/lib/billing";
-import { studioAccess } from "@/lib/entitlements";
 import { currentWorkspace } from "@/lib/workspaces";
-import { listFinishedMedia, type MediaRow } from "@/lib/media";
+import { getWorkspaceStorageStatus, listFinishedMedia, listMedia, type MediaRow } from "@/lib/media";
 import { listStudioDrafts } from "@/lib/studio-drafts";
-import { PaywallCard } from "@/components/paywall-card";
 import { LibraryView, type LibraryTemplate } from "@/components/library-view";
 
 export const metadata = { title: "Library" };
@@ -19,21 +16,80 @@ const TEMPLATES: LibraryTemplate[] = [
   { id: "thumbnail", label: "Thumbnail Maker", icon: "image", postType: "image" },
 ];
 
+function mediaIdsInState(state: string) {
+  return [...new Set(state.match(/\bmid_[a-z0-9]+\b/gi) ?? [])];
+}
+
+/** Older finished video drafts predate `finished_media_ids`; recover only
+ * their explicit render-output fields so source uploads remain untouched. */
+function legacyFinishedMediaIdsInState(state: string) {
+  try {
+    const parsed = JSON.parse(state) as Record<string, unknown>;
+    return [...new Set([
+      ...(typeof parsed.outputMediaId === "string" ? [parsed.outputMediaId] : []),
+      ...(Array.isArray(parsed.outputMediaIds) ? parsed.outputMediaIds.filter((id): id is string => typeof id === "string") : []),
+      ...(
+        parsed.platformOutputMediaIds && typeof parsed.platformOutputMediaIds === "object"
+          ? Object.values(parsed.platformOutputMediaIds).filter((id): id is string => typeof id === "string")
+          : []
+      ),
+    ])].filter((id) => /^mid_[a-z0-9]+$/i.test(id));
+  } catch {
+    return [];
+  }
+}
+
 export default async function LibraryPage() {
   const user = await requireOnboardedUser();
-  const sub = await getSubscription(user.id);
-  // Same gate as Content Studio: everything here only exists because a user
-  // finished something in an already-gated studio, so there's no separate
-  // free-tier version of this page to fall back to.
-  if (!studioAccess(sub)) return <PaywallCard />;
-
   const ws = await currentWorkspace(user);
-  const [lists, drafts] = await Promise.all([
+  const [lists, drafts, storage, media] = await Promise.all([
     Promise.all(TEMPLATES.map((t) => listFinishedMedia(ws.id, t.id))),
     listStudioDrafts(ws.id),
+    getWorkspaceStorageStatus(ws.id),
+    listMedia(ws.id, 5000, 0),
   ]);
+  const mediaBytesById = new Map(media.data.map((item) => [item.id, item.size_bytes]));
+  const draftProjectBytes = new Map(
+    drafts.map((draft) => [
+      draft.id,
+      mediaIdsInState(draft.state).reduce((total, mediaId) => total + (mediaBytesById.get(mediaId) ?? 0), 0),
+    ]),
+  );
+  const projectBytesByFinishedMediaId = new Map<string, number>();
+  const draftingOutputMediaIds = new Set<string>();
+  const draftingProjectNames = new Set<string>();
+  for (const draft of drafts) {
+    const projectBytes = draftProjectBytes.get(draft.id) ?? 0;
+    const finishedMediaIds = draft.finished_media_ids?.length
+      ? draft.finished_media_ids
+      : legacyFinishedMediaIdsInState(draft.state);
+    for (const mediaId of finishedMediaIds) projectBytesByFinishedMediaId.set(mediaId, projectBytes);
+    if (draft.status !== "finished") {
+      for (const mediaId of finishedMediaIds) draftingOutputMediaIds.add(mediaId);
+      draftingProjectNames.add(`${draft.template}:${draft.title.trim().toLocaleLowerCase()}`);
+    }
+  }
   const itemsByTemplate: Record<string, MediaRow[]> = {};
-  TEMPLATES.forEach((t, i) => (itemsByTemplate[t.id] = lists[i]));
+  TEMPLATES.forEach((t, i) => {
+    itemsByTemplate[t.id] = lists[i]
+      // A project being edited belongs exclusively in Drafts. This protects
+      // the UI for records finished before output ids were tracked directly.
+      .filter((item) => {
+        if (draftingOutputMediaIds.has(item.id)) return false;
+        if (item.studio_draft_id && drafts.some((draft) => draft.id === item.studio_draft_id && draft.status !== "finished")) return false;
+        // Before project ids were stored on media, the campaign title is the
+        // only safe shared identity available to prevent a legacy duplicate.
+        return !draftingProjectNames.has(`${item.studio_template}:${(item.studio_campaign_name ?? "").trim().toLocaleLowerCase()}`);
+      })
+      .map((item) => ({
+      ...item,
+      project_size_bytes: projectBytesByFinishedMediaId.get(item.id),
+      }));
+  });
+  const draftsWithProjectBytes = drafts.map((draft) => ({
+    ...draft,
+    media_size_bytes: draftProjectBytes.get(draft.id) ?? 0,
+  }));
 
-  return <LibraryView templates={TEMPLATES} itemsByTemplate={itemsByTemplate} drafts={drafts} />;
+  return <LibraryView templates={TEMPLATES} itemsByTemplate={itemsByTemplate} drafts={draftsWithProjectBytes} storage={storage} />;
 }

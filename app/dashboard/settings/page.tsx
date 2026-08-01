@@ -3,6 +3,8 @@ import { listRecords } from "@/lib/db";
 import { Toggle } from "@/components/interactive";
 import { UserAvatar } from "@/components/avatar-menu";
 import { Icon } from "@/components/icons";
+import { currentWorkspace } from "@/lib/workspaces";
+import { canManageWorkspace } from "@/lib/permissions";
 import {
   ChangeEmailButton,
   ChangePasswordControls,
@@ -15,16 +17,18 @@ import {
 export const metadata = { title: "Settings" };
 
 function Section({
+  id,
   title,
   desc,
   children,
 }: {
+  id?: string;
   title: string;
   desc?: string;
   children: React.ReactNode;
 }) {
   return (
-    <section className="grid gap-3 p-5 sm:grid-cols-[190px_minmax(0,1fr)] sm:gap-6">
+    <section id={id} className="grid scroll-mt-24 gap-3 p-5 sm:grid-cols-[190px_minmax(0,1fr)] sm:gap-6">
       <div>
         <h2 className="text-sm font-bold">{title}</h2>
         {desc && <p className="mt-1 text-xs text-muted">{desc}</p>}
@@ -39,11 +43,15 @@ function ToggleRow({
   desc,
   field,
   on,
+  endpoint = "/api/app/settings",
+  disabled = false,
 }: {
   title: string;
   desc: string;
   field: string;
   on: boolean;
+  endpoint?: string;
+  disabled?: boolean;
 }) {
   return (
     <div className="flex items-center justify-between gap-4 py-2.5 first:pt-0 last:pb-0">
@@ -51,16 +59,18 @@ function ToggleRow({
         <p className="text-sm font-semibold">{title}</p>
         <p className="text-xs text-muted">{desc}</p>
       </div>
-      <Toggle on={on} endpoint="/api/app/settings" field={field} label={title} />
+      <Toggle on={on} endpoint={endpoint} field={field} label={title} disabled={disabled} />
     </div>
   );
 }
 
 export default async function SettingsPage() {
   const user = await requireOnboardedUser();
-  const apps = await listRecords<{ app_name: string; created_at: string }>("connected_apps", {
-    user_id: user.id,
-  });
+  const [apps, workspace] = await Promise.all([
+    listRecords<{ app_name: string; created_at: string }>("connected_apps", { user_id: user.id }),
+    currentWorkspace(user),
+  ]);
+  const canManageStorage = await canManageWorkspace(workspace.id, user.id);
 
   return (
     <div className="card divide-y divide-line">
@@ -140,6 +150,18 @@ export default async function SettingsPage() {
             on={!!user.pref_server_video_processing}
           />
         </div>
+      </Section>
+
+      <Section id="storage" title="Storage" desc="Control what happens when your workspace reaches its included storage limit.">
+        <ToggleRow
+          title="Automatically free up space"
+          desc="When storage is full, delete the oldest files that aren't used by a post or active draft. Turn this off to block new uploads instead."
+          field="auto_cleanup_storage"
+          endpoint="/api/app/workspace"
+          on={(workspace.auto_cleanup_storage ?? 1) === 1}
+          disabled={!canManageStorage}
+        />
+        {!canManageStorage && <p className="mt-2 text-xs font-semibold text-muted">Only workspace owners and admins can change this setting.</p>}
       </Section>
 
       <Section title="Weekly posting goal">

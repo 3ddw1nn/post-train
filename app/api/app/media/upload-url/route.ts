@@ -1,6 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { currentWorkspace } from "@/lib/workspaces";
-import { createUploadUrl } from "@/lib/media";
+import { createUploadUrl, StorageLimitError } from "@/lib/media";
 
 export async function POST(req: Request) {
   const user = await requireUser();
@@ -25,8 +25,13 @@ export async function POST(req: Request) {
     return Response.json(result, { status: 201 });
   } catch (e) {
     return Response.json(
-      { error: { message: e instanceof Error ? e.message : "Upload failed." } },
-      { status: 400 }
+      {
+        error: {
+          message: e instanceof Error ? e.message : "Upload failed.",
+          code: e instanceof StorageLimitError ? e.code : undefined,
+        },
+      },
+      { status: e instanceof StorageLimitError ? 507 : 400 }
     );
   }
 }

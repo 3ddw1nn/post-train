@@ -36,6 +36,9 @@ export default defineSchema({
     owner_id: v.string(),
     name: v.string(),
     randomize_queue_time: v.number(),
+    // Enabled by default. When storage reaches the included limit, new
+    // uploads may remove the workspace's oldest safely-deletable media.
+    auto_cleanup_storage: v.optional(v.number()),
     webhook_url: nullableString,
     webhook_secret: v.string(),
     created_at: v.string(),
@@ -113,6 +116,9 @@ export default defineSchema({
     // being non-null is what actually makes a row a Library item.
     studio_template: v.optional(nullableString), // "grid-2x2" | "fade-in" | "ai-ugc" | "slideshow" | "thumbnail"
     studio_batch_id: v.optional(nullableString),
+    // The saved Studio draft that owns this finished output. This makes a
+    // project exclusively Draft or Finished, never both.
+    studio_draft_id: v.optional(nullableString),
     studio_finished_at: v.optional(nullableString),
     // Display metadata captured when a studio output is finished. This keeps
     // Library cards human-readable without exposing generated file names.
@@ -225,7 +231,8 @@ export default defineSchema({
     created_at: v.string(),
   })
     .index("by_legacy_id", ["id"])
-    .index("by_workspace", ["workspace_id"]),
+    .index("by_workspace", ["workspace_id"])
+    .index("by_workspace_and_id", ["workspace_id", "id"]),
 
   // Content Studio render/generation jobs (grid-2x2 | fade-in | ai-ugc),
   // driven by the in-process worker (lib/studio.ts state machine).
@@ -268,6 +275,10 @@ export default defineSchema({
     // separate from `state` so flipping it never requires resending the
     // whole resumable blob just to lock/unlock a draft.
     status: v.optional(v.string()), // "drafting" | "finished"
+    // The exact rendered media rows promoted to the Library by Finish. This
+    // lets an edited project leave the Library without affecting its source
+    // uploads or any other finished project.
+    finished_media_ids: v.optional(v.array(v.string())),
     created_at: v.string(),
     updated_at: v.string(),
   })

@@ -7,12 +7,13 @@
 // A Finished/Drafts switch shares the same template tabs and reuses
 // studio_drafts (state a wizard saves as it's edited, before Finish).
 import Link from "next/link";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useRouter } from "next/navigation";
 import { Icon } from "./icons";
 import { MediaThumb } from "./media";
 import { PlatformIcon } from "./platform-icon";
-import { relativeTime } from "@/lib/format";
-import type { MediaRow } from "@/lib/media";
+import { formatBytes, relativeTime } from "@/lib/format";
+import type { MediaRow, WorkspaceStorageStatus } from "@/lib/media";
 import type { StudioDraftRow } from "@/lib/studio-drafts";
 
 export type LibraryTemplate = {
@@ -34,18 +35,37 @@ function groupByBatch(items: MediaRow[]): MediaRow[][] {
   return [...groups.values()];
 }
 
-function LibraryCard({ group, template, onRemoved }: { group: MediaRow[]; template?: LibraryTemplate; onRemoved: (ids: string[]) => void }) {
+function LibraryCard({ group, template, onRemoved }: { group: MediaRow[]; template?: LibraryTemplate; onRemoved: (ids: string[], freedBytes: number) => void }) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
   const [removing, setRemoving] = useState(false);
+  const [removeError, setRemoveError] = useState<string | null>(null);
   const primary = group[0];
   const mediaIds = group.map((m) => m.id).join(",");
   const postType = template?.postType ?? "video";
   const campaignName = primary.studio_campaign_name?.trim() || template?.label || "Finished project";
   const platformIds = primary.studio_platform_ids ?? [];
+  const projectBytes = primary.project_size_bytes ?? group.reduce((total, media) => total + Math.max(0, media.size_bytes), 0);
 
   async function remove() {
     setRemoving(true);
-    await Promise.all(group.map((m) => fetch(`/api/app/studio/finish?media_id=${m.id}`, { method: "DELETE" })));
-    onRemoved(group.map((m) => m.id));
+    setRemoveError(null);
+    const results = await Promise.all(group.map(async (media) => ({
+      media,
+      response: await fetch(`/api/app/media/${media.id}?safe=1`, { method: "DELETE" }),
+    })));
+    const deleted = results.filter((result) => result.response.ok).map((result) => result.media);
+    if (deleted.length > 0) {
+      onRemoved(deleted.map((media) => media.id), deleted.reduce((sum, media) => sum + media.size_bytes, 0));
+    }
+    const failed = results.find((result) => !result.response.ok);
+    if (failed) {
+      const body = await failed.response.json().catch(() => null);
+      setRemoveError(body?.error?.message ?? "This file couldn't be deleted.");
+      setRemoving(false);
+      return;
+    }
+    setConfirmOpen(false);
+    setRemoving(false);
   }
 
   return (
@@ -76,6 +96,7 @@ function LibraryCard({ group, template, onRemoved }: { group: MediaRow[]; templa
           <p className="truncate text-sm font-bold text-ink" title={campaignName}>{campaignName}</p>
           <div className="mt-1 flex min-h-5 items-center gap-2 text-xs font-semibold text-muted">
             <span>Finished {relativeTime(primary.studio_finished_at ?? primary.created_at)}</span>
+            <span aria-label={`Project size: ${formatStorage(projectBytes)}`}>· {formatStorage(projectBytes)}</span>
             {platformIds.length > 0 && (
               <span className="flex items-center gap-1.5" aria-label={`Selected platforms: ${platformIds.join(", ")}`}>
                 {platformIds.map((id) => <PlatformIcon key={id} id={id} size={14} />)}
@@ -99,16 +120,39 @@ function LibraryCard({ group, template, onRemoved }: { group: MediaRow[]; templa
           )}
           <button
             type="button"
-            onClick={() => void remove()}
+            onClick={() => setConfirmOpen(true)}
             disabled={removing}
-            aria-label="Remove from Library"
-            title="Remove from Library — the video/image itself is not deleted"
+            aria-label="Delete file from Library"
+            title="Delete file from Library"
             className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line text-muted transition-colors hover:border-danger/40 hover:bg-danger/5 hover:text-danger disabled:opacity-50"
           >
             <Icon name="x" size={14} />
           </button>
         </div>
       </div>
+
+      {confirmOpen && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 p-4"
+          onClick={() => setConfirmOpen(false)}
+        >
+          <div className="card w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+            <p className="text-lg font-extrabold">Delete this file?</p>
+            <p className="mt-2 text-sm text-muted">
+              This permanently removes &ldquo;{campaignName}&rdquo; and frees its storage. Files used by a post or active draft are protected and won&apos;t be deleted.
+            </p>
+            {removeError && <p className="mt-3 rounded-lg bg-danger/5 px-3 py-2 text-sm font-semibold text-danger">{removeError}</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" className="btn-subtle" onClick={() => setConfirmOpen(false)}>
+                Cancel
+              </button>
+              <button type="button" className="btn-danger" disabled={removing} onClick={() => void remove()}>
+                {removing ? "Deleting…" : "Delete file"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -145,7 +189,9 @@ function DraftCard({ draft, template, onDeleted }: { draft: StudioDraftRow; temp
       <div className="flex flex-1 flex-col gap-3 p-4">
         <div>
           <p className="truncate text-sm font-bold text-ink" title={draft.title}>{draft.title}</p>
-          <p className="mt-1 text-xs font-semibold text-muted">Updated {relativeTime(draft.updated_at)}</p>
+          <p className="mt-1 text-xs font-semibold text-muted">
+            Updated {relativeTime(draft.updated_at)} · {formatStorage(draft.media_size_bytes ?? 0)}
+          </p>
         </div>
         <div className="mt-auto flex items-center gap-2">
           <Link href={`/dashboard/content-studio/${draft.template}`} className="btn-primary flex-1 !py-1.5 text-center text-sm">
@@ -191,21 +237,31 @@ function DraftCard({ draft, template, onDeleted }: { draft: StudioDraftRow; temp
 const ALL_TAB = "all";
 type ViewMode = "finished" | "drafts";
 
+function formatStorage(bytes: number) {
+  const formatted = formatBytes(bytes);
+  return formatted === "1.0 GB" ? "1 GB" : formatted;
+}
+
 export function LibraryView({
   templates,
   itemsByTemplate,
   drafts,
+  storage,
 }: {
   templates: LibraryTemplate[];
   itemsByTemplate: Record<string, MediaRow[]>;
   drafts: StudioDraftRow[];
+  storage: WorkspaceStorageStatus;
 }) {
+  const router = useRouter();
   const [viewMode, setViewMode] = useState<ViewMode>("finished");
   const [active, setActive] = useState<string>(ALL_TAB);
   const [items, setItems] = useState(itemsByTemplate);
   // A draft that's been through Finish already shows up as a finished item
   // above — only the still-in-progress ones belong in this tab.
   const [draftItems, setDraftItems] = useState(() => drafts.filter((d) => d.status !== "finished"));
+  const [usedBytes, setUsedBytes] = useState(storage.usedBytes);
+  useEffect(() => setUsedBytes(storage.usedBytes), [storage.usedBytes]);
 
   const templateById = new Map(templates.map((t) => [t.id, t]));
   const activeTemplate = templateById.get(active);
@@ -217,7 +273,7 @@ export function LibraryView({
   const finishedGroups = groupByBatch(activeFinishedItems);
   const activeDrafts = active === ALL_TAB ? draftItems : draftItems.filter((d) => d.template === active);
 
-  function removeGroup(ids: string[]) {
+  function removeGroup(ids: string[], freedBytes: number) {
     setItems((current) => {
       const next = { ...current };
       for (const templateId of Object.keys(next)) {
@@ -225,10 +281,12 @@ export function LibraryView({
       }
       return next;
     });
+    setUsedBytes((current) => Math.max(0, current - freedBytes));
   }
 
   function removeDraft(id: string) {
     setDraftItems((current) => current.filter((d) => d.id !== id));
+    router.refresh();
   }
 
   function countFor(templateId: string) {
@@ -236,6 +294,8 @@ export function LibraryView({
   }
 
   const activeTotal = viewMode === "finished" ? finishedTotal : draftsTotal;
+  const storagePercent = Math.min(100, (usedBytes / storage.limitBytes) * 100);
+  const storageFull = usedBytes >= storage.limitBytes;
 
   return (
     <div className="fade-up">
@@ -270,7 +330,46 @@ export function LibraryView({
         </div>
       </div>
 
-      <div className="mt-5 flex flex-wrap gap-1.5 border-b border-line pb-3">
+      <section className={`mt-5 rounded-xl border p-4 sm:p-5 ${storageFull ? "border-danger/30 bg-danger/5" : "border-line bg-white"}`} aria-labelledby="library-storage-heading">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <div className="flex items-center gap-2">
+              <span className={`flex h-8 w-8 items-center justify-center rounded-lg ${storageFull ? "bg-danger/10 text-danger" : "bg-primary-soft text-primary-deep"}`}>
+                <Icon name="stack" size={16} />
+              </span>
+              <div>
+                <h2 id="library-storage-heading" className="text-sm font-extrabold">Workspace storage</h2>
+                <p className="text-xs font-semibold text-muted">{formatStorage(usedBytes)} of {formatStorage(storage.limitBytes)} used</p>
+              </div>
+            </div>
+          </div>
+          <span className={`rounded-full px-2.5 py-1 text-xs font-bold ${storage.autoCleanup ? "bg-primary-soft text-primary-deep" : "bg-page text-muted"}`}>
+            Auto cleanup {storage.autoCleanup ? "on" : "off"}
+          </span>
+        </div>
+        <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-page" role="progressbar" aria-label="Workspace storage used" aria-valuemin={0} aria-valuemax={storage.limitBytes} aria-valuenow={Math.min(usedBytes, storage.limitBytes)}>
+          <div className={`h-full rounded-full transition-[width] ${storageFull ? "bg-danger" : "bg-primary"}`} style={{ width: `${storagePercent}%` }} />
+        </div>
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
+          <p className="max-w-2xl text-xs leading-5 text-muted">
+            {storageFull
+              ? "Storage is full. Delete files below or turn on automatic cleanup before adding more media."
+              : storage.autoCleanup
+                ? "At 1 GB, automatic cleanup deletes the oldest files not used by a post or draft. Turn it off in Storage settings."
+                : "Automatic cleanup is off. New uploads will stop when this meter reaches 1 GB."}
+          </p>
+          <div className="flex items-center gap-2">
+            <Link href="/dashboard/settings#storage" className="text-xs font-bold text-primary-deep hover:underline">Storage settings</Link>
+            {storageFull && (
+              <>
+                <a href="#library-files" className="btn-subtle !px-3 !py-1.5 text-xs">Delete files</a>
+              </>
+            )}
+          </div>
+        </div>
+      </section>
+
+      <div id="library-files" className="mt-5 flex scroll-mt-24 flex-wrap gap-1.5 border-b border-line pb-3">
         <button
           type="button"
           onClick={() => setActive(ALL_TAB)}

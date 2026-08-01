@@ -5,7 +5,7 @@ import { getSubscription } from "./billing";
 import { canCreatePosts } from "./entitlements";
 import { platform as platformOf, CAPTION_MAX, type PostType } from "./platforms";
 import { nextQueueSlot, applyJitter, QueueError } from "./queue";
-import { importFromUrl } from "./media";
+import { deleteMediaIfUnreferenced, importFromUrl } from "./media";
 import type { Workspace } from "./workspaces";
 import { api } from "@/convex/_generated/api";
 
@@ -362,7 +362,9 @@ export async function deletePost(post: PostRow): Promise<void> {
   if (!post.is_draft && !["draft", "scheduled"].includes(post.status)) {
     throw new DomainError(400, "Published posts cannot be deleted.");
   }
-  await convexMutation(api.posts.deletePost, { id: post.id });
+  const deleted = await convexMutation<{ workspace_id: string; media_ids: string[] } | null>(api.posts.deletePost, { id: post.id });
+  if (!deleted) return;
+  await Promise.all(deleted.media_ids.map((mediaId) => deleteMediaIfUnreferenced(deleted.workspace_id, mediaId)));
 }
 
 /** Duplicate any post into a new Draft (spec: duplicating creates a draft). */

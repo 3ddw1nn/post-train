@@ -13,34 +13,51 @@ export function Toggle({
   field,
   label,
   onChange,
+  disabled = false,
 }: {
   on: boolean;
   endpoint?: string;
   field?: string;
   label?: string;
   onChange?: (v: boolean) => void;
+  disabled?: boolean;
 }) {
   const [value, setValue] = useState(on);
+  const [busy, setBusy] = useState(false);
   const router = useRouter();
   return (
     <button
       type="button"
-      className="pt-toggle"
+      className="pt-toggle disabled:cursor-not-allowed disabled:opacity-50"
       data-on={value}
       role="switch"
       aria-checked={value}
       aria-label={label}
+      disabled={disabled || busy}
       onClick={async () => {
         const next = !value;
         setValue(next);
         onChange?.(next);
         if (endpoint && field) {
-          await fetch(endpoint, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ [field]: next }),
-          });
-          router.refresh();
+          setBusy(true);
+          try {
+            const response = await fetch(endpoint, {
+              method: "PATCH",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ [field]: next }),
+            });
+            if (!response.ok) {
+              setValue(value);
+              onChange?.(value);
+              return;
+            }
+            router.refresh();
+          } catch {
+            setValue(value);
+            onChange?.(value);
+          } finally {
+            setBusy(false);
+          }
         }
       }}
     >
@@ -400,6 +417,7 @@ export function Select({
   align = "left",
   tone = "default",
   ariaLabel,
+  ariaDescribedBy,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -410,6 +428,7 @@ export function Select({
   align?: "left" | "right";
   tone?: "default" | "dark";
   ariaLabel?: string;
+  ariaDescribedBy?: string;
 }) {
   const selected = options.find((o) => o.value === value) ?? options[0];
   const dark = tone === "dark";
@@ -423,6 +442,7 @@ export function Select({
           type="button"
           disabled={disabled}
           aria-label={ariaLabel}
+          aria-describedby={ariaDescribedBy}
           className={`flex items-center justify-between gap-2 text-left disabled:cursor-not-allowed disabled:opacity-50 ${
             dark
               ? "rounded-lg border border-white/15 bg-[#171717] px-3 py-2 text-sm font-semibold text-white hover:border-white/30 hover:bg-[#202020]"
@@ -444,8 +464,8 @@ export function Select({
               onClick={() => onChange(option.value)}
               className={`flex w-full items-center gap-2 px-3 py-2 text-left text-sm font-semibold transition-colors ${
                 dark
-                  ? `hover:bg-white/10 ${active ? "text-white" : "text-neutral-300"}`
-                  : `hover:bg-page ${active ? "text-primary-deep" : "text-ink"}`
+                  ? `${active ? "bg-white/10 text-white" : "text-neutral-300 hover:bg-white/10"}`
+                  : `${active ? "bg-primary-soft text-primary-deep hover:bg-primary-soft" : "text-ink hover:bg-page"}`
               }`}
             >
               <Icon name="check" size={14} className={active ? (dark ? "text-primary" : "text-primary-deep") : "opacity-0"} />

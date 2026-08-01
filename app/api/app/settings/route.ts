@@ -26,6 +26,15 @@ export async function PATCH(req: Request) {
     const n = Math.max(0, Math.min(100, Number(body.weekly_posting_goal) || 0));
     patch.weekly_posting_goal = n;
   }
+  if (typeof body.timezone === "string") {
+    const timezone = body.timezone.trim();
+    try {
+      Intl.DateTimeFormat(undefined, { timeZone: timezone });
+      patch.timezone = timezone;
+    } catch {
+      return Response.json({ error: { message: "Choose a valid timezone." } }, { status: 400 });
+    }
+  }
   if (Object.keys(patch).length) await patchRecord("users", user.id, patch);
   return Response.json({ ok: true });
 }

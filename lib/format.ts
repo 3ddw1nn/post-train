@@ -35,6 +35,24 @@ export function nextMinuteInputValue(date = new Date()): string {
   return `${String(next.getHours()).padStart(2, "0")}:${String(next.getMinutes()).padStart(2, "0")}`;
 }
 
+/** The date input's `min` — normally the earliest selectable day, but
+ *  relaxed down to an already-chosen earlier date so a stale hand-off value
+ *  (e.g. picked in Content Studio, then shown minutes later on Create Post
+ *  once render/finish finally completes) is still displayed instead of being
+ *  silently blanked by the browser's native min-date enforcement. The
+ *  existing "past schedule" banners already warn the user in that case. */
+export function scheduleMinDate(date: string, earliestDate: string): string {
+  return date && date < earliestDate ? date : earliestDate;
+}
+
+/** Same relaxation as `scheduleMinDate`, for the time input — only relevant
+ *  when the date is the earliest selectable day, same as the existing
+ *  same-day-only time floor. */
+export function scheduleMinTime(date: string, time: string, earliestDate: string, earliestTime: string): string | undefined {
+  if (date !== earliestDate) return undefined;
+  return time && time < earliestTime ? time : earliestTime;
+}
+
 export function isPastSchedule(date: string, time: string, now = new Date()): boolean {
   const scheduled = new Date(`${date}T${time || "00:00"}`);
   return !Number.isNaN(scheduled.getTime()) && scheduled.getTime() < now.getTime();
@@ -45,4 +63,16 @@ export function isPastToday(date: string, time: string, now = new Date()): boole
   if (!isPastSchedule(date, time, now)) return false;
   const todayDate = localDateInputValue(now);
   return date === todayDate;
+}
+
+export function formatBytes(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let value = bytes / 1024;
+  let unit = 0;
+  while (value >= 1024 && unit < units.length - 1) {
+    value /= 1024;
+    unit++;
+  }
+  return `${value.toFixed(1)} ${units[unit]}`;
 }

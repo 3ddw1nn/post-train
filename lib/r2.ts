@@ -1,4 +1,10 @@
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectCommand,
+  GetObjectCommand,
+  ListObjectsV2Command,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 
 const R2_UPLOAD_TTL_SECONDS = 15 * 60;
@@ -46,12 +52,8 @@ export function r2PublicBaseUrl() {
   return process.env.R2_PUBLIC_BASE_URL?.replace(/\/$/, "") || null;
 }
 
-export function mediaObjectKey(workspaceId: string, mediaId: string) {
-  return `workspaces/${workspaceId}/media/${mediaId}`;
-}
-
-export function exploreObjectKey(itemId: string, slideIndex: number) {
-  return `explore/${itemId}/slide-${slideIndex}.jpg`;
+export function mediaObjectKey(workspaceId: string, mediaId: string, kind: string, ext: string) {
+  return `workspaces/${workspaceId}/${kind}/${mediaId}${ext}`;
 }
 
 export function r2Client() {
@@ -98,6 +100,60 @@ export async function createR2DownloadUrl(key: string) {
     }),
     { expiresIn: R2_DOWNLOAD_TTL_SECONDS }
   );
+}
+
+export type R2ObjectListing = {
+  folders: string[];
+  files: { key: string; size: number; lastModified: string | null }[];
+  nextToken: string | null;
+};
+
+/** Drive-style directory listing: CommonPrefixes (delimited by "/") become
+ *  folders, Contents become files directly under `prefix`. Staff storage
+ *  browser only — one page (up to 1000 entries) per call. */
+export async function listR2Objects(prefix: string, continuationToken?: string): Promise<R2ObjectListing> {
+  const res = await r2Client().send(
+    new ListObjectsV2Command({
+      Bucket: r2Bucket(),
+      Prefix: prefix,
+      Delimiter: "/",
+      ContinuationToken: continuationToken,
+    })
+  );
+  return {
+    folders: (res.CommonPrefixes ?? []).map((p) => p.Prefix!).filter(Boolean),
+    files: (res.Contents ?? [])
+      .filter((o) => o.Key && o.Key !== prefix)
+      .map((o) => ({
+        key: o.Key!,
+        size: o.Size ?? 0,
+        lastModified: o.LastModified ? o.LastModified.toISOString() : null,
+      })),
+    nextToken: res.IsTruncated ? res.NextContinuationToken ?? null : null,
+  };
+}
+
+// Cloudflare R2's documented free-tier storage allowance.
+export const R2_FREE_TIER_BYTES = 10 * 1024 ** 3;
+
+/** Whole-bucket usage (all prefixes) — for the staff storage meter. Caps at
+ *  50 pages (~50k objects) so a runaway bucket can't hang the page. */
+export async function getR2BucketUsage(): Promise<{ bytes: number; objectCount: number }> {
+  let bytes = 0;
+  let objectCount = 0;
+  let continuationToken: string | undefined;
+  for (let page = 0; page < 50; page++) {
+    const res = await r2Client().send(
+      new ListObjectsV2Command({ Bucket: r2Bucket(), ContinuationToken: continuationToken })
+    );
+    for (const o of res.Contents ?? []) {
+      bytes += o.Size ?? 0;
+      objectCount++;
+    }
+    if (!res.IsTruncated) break;
+    continuationToken = res.NextContinuationToken;
+  }
+  return { bytes, objectCount };
 }
 
 export async function deleteR2Object(key: string) {

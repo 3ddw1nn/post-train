@@ -1,6 +1,6 @@
 # ✅ Post Train — Completed Milestones
 
-These features and infrastructure pieces are shipped and tested end-to-end.
+These features and infrastructure pieces are shipped. Production-only validation items live in `PRODUCTION.md`.
 
 ## Authentication & Core Infrastructure
 
@@ -14,6 +14,7 @@ These features and infrastructure pieces are shipped and tested end-to-end.
 - Workspace roles + member management
 - Team invitations and workspace switching
 - Workspace owner/member permissions
+- Pre-launch waitlist capture and lead intake
 
 ## Social Platforms — Real OAuth & Publishing
 
@@ -23,7 +24,7 @@ These features and infrastructure pieces are shipped and tested end-to-end.
 - **Bluesky** — App-password auth, real post publishing (tested, up to 4 images)
 - **Google Account** — OAuth + profile sign-in (verified working)
 - **YouTube** — Google OAuth, resumable upload API, real post publishing (tested end-to-end)
-- **TikTok** — OAuth 2.0 (v2 endpoints), Content Posting API draft-to-inbox upload (sandbox verified end-to-end on post-train.vercel.app; production submission pending a custom domain). Direct-to-profile publishing deliberately deferred post-launch — see TODO.md.
+- **TikTok** — OAuth 2.0 (v2 endpoints), Content Posting API draft-to-inbox upload (sandbox verified end-to-end). Production submission remains pending production credentials, redirect configuration, and platform review; direct-to-profile publishing is deliberately deferred — see TODO.md.
 
 ## Media & Storage
 
@@ -31,6 +32,13 @@ These features and infrastructure pieces are shipped and tested end-to-end.
 - Presigned upload URLs
 - Local-disk fallback for development
 - Media library with metadata persistence
+- Workspace-level R2 storage limits and usage meter
+  - 1 GB free, then 5 GB / 25 GB / 100 GB for Creator / Growth / Pro
+  - Capacity belongs to the workspace, controlled by the workspace owner's plan
+  - Workspace owners and admins can enable or disable automatic cleanup
+  - Cleanup removes the oldest safely deletable media while protecting posts, active drafts, source media, and thumbnails
+- Permanent Library deletion with confirmation and protected-reference checks
+- Video Library cards with aspect ratio and platform-format context
 
 ## Scheduling & Publishing Engine
 
@@ -67,6 +75,9 @@ These features and infrastructure pieces are shipped and tested end-to-end.
 - Price transparency (seconds + $ estimated before generation)
 - Monthly generation cap per workspace (30/mo AI, uncapped grid/fade-in)
 - "Create post" handoff to composer
+- Platform-specific video outputs: destination selection, supported aspect-ratio selection, crop positioning, and per-platform output metadata
+- Recommended video-format guidance in Create Post, 2×2 Grid Studio, and Video Editor Studio
+- Finished-draft edit guard that preserves the Library version until a new finish
 
 ## Transactional Email
 
@@ -77,7 +88,7 @@ These features and infrastructure pieces are shipped and tested end-to-end.
 
 ## Deployment & DevOps
 
-- Vercel app deployment (post-train.vercel.app, auto-redeploy from git)
+- Vercel app deployment at `posttrain.app` (auto-redeploy from git)
 - Render Blueprint (free tier worker, WORKER_ENABLED=1 gate)
 - Docker containerization (Alpine + ffmpeg)
 - Environment variable management (Vercel + Render)
@@ -91,6 +102,10 @@ These features and infrastructure pieces are shipped and tested end-to-end.
 - Account avatars (real photos, not generated placeholders)
 - Connected account display with reauth badges
 - Dark UI mode (topbar theming for staff)
+- Posts consolidated into one status-filtered workspace instead of separate draft/scheduled/posted pages
+- Core dashboard rebrand completed for Posts, Calendar, Connections, Analytics, Settings, Billing, Queue, Teams, API Keys, and Content Studio hub
+- Auth screens rebuilt as the Post Train split-shell experience
+- Queue settings upgraded with custom timezone selection, current-timezone detection, interactive slots, and queue-management entry points
 
 ## Developer Experience
 

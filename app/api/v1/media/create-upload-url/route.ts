@@ -1,5 +1,5 @@
 import { authenticateApiKey, jsonError } from "@/lib/api-auth";
-import { createUploadUrl } from "@/lib/media";
+import { createUploadUrl, StorageLimitError } from "@/lib/media";
 import { DomainError } from "@/lib/posts";
 
 export async function POST(req: Request) {
@@ -20,6 +20,9 @@ export async function POST(req: Request) {
     );
     return Response.json(result, { status: 201 });
   } catch (e) {
+    if (e instanceof StorageLimitError) {
+      return jsonError(new DomainError(507, e.message));
+    }
     if (e instanceof Error && !(e as DomainError).status) {
       return jsonError(new DomainError(400, e.message));
     }

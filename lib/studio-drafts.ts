@@ -4,6 +4,7 @@
 import { randomBytes } from "node:crypto";
 import { api } from "@/convex/_generated/api";
 import { convexMutation, convexQuery } from "./db";
+import { deleteMediaIfUnreferenced } from "./media";
 
 export type StudioDraftMode = "templates" | "custom" | "copy";
 
@@ -20,6 +21,10 @@ export type StudioDraftRow = {
   /** "drafting" (or unset) is the normal editable state; "finished" is set by
    *  the studio's Finish button and locks the draft until explicitly edited. */
   status?: string;
+  /** Rendered output ids promoted by Finish; source uploads stay outside this list. */
+  finished_media_ids?: string[];
+  /** Derived for the Library only: all unique media referenced by this project. */
+  media_size_bytes?: number;
   created_at: string;
   updated_at: string;
 };
@@ -57,9 +62,22 @@ export async function saveStudioDraft(
 }
 
 export async function deleteStudioDraft(workspaceId: string, id: string): Promise<boolean> {
-  return await convexMutation<boolean>(api.studioDrafts.remove, { id, workspace_id: workspaceId });
+  const deleted = await convexMutation<{ media_ids: string[] } | null>(api.studioDrafts.remove, { id, workspace_id: workspaceId });
+  if (!deleted) return false;
+  await Promise.all(deleted.media_ids.map((mediaId) => deleteMediaIfUnreferenced(workspaceId, mediaId)));
+  return true;
 }
 
-export async function setStudioDraftStatus(workspaceId: string, id: string, status: "drafting" | "finished"): Promise<StudioDraftRow | null> {
-  return await convexMutation<StudioDraftRow | null>(api.studioDrafts.setStatus, { id, workspace_id: workspaceId, status });
+export async function setStudioDraftStatus(
+  workspaceId: string,
+  id: string,
+  status: "drafting" | "finished",
+  finishedMediaIds?: string[],
+): Promise<StudioDraftRow | null> {
+  return await convexMutation<StudioDraftRow | null>(api.studioDrafts.setStatus, {
+    id,
+    workspace_id: workspaceId,
+    status,
+    ...(finishedMediaIds ? { finished_media_ids: finishedMediaIds } : {}),
+  });
 }

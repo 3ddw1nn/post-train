@@ -2101,7 +2101,7 @@ export function SlideshowStudio({
       await fetch(`/api/app/studio/drafts/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "drafting" }),
+        body: JSON.stringify({ status: "drafting", finished_media_ids: finishedMediaIds ?? [] }),
       }).catch(() => {});
       setDrafts((current) => current.map((d) => (d.id === id ? { ...d, status: "drafting" } : d)));
     }
@@ -2380,7 +2380,7 @@ export function SlideshowStudio({
       const res = await fetch("/api/app/studio/finish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ media_ids: mediaIds, template: "slideshow", campaign_name: campaignName, platform_ids: [...selectedPlatforms], platform_captions: Object.fromEntries(Object.entries(platformCaptions).filter(([id]) => selectedPlatforms.has(id))) }),
+        body: JSON.stringify({ draft_id: draftIdRef.current, media_ids: mediaIds, template: "slideshow", campaign_name: campaignName, platform_ids: [...selectedPlatforms], platform_captions: Object.fromEntries(Object.entries(platformCaptions).filter(([id]) => selectedPlatforms.has(id))) }),
       });
       if (!res.ok) throw new Error("Could not finish this slideshow.");
       setFinishedMediaIds(mediaIds);

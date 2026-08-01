@@ -29,6 +29,11 @@ export const isMember = query({
   },
 });
 
+export const getById = query({
+  args: { id: v.string() },
+  handler: async (ctx, args) => await byLegacyId(ctx, "workspaces", args.id),
+});
+
 export const createWorkspace = mutation({
   args: { id: v.string(), owner_id: v.string(), name: v.string(), webhook_secret: v.string() },
   handler: async (ctx, args) => {
@@ -38,6 +43,7 @@ export const createWorkspace = mutation({
       owner_id: args.owner_id,
       name: args.name,
       randomize_queue_time: 0,
+      auto_cleanup_storage: 1,
       webhook_url: null,
       webhook_secret: args.webhook_secret,
       created_at: ts,

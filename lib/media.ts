@@ -33,6 +33,7 @@ export type MediaRow = {
   thumbnail_media_id?: string | null;
   studio_template?: string | null;
   studio_batch_id?: string | null;
+  studio_draft_id?: string | null;
   studio_finished_at?: string | null;
   studio_campaign_name?: string | null;
   studio_platform_ids?: string[];
@@ -42,6 +43,8 @@ export type MediaRow = {
   studio_platform_captions?: string | null;
   studio_caption_brief?: string | null;
   studio_caption_length?: string | null;
+  /** Derived for the Library: source uploads plus every output in one project. */
+  project_size_bytes?: number;
 };
 export type UploadTarget = {
   media_id: string;
@@ -51,6 +54,91 @@ export type UploadTarget = {
 };
 
 export const MAX_MEDIA_BYTES = 250 * 1024 * 1024; // bulk video cap, used as global cap
+/** Every workspace has the same storage allowance, independent of plan or role. */
+export const WORKSPACE_STORAGE_BYTES = 1024 * 1024 * 1024;
+
+export type WorkspaceStorageStatus = {
+  usedBytes: number;
+  limitBytes: number;
+  fileCount: number;
+  autoCleanup: boolean;
+  isFull: boolean;
+};
+
+export class StorageLimitError extends Error {
+  readonly code = "STORAGE_LIMIT_REACHED";
+
+  constructor() {
+    super("Storage is full. Delete files from your Library or turn on automatic cleanup.");
+    this.name = "StorageLimitError";
+  }
+}
+
+function normalizeStorageError(error: unknown): never {
+  if (error instanceof StorageLimitError) throw error;
+  if (error instanceof Error && error.message.includes("STORAGE_LIMIT_REACHED")) {
+    throw new StorageLimitError();
+  }
+  throw error;
+}
+
+export async function getWorkspaceStorageStatus(workspaceId: string): Promise<WorkspaceStorageStatus> {
+  const [usage, workspace] = await Promise.all([
+    convexQuery<{ bytes: number; count: number; truncated: boolean }>(api.media.storageUsage, { workspace_id: workspaceId }),
+    convexQuery<{ owner_id: string; auto_cleanup_storage?: number } | null>(api.workspaces.getById, { id: workspaceId }),
+  ]);
+  const limitBytes = WORKSPACE_STORAGE_BYTES;
+  const usedBytes = usage.truncated ? Math.max(usage.bytes, limitBytes) : usage.bytes;
+  return {
+    usedBytes,
+    limitBytes,
+    fileCount: usage.count,
+    autoCleanup: (workspace?.auto_cleanup_storage ?? 1) === 1,
+    isFull: usedBytes >= limitBytes,
+  };
+}
+
+async function removeStoredMedia(workspaceId: string, mediaId: string): Promise<number | null> {
+  const row = await convexMutation<{ id: string; kind: string; name: string; size_bytes: number } | null>(
+    api.media.removeForStorageCleanup,
+    { workspace_id: workspaceId, id: mediaId },
+  );
+  if (!row) return null;
+  if (r2Enabled()) {
+    await deleteR2Object(mediaObjectKey(workspaceId, row.id, row.kind, path.extname(row.name).toLowerCase())).catch((error) => {
+      console.warn("[media] failed to delete storage-cleanup R2 object", error);
+    });
+  }
+  const file = path.join(MEDIA_DIR, mediaId);
+  if (existsSync(file)) unlinkSync(file);
+  return Math.max(0, row.size_bytes);
+}
+
+/** Permanently removes media when it is not used by a post, draft, source, or thumbnail. */
+export async function deleteMediaForStorageCleanup(workspaceId: string, mediaId: string): Promise<boolean> {
+  return (await removeStoredMedia(workspaceId, mediaId)) !== null;
+}
+
+async function ensureWorkspaceStorageCapacity(workspaceId: string, incomingBytes: number) {
+  let status = await getWorkspaceStorageStatus(workspaceId);
+  if (status.usedBytes + incomingBytes <= status.limitBytes) return;
+  if (!status.autoCleanup) throw new StorageLimitError();
+
+  const candidates = await convexQuery<MediaRow[]>(api.media.oldestForStorageCleanup, {
+    workspace_id: workspaceId,
+    limit: 500,
+    stale_pending_before: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+  });
+  let usedBytes = status.usedBytes;
+  for (const candidate of candidates) {
+    const freedBytes = await removeStoredMedia(workspaceId, candidate.id);
+    if (freedBytes !== null) usedBytes -= freedBytes;
+    if (usedBytes + incomingBytes <= status.limitBytes) return;
+  }
+
+  status = await getWorkspaceStorageStatus(workspaceId);
+  if (status.usedBytes + incomingBytes > status.limitBytes) throw new StorageLimitError();
+}
 
 export function kindFromMime(mime: string): MediaRow["kind"] {
   if (mime.startsWith("video/")) return "video";
@@ -64,19 +152,27 @@ export async function createUploadUrl(
   opts: { mime_type: string; size_bytes: number; name: string },
   origin: string
 ): Promise<UploadTarget> {
+  if (!Number.isFinite(opts.size_bytes) || opts.size_bytes < 0) {
+    throw new Error("Enter a valid file size.");
+  }
   if (opts.size_bytes > MAX_MEDIA_BYTES) {
     throw new Error("File exceeds the 250MB limit.");
   }
+  await ensureWorkspaceStorageCapacity(workspaceId, opts.size_bytes);
   const id = `mid_${randomBytes(12).toString("hex")}`;
-  await convexMutation(api.media.createMedia, {
-    id,
-    workspace_id: workspaceId,
-    name: opts.name,
-    mime_type: opts.mime_type,
-    size_bytes: opts.size_bytes,
-    kind: kindFromMime(opts.mime_type),
-    upload_status: "pending",
-  });
+  try {
+    await convexMutation(api.media.createMedia, {
+      id,
+      workspace_id: workspaceId,
+      name: opts.name,
+      mime_type: opts.mime_type,
+      size_bytes: opts.size_bytes,
+      kind: kindFromMime(opts.mime_type),
+      upload_status: "pending",
+    });
+  } catch (error) {
+    normalizeStorageError(error);
+  }
   const complete_url = `${origin}/api/uploads/${id}?sig=${sign(`complete:${id}`)}`;
   return {
     media_id: id,
@@ -91,9 +187,10 @@ export async function storeUpload(mediaId: string, sig: string, body: Buffer): P
   const row = await convexQuery<MediaRow | null>(api.media.getById, { id: mediaId });
   if (!row) throw new Error("Unknown media id.");
   if (body.byteLength > MAX_MEDIA_BYTES) throw new Error("File exceeds the 250MB limit.");
+  if (body.byteLength !== row.size_bytes) throw new Error("The uploaded file size doesn't match the reserved upload.");
   if (r2Enabled()) {
     const uploadUrl = await createR2UploadUrl({
-      key: mediaObjectKey(row.workspace_id, mediaId),
+      key: mediaObjectKey(row.workspace_id, mediaId, row.kind, path.extname(row.name).toLowerCase()),
       contentType: row.mime_type,
       contentLength: body.byteLength,
     });
@@ -133,7 +230,7 @@ export async function getMediaRedirectUrl(mediaId: string): Promise<{ row: Media
   const row = await convexQuery<MediaRow | null>(api.media.getById, { id: mediaId });
   if (!row) return null;
   if (r2Enabled()) {
-    return { row, url: await createR2DownloadUrl(mediaObjectKey(row.workspace_id, mediaId)) };
+    return { row, url: await createR2DownloadUrl(mediaObjectKey(row.workspace_id, mediaId, row.kind, path.extname(row.name).toLowerCase())) };
   }
   return { row, url: `/api/uploads/${mediaId}?sig=${sign(`read:${mediaId}`)}` };
 }
@@ -151,7 +248,7 @@ export async function readMediaBytes(mediaId: string): Promise<{ row: MediaRow; 
   const row = await convexQuery<MediaRow | null>(api.media.getById, { id: mediaId });
   if (!row) return null;
   if (r2Enabled()) {
-    const url = await createR2DownloadUrl(mediaObjectKey(row.workspace_id, mediaId));
+    const url = await createR2DownloadUrl(mediaObjectKey(row.workspace_id, mediaId, row.kind, path.extname(row.name).toLowerCase()));
     const res = await fetchR2(url);
     if (!res.ok) return null;
     return { row, bytes: Buffer.from(await res.arrayBuffer()) };
@@ -163,15 +260,32 @@ export async function readMediaBytes(mediaId: string): Promise<{ row: MediaRow; 
 
 export async function deleteMedia(workspaceId: string, mediaId: string): Promise<boolean> {
   if (r2Enabled()) {
-    await deleteR2Object(mediaObjectKey(workspaceId, mediaId)).catch((error) => {
-      console.warn("[media] failed to delete R2 object", error);
-    });
+    const row = await convexQuery<MediaRow | null>(api.media.getById, { id: mediaId });
+    if (row) {
+      await deleteR2Object(mediaObjectKey(workspaceId, mediaId, row.kind, path.extname(row.name).toLowerCase())).catch((error) => {
+        console.warn("[media] failed to delete R2 object", error);
+      });
+    }
   }
   const ok = await convexMutation<boolean>(api.media.deleteMedia, {
     workspace_id: workspaceId,
     id: mediaId,
   });
   if (!ok) return false;
+  const file = path.join(MEDIA_DIR, mediaId);
+  if (existsSync(file)) unlinkSync(file);
+  return true;
+}
+
+/** Removes an R2 object only when its media row has become unreferenced. */
+export async function deleteMediaIfUnreferenced(workspaceId: string, mediaId: string): Promise<boolean> {
+  const row = await convexMutation<{ id: string; kind: string; name: string } | null>(api.media.removeIfUnreferenced, { workspace_id: workspaceId, id: mediaId });
+  if (!row) return false;
+  if (r2Enabled()) {
+    await deleteR2Object(mediaObjectKey(workspaceId, row.id, row.kind, path.extname(row.name).toLowerCase())).catch((error) => {
+      console.warn("[media] failed to delete orphaned R2 object", error);
+    });
+  }
   const file = path.join(MEDIA_DIR, mediaId);
   if (existsSync(file)) unlinkSync(file);
   return true;
@@ -198,6 +312,7 @@ export async function markMediaFinished(
     captionBrief?: string;
     captionLength?: "short" | "medium" | "long";
     outputs?: { mediaId: string; platformId: string; aspectRatio: string }[];
+    draftId?: string;
   } = {},
 ): Promise<string> {
   const batchId = `batch_${randomBytes(8).toString("hex")}`;
@@ -213,6 +328,7 @@ export async function markMediaFinished(
     caption_brief: metadata.captionBrief?.trim() || null,
     caption_length: metadata.captionLength ?? null,
     output_metadata: metadata.outputs?.map((output) => ({ media_id: output.mediaId, platform_id: output.platformId, aspect_ratio: output.aspectRatio })) ?? [],
+    draft_id: metadata.draftId ?? null,
   });
   return batchId;
 }
@@ -263,19 +379,24 @@ export async function importFromFile(workspaceId: string, filePath: string, name
 
 export async function saveBufferAsMedia(workspaceId: string, buf: Buffer, name: string, mime: string): Promise<MediaRow> {
   if (buf.byteLength > MAX_MEDIA_BYTES) throw new Error("File exceeds the 250MB limit.");
+  await ensureWorkspaceStorageCapacity(workspaceId, buf.byteLength);
   const id = `mid_${randomBytes(12).toString("hex")}`;
   if (r2Enabled()) {
-    await convexMutation(api.media.createMedia, {
-      id,
-      workspace_id: workspaceId,
-      name,
-      mime_type: mime,
-      size_bytes: buf.byteLength,
-      kind: kindFromMime(mime),
-      upload_status: "pending",
-    });
+    try {
+      await convexMutation(api.media.createMedia, {
+        id,
+        workspace_id: workspaceId,
+        name,
+        mime_type: mime,
+        size_bytes: buf.byteLength,
+        kind: kindFromMime(mime),
+        upload_status: "pending",
+      });
+    } catch (error) {
+      normalizeStorageError(error);
+    }
     const uploadUrl = await createR2UploadUrl({
-      key: mediaObjectKey(workspaceId, id),
+      key: mediaObjectKey(workspaceId, id, kindFromMime(mime), path.extname(name).toLowerCase()),
       contentType: mime,
       contentLength: buf.byteLength,
     });
@@ -294,15 +415,20 @@ export async function saveBufferAsMedia(workspaceId: string, buf: Buffer, name: 
   }
   ensureMediaDir();
   writeFileSync(path.join(MEDIA_DIR, id), buf);
-  return await convexMutation<MediaRow>(api.media.createMedia, {
-    id,
-    workspace_id: workspaceId,
-    name,
-    mime_type: mime,
-    size_bytes: buf.byteLength,
-    kind: kindFromMime(mime),
-    upload_status: "uploaded",
-  });
+  try {
+    return await convexMutation<MediaRow>(api.media.createMedia, {
+      id,
+      workspace_id: workspaceId,
+      name,
+      mime_type: mime,
+      size_bytes: buf.byteLength,
+      kind: kindFromMime(mime),
+      upload_status: "uploaded",
+    });
+  } catch (error) {
+    if (existsSync(path.join(MEDIA_DIR, id))) unlinkSync(path.join(MEDIA_DIR, id));
+    normalizeStorageError(error);
+  }
 }
 
 export const mediaFileUrl = (id: string) => `/api/media-file/${id}`;

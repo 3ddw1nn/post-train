@@ -9,6 +9,7 @@ export type Workspace = {
   owner_id: string;
   name: string;
   randomize_queue_time: number;
+  auto_cleanup_storage?: number;
   webhook_url: string | null;
   webhook_secret: string;
   created_at: string;

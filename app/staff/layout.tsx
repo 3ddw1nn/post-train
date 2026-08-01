@@ -8,6 +8,11 @@ export const metadata = { title: "Staff" };
 
 const NAV = [
   { label: "Users", href: "/staff", icon: "users" },
+  { label: "Analytics", href: "/staff/analytics", icon: "chart" },
+  { label: "Libraries", href: "/staff/libraries", icon: "folder" },
+  { label: "Storage", href: "/staff/storage", icon: "cube" },
+  { label: "Billing", href: "/staff/billing", icon: "card" },
+  { label: "Feedback", href: "/staff/feedback", icon: "comment" },
   { label: "Leads", href: "/staff/leads", icon: "megaphone" },
 ];
 

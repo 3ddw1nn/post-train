@@ -3,6 +3,25 @@ import { queryGeneric as query, mutationGeneric as mutation } from "convex/serve
 import { v } from "convex/values";
 import { byLegacyId, now } from "./model";
 
+const GB = 1024 * 1024 * 1024;
+
+async function workspaceStorageLimit() {
+  // Storage is an entitlement of the workspace itself: plans and staff roles
+  // never raise this cap.
+  return GB;
+}
+
+async function storageBytes(ctx: any, workspaceId: string, excludeId?: string) {
+  const rows = await ctx.db
+    .query("media")
+    .withIndex("by_workspace", (q: any) => q.eq("workspace_id", workspaceId))
+    .take(5001);
+  if (rows.length > 5000) return await workspaceStorageLimit();
+  return rows
+    .filter((row: any) => row.id !== excludeId && row.upload_status !== "failed")
+    .reduce((total: number, row: any) => total + Math.max(0, row.size_bytes), 0);
+}
+
 export const getById = query({
   args: { id: v.string() },
   handler: async (ctx, args) => await byLegacyId(ctx, "media", args.id),
@@ -29,6 +48,51 @@ export const listForWorkspace = query({
   },
 });
 
+// Storage accounting includes pending uploads so concurrent upload requests
+// cannot reserve more than the workspace limit. Failed rows do not consume
+// storage because they never produced a usable object.
+export const storageUsage = query({
+  args: { workspace_id: v.string() },
+  handler: async (ctx, args) => {
+    const rows = await ctx.db
+      .query("media")
+      .withIndex("by_workspace", (q) => q.eq("workspace_id", args.workspace_id))
+      .take(5001);
+    const counted = rows.slice(0, 5000).filter((row) => row.upload_status !== "failed");
+    return {
+      bytes: counted.reduce((total, row) => total + Math.max(0, row.size_bytes), 0),
+      count: counted.length,
+      truncated: rows.length > 5000,
+    };
+  },
+});
+
+export const oldestForStorageCleanup = query({
+  args: { workspace_id: v.string(), limit: v.number(), stale_pending_before: v.string() },
+  handler: async (ctx, args) => {
+    const limit = Math.max(1, Math.min(500, Math.floor(args.limit)));
+    const [uploaded, pending] = await Promise.all([
+      ctx.db
+        .query("media")
+        .withIndex("by_workspace_status", (q) =>
+          q.eq("workspace_id", args.workspace_id).eq("upload_status", "uploaded")
+        )
+        .order("asc")
+        .take(limit),
+      ctx.db
+        .query("media")
+        .withIndex("by_workspace_status", (q) =>
+          q.eq("workspace_id", args.workspace_id).eq("upload_status", "pending")
+        )
+        .order("asc")
+        .take(limit),
+    ]);
+    return [...uploaded, ...pending.filter((row) => row.created_at < args.stale_pending_before)]
+      .sort((a, b) => a.created_at.localeCompare(b.created_at))
+      .slice(0, limit);
+  },
+});
+
 export const createMedia = mutation({
   args: {
     id: v.string(),
@@ -40,6 +104,13 @@ export const createMedia = mutation({
     upload_status: v.string(),
   },
   handler: async (ctx, args) => {
+    const [used, limit] = await Promise.all([
+      storageBytes(ctx, args.workspace_id),
+      workspaceStorageLimit(),
+    ]);
+    if (used + Math.max(0, args.size_bytes) > limit) {
+      throw new Error("STORAGE_LIMIT_REACHED");
+    }
     await ctx.db.insert("media", {
       ...args,
       duration_s: null,
@@ -56,6 +127,13 @@ export const markUploaded = mutation({
   handler: async (ctx, args) => {
     const row = await byLegacyId(ctx, "media", args.id);
     if (!row) return null;
+    const [used, limit] = await Promise.all([
+      storageBytes(ctx, row.workspace_id, row.id),
+      workspaceStorageLimit(),
+    ]);
+    if (used + Math.max(0, args.size_bytes) > limit) {
+      throw new Error("STORAGE_LIMIT_REACHED");
+    }
     await ctx.db.patch(row._id, { upload_status: "uploaded", size_bytes: args.size_bytes });
     return await ctx.db.get(row._id);
   },
@@ -91,6 +169,7 @@ export const markFinished = mutation({
       platform_id: v.string(),
       aspect_ratio: v.string(),
     })),
+    draft_id: v.union(v.string(), v.null()),
   },
   handler: async (ctx, args) => {
     const finished_at = now();
@@ -101,6 +180,7 @@ export const markFinished = mutation({
         await ctx.db.patch(row._id, {
           studio_template: args.template,
           studio_batch_id: args.batch_id,
+          studio_draft_id: args.draft_id,
           studio_finished_at: finished_at,
           studio_campaign_name: args.campaign_name,
           studio_platform_ids: args.platform_ids,
@@ -126,6 +206,7 @@ export const clearFinished = mutation({
     await ctx.db.patch(row._id, {
       studio_template: null,
       studio_batch_id: null,
+      studio_draft_id: null,
       studio_finished_at: null,
       studio_campaign_name: null,
       studio_platform_ids: [],
@@ -164,5 +245,77 @@ export const deleteMedia = mutation({
     for (const link of links) await ctx.db.delete(link._id);
     await ctx.db.delete(row._id);
     return true;
+  },
+});
+
+// Deletes only truly orphaned media after a post or Studio draft is removed.
+// Media still used by another post, Studio draft/job, Library item, or video
+// thumbnail is deliberately preserved.
+export const removeIfUnreferenced = mutation({
+  args: { workspace_id: v.string(), id: v.string() },
+  handler: async (ctx, args) => {
+    const row = await byLegacyId(ctx, "media", args.id);
+    if (!row || row.workspace_id !== args.workspace_id) return null;
+    if (row.studio_finished_at) return null;
+    const postLinks = await ctx.db.query("post_media").withIndex("by_media", (q) => q.eq("media_id", args.id)).collect();
+    if (postLinks.length > 0) return null;
+    const [drafts, jobs, media] = await Promise.all([
+      ctx.db.query("studio_drafts").withIndex("by_workspace", (q) => q.eq("workspace_id", args.workspace_id)).collect(),
+      ctx.db.query("studio_jobs").collect(),
+      ctx.db.query("media").withIndex("by_workspace_status", (q) => q.eq("workspace_id", args.workspace_id).eq("upload_status", "uploaded")).collect(),
+    ]);
+    if (drafts.some((draft) => draft.state.includes(args.id))) return null;
+    if (jobs.some((job) => job.workspace_id === args.workspace_id && (job.output_media_id === args.id || job.output_media_ids?.includes(args.id) || job.params.includes(args.id)))) return null;
+    if (media.some((candidate) => candidate.id !== args.id && candidate.thumbnail_media_id === args.id)) return null;
+    await ctx.db.delete(row._id);
+    return { id: row.id, kind: row.kind, name: row.name };
+  },
+});
+
+// Used by quota cleanup and explicit permanent deletion from the Library.
+// Published/scheduled posts, Studio drafts, source inputs, and thumbnails in
+// use are protected. Completed job output references are derived history, so
+// they are removed or updated alongside the file.
+export const removeForStorageCleanup = mutation({
+  args: { workspace_id: v.string(), id: v.string() },
+  handler: async (ctx, args) => {
+    const row = await byLegacyId(ctx, "media", args.id);
+    if (!row || row.workspace_id !== args.workspace_id) return null;
+
+    const postLinks = await ctx.db
+      .query("post_media")
+      .withIndex("by_media", (q) => q.eq("media_id", args.id))
+      .take(1);
+    if (postLinks.length > 0) return null;
+
+    const [drafts, jobs, media] = await Promise.all([
+      ctx.db.query("studio_drafts").withIndex("by_workspace", (q) => q.eq("workspace_id", args.workspace_id)).take(5000),
+      ctx.db.query("studio_jobs").withIndex("by_workspace", (q) => q.eq("workspace_id", args.workspace_id)).take(5000),
+      ctx.db.query("media").withIndex("by_workspace", (q) => q.eq("workspace_id", args.workspace_id)).take(5000),
+    ]);
+    if (drafts.some((draft) => draft.state.includes(args.id))) return null;
+    if (jobs.some((job) => job.params.includes(args.id))) return null;
+    if (media.some((candidate) => candidate.id !== args.id && candidate.thumbnail_media_id === args.id)) return null;
+
+    for (const job of jobs) {
+      if (job.output_media_id === args.id) {
+        await ctx.db.delete(job._id);
+        continue;
+      }
+      if (!job.output_media_ids) continue;
+      let outputIds: string[] = [];
+      try {
+        outputIds = JSON.parse(job.output_media_ids);
+      } catch {
+        outputIds = [];
+      }
+      if (!outputIds.includes(args.id)) continue;
+      const remaining = outputIds.filter((id) => id !== args.id);
+      if (remaining.length === 0) await ctx.db.delete(job._id);
+      else await ctx.db.patch(job._id, { output_media_ids: JSON.stringify(remaining) });
+    }
+
+    await ctx.db.delete(row._id);
+    return { id: row.id, kind: row.kind, name: row.name, size_bytes: row.size_bytes };
   },
 });

@@ -51,6 +51,8 @@ export type StudioJobRow = {
 };
 
 export type StudioParams = {
+  /** Destination used for a friendly exported-media filename. */
+  output_platform_id?: string;
   media_ids?: string[];
   caption?: string;
   caption_media_id?: string;
@@ -146,6 +148,9 @@ export async function createStudioJob(
   }
 
   const params: StudioParams = { aspect_ratio: "9:16" };
+  if (typeof input.output_platform_id === "string") {
+    params.output_platform_id = input.output_platform_id.slice(0, 64);
+  }
 
   if (template === "grid-2x2" || template === "fade-in") {
     const ids = Array.isArray(input.media_ids) ? input.media_ids.map(String) : [];
@@ -551,7 +556,17 @@ async function checkGeneration(job: StudioJobRow, params: StudioParams): Promise
 }
 
 async function finishJob(job: StudioJobRow, filePath: string): Promise<void> {
-  const name = `${job.template}-${job.created_at.slice(0, 10)}-${job.id.slice(-6)}.mp4`;
+  const params = JSON.parse(job.params) as StudioParams;
+  const platform = (params.output_platform_id || "video")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "") || "video";
+  const timestamp = job.created_at
+    .replace("T", "_")
+    .replace(/[ :]/g, "-")
+    .replace(/\.\d+Z?$/, "")
+    .slice(0, 16);
+  const name = `${platform}_${timestamp}.mp4`;
   const row: MediaRow = await importFromFile(job.workspace_id, filePath, name, "video/mp4");
   const meta = await probe(filePath);
   await patchRecord("media", row.id, {

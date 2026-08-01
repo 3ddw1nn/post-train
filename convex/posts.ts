@@ -187,7 +187,11 @@ export const deletePost = mutation({
   args: { id: v.string() },
   handler: async (ctx, args) => {
     const post = await byLegacyId(ctx, "posts", args.id);
-    if (!post) return false;
+    if (!post) return null;
+    const mediaRows = await ctx.db
+      .query("post_media")
+      .withIndex("by_post", (q) => q.eq("post_id", args.id))
+      .collect();
     for (const table of ["post_destinations", "post_media", "post_results"] as const) {
       const rows = await ctx.db
         .query(table)
@@ -196,6 +200,6 @@ export const deletePost = mutation({
       for (const row of rows) await ctx.db.delete(row._id);
     }
     await ctx.db.delete(post._id);
-    return true;
+    return { workspace_id: post.workspace_id, media_ids: mediaRows.map((row) => row.media_id) };
   },
 });

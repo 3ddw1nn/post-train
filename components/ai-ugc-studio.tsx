@@ -347,7 +347,7 @@ export function AiUgcStudio({
       await fetch(`/api/app/studio/drafts/${id}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "drafting" }),
+        body: JSON.stringify({ status: "drafting", finished_media_ids: outputMediaId ? [outputMediaId] : [] }),
       }).catch(() => {});
       setDrafts((current) => current.map((d) => (d.id === id ? { ...d, status: "drafting" } : d)));
     }
@@ -732,7 +732,7 @@ export function AiUgcStudio({
       const response = await fetch("/api/app/studio/finish", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ media_ids: [outputMediaId], template: "ai-ugc", campaign_name: campaignName, platform_ids: selectedPlatforms, platform_captions: Object.fromEntries(Object.entries(platformCaptions).filter(([id]) => selectedPlatforms.includes(id))) }),
+        body: JSON.stringify({ draft_id: draftIdRef.current, media_ids: [outputMediaId], template: "ai-ugc", campaign_name: campaignName, platform_ids: selectedPlatforms, platform_captions: Object.fromEntries(Object.entries(platformCaptions).filter(([id]) => selectedPlatforms.includes(id))) }),
       });
       const data = await response.json().catch(() => null);
       if (!response.ok) throw new Error(data?.error?.message ?? "Could not finish this video.");

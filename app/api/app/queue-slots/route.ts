@@ -1,7 +1,7 @@
 import { requireUser } from "@/lib/auth";
 import { currentWorkspace } from "@/lib/workspaces";
 import { canManageWorkspace } from "@/lib/permissions";
-import { convexMutation, nextNumberId, patchRecord } from "@/lib/db";
+import { convexMutation, nextNumberId } from "@/lib/db";
 import { api } from "@/convex/_generated/api";
 
 const FORBIDDEN = Response.json(
@@ -38,7 +38,11 @@ export async function PATCH(req: Request) {
   if (!/^[01]{7}$/.test(days)) {
     return Response.json({ error: { message: "Invalid days." } }, { status: 400 });
   }
-  const row = await patchRecord("queue_slots", id, { days });
+  const row = await convexMutation(api.queue.updateSlotDays, {
+    id,
+    days,
+    workspace_id: ws.id,
+  });
   if (!row) {
     return Response.json({ error: { message: "Slot not found." } }, { status: 404 });
   }

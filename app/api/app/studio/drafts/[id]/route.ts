@@ -26,8 +26,11 @@ export async function PATCH(req: Request, ctx: { params: Promise<{ id: string }>
     const { id } = await ctx.params;
     const body = (await req.json().catch(() => ({}))) as Record<string, unknown>;
     const status = body.status === "finished" || body.status === "drafting" ? body.status : null;
+    const finishedMediaIds = Array.isArray(body.finished_media_ids)
+      ? [...new Set(body.finished_media_ids.filter((id): id is string => typeof id === "string"))].slice(0, 12)
+      : undefined;
     if (!status) throw new DomainError(400, "Invalid draft status.");
-    const draft = await setStudioDraftStatus(ws.id, id, status);
+    const draft = await setStudioDraftStatus(ws.id, id, status, finishedMediaIds);
     if (!draft) throw new DomainError(404, "Draft not found.");
     return Response.json(draft);
   } catch (e) {

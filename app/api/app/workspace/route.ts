@@ -1,9 +1,10 @@
 import { requireUser } from "@/lib/auth";
 import { currentWorkspace } from "@/lib/workspaces";
 import { canManageWorkspace } from "@/lib/permissions";
-import { patchRecord } from "@/lib/db";
+import { convexMutation } from "@/lib/db";
+import { api } from "@/convex/_generated/api";
 
-/** PATCH current-workspace settings (randomize queue, webhook URL). */
+/** PATCH current-workspace settings. */
 export async function PATCH(req: Request) {
   const user = await requireUser();
   const ws = await currentWorkspace(user);
@@ -18,6 +19,9 @@ export async function PATCH(req: Request) {
   if ("randomize_queue_time" in body) {
     patch.randomize_queue_time = body.randomize_queue_time ? 1 : 0;
   }
+  if ("auto_cleanup_storage" in body) {
+    patch.auto_cleanup_storage = body.auto_cleanup_storage ? 1 : 0;
+  }
   if ("webhook_url" in body) {
     const url = String(body.webhook_url ?? "").trim();
     if (url && !/^https?:\/\/.+/.test(url)) {
@@ -25,6 +29,6 @@ export async function PATCH(req: Request) {
     }
     patch.webhook_url = url || null;
   }
-  if (Object.keys(patch).length) await patchRecord("workspaces", ws.id, patch);
+  if (Object.keys(patch).length) await convexMutation(api.workspaces.patchWorkspace, { id: ws.id, patch });
   return Response.json({ ok: true });
 }

@@ -28,14 +28,14 @@ type PublishOutcome =
 
 type DestinationRow = SocialAccountRow & { dest_id: number; credentials?: string | null };
 
-type PublishMedia = { bytes: Buffer; mime: string; kind: string; studioPlatformId?: string | null };
+type PublishMedia = { id: string; bytes: Buffer; mime: string; kind: string; studioPlatformId?: string | null };
 
 async function loadPostMedia(postId: string): Promise<PublishMedia[]> {
   const mediaIds = await convexQuery<string[]>(api.posts.getMediaIds, { post_id: postId });
   const files = await Promise.all(mediaIds.map((id) => readMediaBytes(id)));
   return files
     .filter((f): f is NonNullable<typeof f> => f !== null)
-    .map((f) => ({ bytes: f.bytes, mime: f.row.mime_type, kind: f.row.kind, studioPlatformId: f.row.studio_platform_id }));
+    .map((f) => ({ id: f.row.id, bytes: f.bytes, mime: f.row.mime_type, kind: f.row.kind, studioPlatformId: f.row.studio_platform_id }));
 }
 
 async function publishToPlatform(
@@ -49,6 +49,12 @@ async function publishToPlatform(
       error_code: "auth_expired",
       error_message: `${platformOf(account.platform)?.name ?? account.platform} access token expired — reconnect this account.`,
     };
+  }
+
+  const configurations = post.platform_configurations ? JSON.parse(post.platform_configurations) as Record<string, Record<string, unknown>> : {};
+  const variantMediaId = configurations[account.platform]?.video_variant_media_id;
+  if (typeof variantMediaId === "string") {
+    media = media.filter((item) => item.id === variantMediaId);
   }
 
   if (account.platform === "bluesky") {

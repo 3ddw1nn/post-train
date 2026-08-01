@@ -4,6 +4,7 @@
 // POST /api/app/studio/jobs and advanced by the server worker; this UI polls
 // the list while any job is still running (same polling idiom as support chat).
 import { useEffect, useRef, useState, type RefObject } from "react";
+import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Icon } from "./icons";
@@ -29,7 +30,7 @@ import {
   type TransitionId,
 } from "@/lib/transitions";
 import { clamp, hexToRgba as fadeHexToRgba } from "@/lib/color";
-import { localDateInputValue, nextMinuteInputValue, isPastSchedule, isPastToday } from "@/lib/format";
+import { localDateInputValue, nextMinuteInputValue, isPastSchedule, isPastToday, scheduleMinDate, scheduleMinTime } from "@/lib/format";
 import { StudioChooseScreen, StudioCtaCard } from "./studio-choose-screen";
 import { useEditGuard } from "./edit-guard";
 import { CaptionCopyButton } from "./caption-copy-button";
@@ -1416,6 +1417,32 @@ function FadeUploadScopeDialog({ platformId, platformCount, onCurrent, onAll, on
   return <div className="fixed inset-0 z-[115] flex items-center justify-center bg-ink/55 p-4" role="dialog" aria-modal="true" aria-labelledby="fade-upload-scope-title"><div className="card w-full max-w-md p-5 shadow-2xl"><h3 id="fade-upload-scope-title" className="text-lg font-bold">Where should this video apply?</h3><p className="mt-1.5 text-sm text-muted">Choose one platform or crop this video consecutively for every selected aspect ratio.</p><div className="mt-5 flex flex-col gap-2"><button type="button" onClick={onCurrent} className="btn-primary justify-start">Only {platformName}</button><button type="button" onClick={onAll} className="btn-subtle justify-start" disabled={platformCount < 2}>All selected platforms{platformCount > 1 ? ` (${platformCount})` : ""}</button><button type="button" onClick={onCancel} className="btn-subtle justify-start">Cancel</button></div></div></div>;
 }
 
+function FadeVideoFormatGuide() {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
+
+  function toggle() {
+    if (!open && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      setPosition({ top: rect.bottom + 8, left: Math.max(8, Math.min(rect.left, window.innerWidth - 380)) });
+    }
+    setOpen((value) => !value);
+  }
+
+  return <>
+    <button ref={triggerRef} type="button" data-edit-guard-exempt onClick={toggle} aria-label="Show recommended video formats" className={`flex h-7 w-7 items-center justify-center rounded-full border transition-colors ${open ? "border-primary bg-primary/15 text-primary" : "border-white/15 text-neutral-400 hover:border-primary/60 hover:text-white"}`}><Icon name="info" size={14} /></button>
+    {open && position && createPortal(
+      <div data-edit-guard-exempt className="fixed inset-0 z-[130]" onClick={() => setOpen(false)}>
+        <div role="dialog" aria-label="Recommended video formats" className="absolute w-[23rem] max-w-[calc(100vw-1rem)] overflow-hidden rounded-xl border border-line bg-white p-2 text-ink shadow-[0_18px_40px_rgba(6,63,59,0.18)]" style={position} onClick={(event) => event.stopPropagation()}>
+          <p className="px-1.5 py-1 text-xs font-bold uppercase tracking-wide text-muted">Recommended video format by placement</p>
+          {VIDEO_PRESETS.map((preset) => <div key={preset.id} className="rounded-lg px-1.5 py-2 hover:bg-page/70"><div className="flex items-start gap-2"><div className="min-w-0 flex-1"><p className="text-sm font-bold">{preset.name}</p><p className="text-xs text-muted">{preset.placement}</p></div><p className="shrink-0 text-right text-sm font-bold">{preset.aspect.name}<span className="block text-xs font-medium text-muted">{preset.aspect.px}</span></p></div><div className="mt-1.5 flex flex-wrap gap-2">{preset.targets.map((target) => <span key={`${preset.id}-${target.platformId}-${target.label}`} title={target.label}><PlatformIcon id={target.platformId} size={17} /></span>)}</div></div>)}
+        </div>
+      </div>, document.body
+    )}
+  </>;
+}
+
 /** A tab per rendered platform, showing that platform's own output — reused
  *  on Captions, Review & Summary, and inside the Build-step preview modal. */
 function FadePlatformPreview({ platformOutputMediaIds, activePlatform, onSelectPlatform }: { platformOutputMediaIds: Record<string, string>; activePlatform: string | null; onSelectPlatform: (platformId: string) => void }) {
@@ -1681,6 +1708,7 @@ function FadeStudioWorkflow({
   audioClips, setAudioClips, selectedAudioClipId, setSelectedAudioClipId, audioUploading, onAudioUpload, onAudioLibrary,
   caption, setCaption, uploading, uploadStage, onUpload, onLibrary, onCrop, fileInput, onFile, error, setError, rendering, outputMediaId, initialDraft, initialDraftId, initialDraftStatus,
   platformOutputMediaIds, platformRenderStatuses, renderSignatures, rendersAreCurrent, dirtyRenderPlatforms, renderElapsedSeconds, renderStatusLabel, startRender,
+  cancelling, cancelRender,
   renderScopeOpen, setRenderScopeOpen, previewOpen, setPreviewOpen,
   captionLayers, setCaptionLayers, selectedCaptionId, setSelectedCaptionId,
 }: {
@@ -1694,11 +1722,13 @@ function FadeStudioWorkflow({
   error: string; setError?: (value: string) => void; rendering: boolean; outputMediaId: string | null; initialDraft?: FadeDraftSnapshot; initialDraftId?: string; initialDraftStatus?: string;
   captionLayers: FadeTextLayer[]; setCaptionLayers: (value: FadeTextLayer[] | ((current: FadeTextLayer[]) => FadeTextLayer[])) => void; selectedCaptionId: string | null; setSelectedCaptionId: (id: string | null) => void;
   platformOutputMediaIds: Record<string, string>; platformRenderStatuses: Record<string, FadeJobStatus>; renderSignatures: Record<string, string>; rendersAreCurrent: boolean; dirtyRenderPlatforms: string[]; renderElapsedSeconds: number; renderStatusLabel: (status: FadeJobStatus | undefined) => string; startRender: (targets: string[]) => void;
+  cancelling: boolean; cancelRender: () => void;
   renderScopeOpen: boolean; setRenderScopeOpen: (value: boolean) => void; previewOpen: boolean; setPreviewOpen: (value: boolean) => void;
 }) {
   const [step, setStep] = useState(() => Math.max(0, Math.min(2, initialDraft?.step ?? 0)));
   const [previewPlatform, setPreviewPlatform] = useState<string | null>(null);
   const [finishing, setFinishing] = useState(false);
+  const [publishing, setPublishing] = useState(false);
   // Seeded true when opened from the choose screen's "Finished" section, so
   // the button reads "Finished" immediately rather than needing a fresh
   // Finish click just because the page reloaded.
@@ -1731,6 +1761,7 @@ function FadeStudioWorkflow({
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
+          draft_id: draftId.current,
           media_ids: mediaIds,
           template: "fade-in",
           campaign_name: campaignName,
@@ -1764,8 +1795,12 @@ function FadeStudioWorkflow({
   async function publish() {
     // Re-save here as well: it backfills destination metadata for a draft
     // finished before this hand-off existed, then opens Create Post only when
-    // every rendered variant can be identified safely.
-    if (!(await finish())) return;
+    // every rendered variant can be identified safely. Stays "publishing"
+    // (never reset on success) so the button keeps spinning right up to the
+    // moment the browser navigates away, instead of flashing back to idle
+    // while finish()'s network calls settle and the hard navigation kicks in.
+    setPublishing(true);
+    if (!(await finish())) { setPublishing(false); return; }
     const mediaIds = [...new Set(Object.values(platformOutputMediaIds).concat(outputMediaId ?? "").filter(Boolean))];
     window.location.assign(`/dashboard/create/video?${new URLSearchParams({ media: mediaIds.join(","), date: publishDate, time: publishTime })}`);
   }
@@ -1775,7 +1810,10 @@ function FadeStudioWorkflow({
       await fetch(`/api/app/studio/drafts/${draftId.current}`, {
         method: "PATCH",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ status: "drafting" }),
+        body: JSON.stringify({
+          status: "drafting",
+          finished_media_ids: [...new Set(Object.values(platformOutputMediaIds).concat(outputMediaId ?? "").filter(Boolean))],
+        }),
       }).catch(() => {});
     }
   }
@@ -2287,10 +2325,7 @@ function FadeStudioWorkflow({
     const captionRows = fadeCaptionRows(captionLayers);
     const captionRowCount = captionRows.length + captionExtraRows + (captionRowDropTarget !== null ? 1 : 0);
     const compactTimelineRuler = timelineZoom <= 0.5;
-    const fixedLaneControlWidth = Math.max(
-      160,
-      Math.min(Math.max(160, timelineCanvasWidth - 8), Math.max(160, timelineViewportWidth - FADE_TIMELINE_GUTTER_WIDTH - 10)),
-    );
+    const fixedLaneControlWidth = Math.max(160, timelineViewportWidth - FADE_TIMELINE_GUTTER_WIDTH - 10);
     const patchCaption = (patch: Partial<FadeTextLayer>) => {
       if (!selectedCaptionLayer) return;
       const id = selectedCaptionLayer.id;
@@ -3009,10 +3044,10 @@ function FadeStudioWorkflow({
       <div className="mt-2 flex flex-wrap items-end justify-between gap-3"><div><h1 className="flex items-center gap-2 text-2xl font-bold"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white"><Icon name="video" size={18} /></span>Video Editor Studio</h1><p className="mt-1 text-sm text-muted">Edit your sequence, then tailor it for every selected destination.</p></div><div className="flex items-center gap-3">{draftLocked && <span className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-deep"><Icon name="check" size={13} /> Finished</span>}{draftStatus !== "idle" && <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted">{draftStatus === "saving" ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary/25 border-t-primary" /> : <Icon name="check" size={13} className="text-primary" />}{draftStatus === "saving" ? "Saving draft…" : "Saved as draft"}</span>}</div></div>
       <div className="card mt-5 px-6 py-5" data-edit-guard-exempt><div className="flex items-center">{FADE_WORKFLOW_STEPS.map((label, index) => <div key={label} className="flex flex-1 items-center last:flex-none"><button type="button" onClick={() => goTo(index)} className="flex min-h-11 min-w-11 flex-col items-center gap-2 rounded-lg px-1"><span className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-black ${index === 0 ? "border-primary bg-primary-soft text-primary-deep ring-4 ring-primary-soft/70" : "border-line bg-white text-muted"}`}>{index + 1}</span><span className={`text-xs font-black uppercase tracking-[0.12em] ${index === 0 ? "text-primary-deep" : "text-muted"}`}>{label}</span></button>{index < 2 && <span className="mx-4 mb-8 h-0.5 flex-1 bg-line sm:mx-8" />}</div>)}</div></div>
       <section className="mt-4 rounded-2xl border border-line bg-white shadow-[0_16px_42px_rgba(18,34,43,0.08)]">
-        <div className="grid gap-4 border-b border-line px-5 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end"><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Campaign name</span><input className="input mt-2" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Name this video" /></label><div><div className="flex flex-wrap gap-2"><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Publish date</span><input type="date" min={earliestPublishDate} className="input mt-2" value={publishDate} onChange={(event) => updatePublishDate(event.target.value)} /></label><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Time</span><input type="time" min={publishDate === earliestPublishDate ? earliestPublishTime : undefined} className="input mt-2" value={publishTime} onChange={(event) => updatePublishTime(event.target.value)} /></label></div>{publishScheduleIsPastToday ? <p className="mt-2 flex items-center justify-end gap-1.5 text-xs font-semibold text-amber-700" role="alert"><Icon name="warningTriangle" size={14} />This time has already passed today. Your post will go live immediately.</p> : publishScheduleIsPast && <p className="mt-2 flex items-center justify-end gap-1.5 text-xs font-semibold text-red-700" role="alert"><Icon name="warningTriangle" size={14} />Can't schedule posts in the past.</p>}</div></div>
+        <div className="grid gap-4 border-b border-line px-5 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end"><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Campaign name</span><input className="input mt-2" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Name this video" /></label><div><div className="flex flex-wrap gap-2"><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Publish date</span><input type="date" min={scheduleMinDate(publishDate, earliestPublishDate)} className="input mt-2" value={publishDate} onChange={(event) => updatePublishDate(event.target.value)} /></label><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Time</span><input type="time" min={scheduleMinTime(publishDate, publishTime, earliestPublishDate, earliestPublishTime)} className="input mt-2" value={publishTime} onChange={(event) => updatePublishTime(event.target.value)} /></label></div>{publishScheduleIsPastToday ? <p className="mt-2 flex items-center justify-end gap-1.5 text-xs font-semibold text-amber-700" role="alert"><Icon name="warningTriangle" size={14} />This time has already passed today. Your post will go live immediately.</p> : publishScheduleIsPast && <p className="mt-2 flex items-center justify-end gap-1.5 text-xs font-semibold text-red-700" role="alert"><Icon name="warningTriangle" size={14} />Can't schedule posts in the past.</p>}</div></div>
         <div className="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Post to</span>{accounts.map((account) => <button key={account.id} type="button" aria-pressed={selectedAccountIds.has(account.id)} onClick={() => setSelectedAccountIds((current) => { const next = new Set(current); next.has(account.id) ? next.delete(account.id) : next.add(account.id); return next; })} className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-xs font-bold transition-colors ${selectedAccountIds.has(account.id) ? "border-primary bg-primary-soft text-primary-deep" : "border-line text-muted hover:border-primary/50"}`}><AccountAvatar username={account.username} platformId={account.platform} avatarUrl={account.avatar_url} selected={selectedAccountIds.has(account.id)} size={25} /><span className="max-w-24 truncate">{account.username}</span></button>)}</div>
         {segments.length === 0 && !hasAddedClip.current ? <div className="flex min-h-80 flex-col items-center justify-center p-8 text-center"><span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-soft text-primary-deep"><Icon name="video" size={27} /></span><h2 className="mt-4 text-xl font-bold">Start your edit</h2><p className="mt-1 max-w-md text-sm text-muted">Add a video, then use the timeline to split clips and control transitions.</p><div className="mt-5 flex gap-2"><button type="button" onClick={onUpload} className="btn-primary"><Icon name="upload" size={15} /> Upload video</button><button type="button" onClick={onLibrary} className="btn-subtle">Library</button></div>{uploading && <p className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-primary-deep"><span className="h-4 w-4 animate-spin rounded-full border-2 border-primary/25 border-t-primary" />{uploadStage}</p>}</div> : <div className="bg-[#080808] text-white">
-          {selectedPlatforms.length > 0 && <div className="flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#101010] px-4 py-3"><span className="mr-1 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">Preview format</span>{selectedPlatforms.map((platformId) => { const format = fadeFormatFor(platformId, platformFormatIds); return <div key={platformId} className={`flex items-center rounded-lg border text-xs font-semibold ${currentPlatform === platformId ? "border-primary bg-primary/15 text-white" : "border-white/10 bg-white/5 text-neutral-400"}`}><button type="button" onClick={() => setActivePlatform(platformId)} className="flex items-center gap-1.5 self-stretch px-3 py-2"><PlatformIcon id={platformId} size={14} darkSurface />{platformOf(platformId)?.name ?? platformId}</button><Select value={format.id} ariaLabel={`${platformOf(platformId)?.name ?? platformId} aspect ratio`} onChange={(value) => { setPlatformFormatIds((current) => ({ ...current, [platformId]: value })); setActivePlatform(platformId); }} options={fadeFormatOptions(platformId).map((option) => ({ value: option.id, label: option.aspect.name }))} tone="dark" width={148} align="right" className="min-h-9 w-[76px] rounded-l-none border-y-0 border-r-0 border-l border-white/10 bg-transparent px-2 py-1.5 text-xs hover:bg-white/10" /></div>; })}</div>}
+          {selectedPlatforms.length > 0 && <div className="flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#101010] px-4 py-3"><span className="mr-1 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">Preview format</span><FadeVideoFormatGuide />{selectedPlatforms.map((platformId) => { const format = fadeFormatFor(platformId, platformFormatIds); return <div key={platformId} className={`flex items-center rounded-lg border text-xs font-semibold ${currentPlatform === platformId ? "border-primary bg-primary/15 text-white" : "border-white/10 bg-white/5 text-neutral-400"}`}><button type="button" onClick={() => setActivePlatform(platformId)} className="flex items-center gap-1.5 self-stretch px-3 py-2"><PlatformIcon id={platformId} size={14} darkSurface />{platformOf(platformId)?.name ?? platformId}</button><Select value={format.id} ariaLabel={`${platformOf(platformId)?.name ?? platformId} aspect ratio`} onChange={(value) => { setPlatformFormatIds((current) => ({ ...current, [platformId]: value })); setActivePlatform(platformId); }} options={fadeFormatOptions(platformId).map((option) => ({ value: option.id, label: option.aspect.name }))} tone="dark" width={148} align="right" className="min-h-9 w-[76px] rounded-l-none border-y-0 border-r-0 border-l border-white/10 bg-transparent px-2 py-1.5 text-xs hover:bg-white/10" /></div>; })}</div>}
           <div className="relative flex min-h-[410px] items-center justify-center border-b border-white/10 bg-black px-4 py-5 sm:min-h-[500px]">
             <button type="button" onClick={onCrop} className="absolute right-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-2 text-xs font-semibold text-white backdrop-blur hover:bg-white/15"><Icon name="expand" size={14} /> Recrop</button>
             <div ref={captionFrameRef} className="relative max-h-[450px] max-w-full overflow-hidden rounded-lg bg-neutral-950 [container-type:inline-size]" style={{ aspectRatio: `${currentAspect.width}/${currentAspect.height}`, width: `${Math.min(760, 450 * currentAspect.width / currentAspect.height)}px` }}>
@@ -3828,14 +3863,14 @@ function FadeStudioWorkflow({
             />
           ))}
         </div>}
-        {rendering && <div className="flex flex-wrap items-center gap-2 border-t border-line px-5 py-3 text-xs font-semibold text-muted"><span className="flex items-center gap-2"><span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary" />Rendering</span>{Object.keys(platformRenderStatuses).map((platformId) => <span key={platformId} className="inline-flex items-center gap-1 rounded-full border border-line bg-page px-2 py-1"><PlatformIcon id={platformId} size={12} />{platformOf(platformId)?.name ?? platformId} · {renderStatusLabel(platformRenderStatuses[platformId])}</span>)}<span className="tabular-nums">{renderElapsedSeconds}s elapsed</span><span className="hidden xl:inline">You can leave while this runs.</span></div>}
+        {rendering && <div className="flex flex-wrap items-center gap-2 border-t border-line px-5 py-3 text-xs font-semibold text-muted"><span className="flex items-center gap-2"><span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary" />Rendering</span>{Object.keys(platformRenderStatuses).map((platformId) => <span key={platformId} className="inline-flex items-center gap-1 rounded-full border border-line bg-page px-2 py-1"><PlatformIcon id={platformId} size={12} />{platformOf(platformId)?.name ?? platformId} · {renderStatusLabel(platformRenderStatuses[platformId])}</span>)}<span className="tabular-nums">{renderElapsedSeconds}s elapsed</span><span className="hidden xl:inline">You can leave while this runs.</span><button type="button" onClick={() => void cancelRender()} disabled={cancelling} className="ml-auto flex items-center gap-1.5 rounded-lg border border-line px-2.5 py-1.5 font-semibold text-muted transition-colors hover:border-danger/40 hover:text-danger disabled:opacity-50">{cancelling ? <span className="h-3 w-3 shrink-0 animate-spin rounded-full border-2 border-danger/25 border-t-danger" /> : <Icon name="x" size={13} />}{cancelling ? "Cancelling…" : "Cancel"}</button></div>}
         {!buildReady || !hasRenderedOutput ? <p className="px-5 py-3 text-sm font-semibold text-muted">{buildHint}</p> : null}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-4">
-          <button type="button" onClick={() => history.back()} className="btn-subtle"><Icon name="chevronLeft" size={15} /> Back</button>
+          <button type="button" data-edit-guard-exempt onClick={() => history.back()} className="btn-subtle"><Icon name="chevronLeft" size={15} /> Back</button>
           <div className="flex items-center gap-2">
             {segments.length > 0 && selectedPlatforms.length > 0 && <button type="button" onClick={() => setRenderScopeOpen(true)} disabled={rendering} className="btn-subtle disabled:opacity-50"><Icon name="sparkles" size={15} /> {rendersAreCurrent ? "Re-render" : "Render"}</button>}
             {Object.keys(platformOutputMediaIds).length > 0 && <button type="button" data-edit-guard-exempt onClick={() => setPreviewOpen(true)} className="btn-subtle"><Icon name="play" size={15} /> Preview</button>}
-            <button type="button" onClick={() => setStep(1)} disabled={!buildReady || !hasRenderedOutput || uploading} title={buildHint || undefined} className="btn-primary disabled:opacity-50">Continue to captions <Icon name="chevronRight" size={15} /></button>
+            <button type="button" data-edit-guard-exempt onClick={() => setStep(1)} disabled={!buildReady || !hasRenderedOutput || uploading} title={buildHint || undefined} className="btn-primary disabled:opacity-50">Continue to captions <Icon name="chevronRight" size={15} /></button>
           </div>
         </div>
         <input ref={fileInput} type="file" accept="video/*" className="hidden" onChange={(event) => { if (event.target.files?.[0]) onFile(event.target.files[0]); event.target.value = ""; }} />
@@ -4013,7 +4048,7 @@ function FadeStudioWorkflow({
         );
       })()}
       {error && <p className="mt-5 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm font-semibold text-danger">{error}</p>}
-      <div className="mt-8 flex items-center justify-between border-t border-line pt-5" data-edit-guard-exempt><button type="button" onClick={() => setStep((current) => current - 1)} className="btn-subtle"><Icon name="chevronLeft" size={15} /> Back</button>{step === 1 ? <button type="button" onClick={() => setStep(2)} className="btn-primary">Review <Icon name="chevronRight" size={15} /></button> : <div className="flex items-center gap-2">{!!outputMediaId && finishedMediaId === outputMediaId ? <button type="button" disabled className="btn-subtle text-primary-deep"><Icon name="check" size={15} /> Finished</button> : <button type="button" onClick={() => void finish()} disabled={!outputMediaId || finishing || (publishScheduleIsPast && !publishScheduleIsPastToday)} title={publishScheduleIsPast && !publishScheduleIsPastToday ? "Update the date and time on the Build step before finishing." : undefined} className="btn-primary disabled:opacity-50">{finishing ? "Finishing…" : publishScheduleIsPast && !publishScheduleIsPastToday ? <><Icon name="warningTriangle" size={15} /> Update schedule</> : "Finish"}</button>}{!!outputMediaId && finishedMediaId === outputMediaId && <button type="button" onClick={() => void publish()} disabled={finishing} className="btn-primary disabled:opacity-50">{finishing ? "Preparing…" : <>Publish <Icon name="sparkles" size={15} /></>}</button>}</div>}</div>
+      <div className="mt-8 flex items-center justify-between border-t border-line pt-5" data-edit-guard-exempt><button type="button" onClick={() => setStep((current) => current - 1)} className="btn-subtle"><Icon name="chevronLeft" size={15} /> Back</button>{step === 1 ? <button type="button" onClick={() => setStep(2)} className="btn-primary">Review <Icon name="chevronRight" size={15} /></button> : <div className="flex items-center gap-2">{!!outputMediaId && finishedMediaId === outputMediaId ? <button type="button" disabled className="btn-subtle text-primary-deep"><Icon name="check" size={15} /> Finished</button> : <button type="button" onClick={() => void finish()} disabled={!outputMediaId || finishing || (publishScheduleIsPast && !publishScheduleIsPastToday)} title={publishScheduleIsPast && !publishScheduleIsPastToday ? "Update the date and time on the Build step before finishing." : undefined} className="btn-primary disabled:opacity-50">{finishing ? "Finishing…" : publishScheduleIsPast && !publishScheduleIsPastToday ? <><Icon name="warningTriangle" size={15} /> Update schedule</> : "Finish"}</button>}{!!outputMediaId && finishedMediaId === outputMediaId && <button type="button" onClick={() => void publish()} disabled={finishing || publishing} className="btn-primary disabled:opacity-50">{finishing || publishing ? <><span className="h-4 w-4 shrink-0 animate-spin rounded-full border-2 border-white/30 border-t-white" />{finishing ? "Preparing…" : "Opening…"}</> : <>Publish <Icon name="sparkles" size={15} /></>}</button>}</div>}</div>
       <input ref={fileInput} type="file" accept="video/*" className="hidden" onChange={(event) => { if (event.target.files?.[0]) onFile(event.target.files[0]); event.target.value = ""; }} />
     </div>
   </div>;
@@ -4078,6 +4113,7 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
   const [pendingRenderSignatures, setPendingRenderSignatures] = useState<Record<string, string>>({});
   const [renderStartedAt, setRenderStartedAt] = useState<number | null>(null);
   const [renderElapsedSeconds, setRenderElapsedSeconds] = useState(0);
+  const [cancelling, setCancelling] = useState(false);
   const [renderScopeOpen, setRenderScopeOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [pollNonce, setPollNonce] = useState(0);
@@ -4321,6 +4357,7 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             template: "fade-in",
+            output_platform_id: platformId,
             media_ids: segments.map((segment) => segment.media.id),
             fade_segments: segments.map((segment) => ({ media_id: segment.media.id, start_s: segment.start, end_s: segment.end ?? undefined, gap_before_s: segment.gapBefore ?? 0, volume: segment.volume, crop: segment.crops[platformId] ?? segment.crops.default ?? { x: 0.5, y: 0.5 } })),
             video_preset_id: format.presetId,
@@ -4346,6 +4383,25 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
       setRenderStartedAt(null);
       setPlatformRenderStatuses((current) => Object.fromEntries(Object.keys(current).map((platformId) => [platformId, "failed" as FadeJobStatus])));
       setError(cause instanceof Error ? cause.message : "Couldn’t start the render.");
+    }
+  }
+  /** Cancels every in-flight job for this render and discards them (rather
+   *  than leaving failed/orphaned jobs in the render history), then resets
+   *  the editor back to its pre-render state. */
+  async function cancelRender() {
+    if (!rendering || cancelling) return;
+    setCancelling(true);
+    try {
+      await Promise.all(Object.values(jobIds).map((id) => fetch(`/api/app/studio/jobs/${id}`, { method: "DELETE" }).catch(() => undefined)));
+    } finally {
+      setJobIds({});
+      setJobId(null);
+      setPlatformRenderStatuses({});
+      setPendingRenderSignatures({});
+      setRenderStartedAt(null);
+      setRenderElapsedSeconds(0);
+      setStatus("idle");
+      setCancelling(false);
     }
   }
   useEffect(() => {
@@ -4414,7 +4470,7 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
   const cropFlowFormat = cropFlowKey === "default" ? { aspect: VIDEO_ASPECTS[0] } : fadeFormatFor(cropFlowKey, platformFormatIds);
   const scopeOpen = pendingScopeMedia !== null || cropTargetId !== null;
   return <><FadeStudioWorkflow accounts={accounts} selectedAccountIds={selectedAccountIds} setSelectedAccountIds={setSelectedAccountIds} activePlatform={activePlatform} setActivePlatform={setActivePlatform} platformFormatIds={platformFormatIds} setPlatformFormatIds={setPlatformFormatIds} segments={segments} activeSegment={activeSegment} setActiveSegmentId={setActiveSegmentId} splitAt={splitAt} setSplitAt={setSplitAt} splitActive={splitActive} beginEditorEdit={rememberEditorState} setActiveTrim={(start, end) => { if (!activeSegment) return; setSegments((current) => current.map((segment) => segment.id === activeSegment.id ? { ...segment, start, end } : segment)); }} duplicateActive={duplicateActive} removeActive={() => { if (!activeSegment) return; rememberEditorState(); setSegments((current) => current.filter((segment) => segment.id !== activeSegment.id)); }} setActiveVolume={(volume) => { if (!activeSegment) return; rememberEditorState(); setSegments((current) => current.map((segment) => segment.id === activeSegment.id ? { ...segment, volume, audioRemoved: false } : segment)); }} muteSegmentAudio={(segmentId) => setSegments((current) => current.map((segment) => segment.id === segmentId ? { ...segment, volume: 0, audioRemoved: true } : segment))} pasteSegment={(segment, afterSegmentId) => { if (segments.length >= MAX_FADE_SEGMENTS) return; rememberEditorState(); const pasted = { ...segment, id: crypto.randomUUID(), gapBefore: 0, transitionIn: { type: "cut", duration: transitionDuration } }; setSegments((current) => { const afterIndex = afterSegmentId ? current.findIndex((s) => s.id === afterSegmentId) : -1; const next = [...current]; next.splice(afterIndex >= 0 ? afterIndex + 1 : current.length, 0, pasted); return next; }); setActiveSegmentId(pasted.id); }} undo={undoEdit} redo={redoEdit} canUndo={historyState.canUndo} canRedo={historyState.canRedo} transition={transition} setTransition={(value) => { rememberEditorState(); setTransition(value); }} transitionDuration={transitionDuration} setTransitionDuration={(value) => { rememberEditorState(); setTransitionDuration(value); }} closingSeam={closingSeam} setSegmentSeam={setSegmentSeam} setSegmentGap={setSegmentGap} moveSegment={moveSegment} audioClips={audioClips} setAudioClips={setAudioClips} selectedAudioClipId={selectedAudioClipId} setSelectedAudioClipId={setSelectedAudioClipId} audioUploading={audioUploading} onAudioUpload={() => audioInput.current?.click()} onAudioLibrary={() => setAudioLibraryOpen(true)} caption={caption} setCaption={setCaption} uploading={uploading} uploadStage={uploadStage} onUpload={() => input.current?.click()} onLibrary={() => setLibraryOpen(true)} onCrop={() => activeSegment && setCropTargetId(activeSegment.id)} fileInput={input} onFile={addFile} error={error} rendering={rendering} outputMediaId={outputMediaId} initialDraft={initialDraft} initialDraftId={initialDraftId} initialDraftStatus={initialDraftStatus}
-    platformOutputMediaIds={platformOutputMediaIds} platformRenderStatuses={platformRenderStatuses} renderSignatures={renderSignatures} rendersAreCurrent={rendersAreCurrent} dirtyRenderPlatforms={dirtyRenderPlatforms} renderElapsedSeconds={renderElapsedSeconds} renderStatusLabel={renderStatusLabel} startRender={(targets) => void startRender(targets)}
+    platformOutputMediaIds={platformOutputMediaIds} platformRenderStatuses={platformRenderStatuses} renderSignatures={renderSignatures} rendersAreCurrent={rendersAreCurrent} dirtyRenderPlatforms={dirtyRenderPlatforms} renderElapsedSeconds={renderElapsedSeconds} renderStatusLabel={renderStatusLabel} startRender={(targets) => void startRender(targets)} cancelling={cancelling} cancelRender={() => void cancelRender()}
     renderScopeOpen={renderScopeOpen} setRenderScopeOpen={setRenderScopeOpen} previewOpen={previewOpen} setPreviewOpen={setPreviewOpen}
     captionLayers={captionLayers} setCaptionLayers={setCaptionLayers} selectedCaptionId={selectedCaptionId} setSelectedCaptionId={setSelectedCaptionId} />{libraryOpen && <MediaLibraryModal kind="video" onClose={() => setLibraryOpen(false)} onPick={(media) => { setLibraryOpen(false); setPendingScopeMedia(media); }} />}{audioLibraryOpen && <MediaLibraryModal kind="audio" onClose={() => setAudioLibraryOpen(false)} onPick={(media) => { rememberEditorState(); const timelineDuration = fadeTimelineDuration(segments); const sourceEnd = timelineDuration || 30; const id = crypto.randomUUID(); setAudioClips((current) => [...current, { id, kind: "soundtrack", mediaId: media.id, name: media.name, sourceStart: 0, sourceEnd, start: 0, end: sourceEnd, volume: 1, row: fadeFirstAvailableAudioRow(current, 0, sourceEnd) }]); setSelectedAudioClipId(id); setAudioLibraryOpen(false); }} />}<input ref={audioInput} type="file" accept="audio/*" className="hidden" onChange={(event) => { if (event.target.files?.[0]) void addAudioFile(event.target.files[0]); event.target.value = ""; }} />{scopeOpen && <FadeUploadScopeDialog platformId={currentPlatform} platformCount={selectedPlatforms.length} onCurrent={() => beginCropFlow(false)} onAll={() => beginCropFlow(true)} onCancel={() => { setPendingScopeMedia(null); setCropTargetId(null); }} />}{cropFlow && <FadeCropModal segment={cropFlow.segment} targetAspect={cropFlowFormat.aspect} initial={cropFlow.segment.crops[cropFlowKey] ?? { x: 0.5, y: 0.5 }} progressLabel={cropFlow.keys.length > 1 ? `Crop ${cropFlow.current + 1} of ${cropFlow.keys.length} · ${platformOf(cropFlowKey)?.name ?? cropFlowKey}` : undefined} actionLabel={cropFlow.current < cropFlow.keys.length - 1 ? "Next crop" : "Save"} onClose={() => setCropFlow(null)} onSave={(crop) => { const updated = { ...cropFlow.segment, crops: { ...cropFlow.segment.crops, [cropFlowKey]: crop } }; if (cropFlow.current < cropFlow.keys.length - 1) { setCropFlow({ ...cropFlow, segment: updated, current: cropFlow.current + 1 }); } else { rememberEditorState(); setSegments((current) => current.some((segment) => segment.id === updated.id) ? current.map((segment) => segment.id === updated.id ? updated : segment) : [...current, updated]); setActiveSegmentId(updated.id); setCropFlow(null); } }} />}</>;
 
@@ -4563,8 +4619,9 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
         const response = await fetch("/api/app/studio/finish", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            media_ids: mediaIds,
+        body: JSON.stringify({
+          draft_id: draft.id,
+          media_ids: mediaIds,
             template: "fade-in",
             campaign_name: state.campaignName ?? draft.title,
             platform_ids: platformIds,

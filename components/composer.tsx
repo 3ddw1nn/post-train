@@ -4,6 +4,7 @@
 // (click / drag / paste / Import), an AI caption brief, platform captions,
 // Media Preview rail, Schedule card, and Update/Duplicate/Delete in edit mode.
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Icon } from "./icons";
 import { AccountAvatar, PlatformIcon } from "./platform-icon";
@@ -12,8 +13,10 @@ import { ActionButton } from "./interactive";
 import { platform as platformOf, FOUR_IMAGE_PLATFORMS, CAPTION_MAX, CAPTION_MAX_BY_PLATFORM, type PostType } from "@/lib/platforms";
 import { MediaLibraryModal, MediaThumb, uploadOneFile, type ComposerMedia } from "./media";
 import { checkAiTone, type AiToneResult } from "@/lib/ai-tone";
-import { localDateInputValue, nextMinuteInputValue, isPastSchedule, isPastToday } from "@/lib/format";
+import { localDateInputValue, nextMinuteInputValue, isPastSchedule, isPastToday, scheduleMinDate, scheduleMinTime } from "@/lib/format";
 import { CaptionCopyButton } from "./caption-copy-button";
+import { CreatePostVideoVariant, VideoLibraryDestinationDialog } from "./create-post-video-variant";
+import { VIDEO_PRESETS } from "@/lib/video-render-settings";
 
 export type { ComposerMedia };
 
@@ -124,6 +127,7 @@ export function Composer({
   const [media, setMedia] = useState<ComposerMedia[]>(initialMedia);
   const [uploading, setUploading] = useState(0);
   const [previewIdx, setPreviewIdx] = useState(0);
+  const [videoVariants, setVideoVariants] = useState<ComposerStudioRender[]>([]);
   const [configs, setConfigs] = useState<Record<string, Record<string, unknown>>>(() =>
     post?.platform_configurations
       ?? Object.fromEntries(Object.entries(initialPlatformCaptions ?? {}).map(([platformId, platformCaption]) => [platformId, { caption: platformCaption }]))
@@ -157,12 +161,25 @@ export function Composer({
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [libraryOpen, setLibraryOpen] = useState(false);
+  const [libraryDestinationOpen, setLibraryDestinationOpen] = useState(false);
+  const [libraryDestination, setLibraryDestination] = useState<{ id: number; platform: string } | null>(null);
   const [pendingRemoveId, setPendingRemoveId] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const studioRenders = useMemo(
-    () => (initialStudioRenders ?? []).filter((render) => media.some((item) => item.id === render.mediaId)),
-    [initialStudioRenders, media]
+    () => [...(initialStudioRenders ?? []), ...videoVariants].filter((render) => media.some((item) => item.id === render.mediaId)),
+    [initialStudioRenders, media, videoVariants]
   );
+  const libraryAspectRatios = useMemo(() => {
+    if (!libraryDestination) return undefined;
+    return [...new Set(VIDEO_PRESETS.filter((preset) => preset.targets.some((target) => target.platformId === libraryDestination.platform)).map((preset) => preset.aspect.id))];
+  }, [libraryDestination]);
+
+  function addOrReplaceVideoVariant(variantMedia: ComposerMedia, platformId: string, aspectRatio: string, accountId: number) {
+    const mediaToRemove = new Set(studioRenders.filter((render) => render.platformId === platformId).map((render) => render.mediaId));
+    setMedia((current) => [...current.filter((item) => !mediaToRemove.has(item.id) && item.id !== variantMedia.id), variantMedia]);
+    setVideoVariants((current) => [...current.filter((render) => render.platformId !== platformId), { mediaId: variantMedia.id, platformId, aspectRatio }]);
+    setSelected((current) => new Set([...current, accountId]));
+  }
 
   const rememberKey = `pt_remember_accounts_${type}`;
   useEffect(() => {
@@ -280,6 +297,11 @@ export function Composer({
     const platformConfigs: Record<string, Record<string, unknown>> = {};
     for (const p of selectedPlatforms) {
       const merged = { ...(configs[p] ?? {}) };
+      const variant = studioRenders.find((render) => render.platformId === p);
+      if (variant) {
+        merged.video_variant_media_id = variant.mediaId;
+        merged.video_variant_aspect_ratio = variant.aspectRatio;
+      }
       const clean = Object.fromEntries(
         Object.entries(merged).filter(([, v]) => v !== "" && v !== undefined && v !== null && v !== false)
       );
@@ -479,7 +501,7 @@ export function Composer({
             {editable && (
               <div
                 className="flex cursor-pointer flex-col items-center gap-1.5 rounded-2xl border-2 border-dashed border-line bg-white p-6 text-center transition-colors hover:border-primary"
-                onClick={() => fileInput.current?.click()}
+                onClick={() => type !== "video" && fileInput.current?.click()}
                 onDragOver={(e) => e.preventDefault()}
                 onDrop={(e) => {
                   e.preventDefault();
@@ -512,23 +534,33 @@ export function Composer({
                   />
                 </p>
                 <div className="mt-2 flex flex-wrap justify-center gap-2">
-                  <button
-                    type="button"
-                    className="btn-primary !py-1.5"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      fileInput.current?.click();
-                    }}
-                  >
-                    <Icon name="upload" size={16} />
-                    Upload {type === "video" ? "video" : "media"}
-                  </button>
+                  {type === "video" ? (
+                    <CreatePostVideoVariant
+                      accounts={eligible}
+                      usedPlatforms={studioRenders.map((render) => render.platformId)}
+                      onComplete={({ media: variantMedia, platformId, aspectRatio, accountId }) => {
+                        addOrReplaceVideoVariant(variantMedia, platformId, aspectRatio, accountId);
+                      }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="btn-primary !py-1.5"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        fileInput.current?.click();
+                      }}
+                    >
+                      <Icon name="upload" size={16} /> Upload media
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="btn-subtle !py-1.5"
                     onClick={(e) => {
                       e.stopPropagation();
-                      setLibraryOpen(true);
+                      if (type === "video") setLibraryDestinationOpen(true);
+                      else setLibraryOpen(true);
                     }}
                   >
                     <Icon name="image" size={16} />
@@ -769,18 +801,17 @@ export function Composer({
                 <input
                   type="date"
                   className="input"
-                  min={earliestDate}
+                  min={scheduleMinDate(date, earliestDate)}
                   value={date}
                   onChange={(e) => updateDate(e.target.value)}
                 />
                 <input
                   type="time"
                   className="input"
-                  min={date === earliestDate ? earliestTime : undefined}
+                  min={scheduleMinTime(date, time, earliestDate, earliestTime)}
                   value={time}
                   onChange={(e) => updateTime(e.target.value)}
                 />
-                <InfoTip text="Times are picked in your local timezone and stored as UTC." />
               </div>
               {scheduleIsPastToday ? (
                 <p className="flex items-center gap-1.5 text-xs font-semibold text-amber-700" role="alert">
@@ -826,6 +857,12 @@ export function Composer({
                 >
                   <Icon name="clock" size={15} /> Add to queue
                 </button>
+                <Link
+                  href="/dashboard/settings/queue"
+                  className="-mt-0.5 text-center text-xs font-semibold text-primary-deep underline-offset-2 hover:underline"
+                >
+                  Manage queue settings
+                </Link>
                 <button
                   className="btn-subtle w-full"
                   disabled={busy || selected.size === 0 || uploading > 0}
@@ -877,10 +914,33 @@ export function Composer({
 
       {libraryOpen && (
         <MediaLibraryModal
-          onClose={() => setLibraryOpen(false)}
-          onPick={(m) => {
-            setMedia((list) => (list.some((x) => x.id === m.id) ? list : [...list, m]));
+          onClose={() => {
             setLibraryOpen(false);
+            setLibraryDestination(null);
+          }}
+          onPick={(m) => {
+            if (type === "video" && libraryDestination && m.studio_aspect_ratio) {
+              addOrReplaceVideoVariant(m, libraryDestination.platform, m.studio_aspect_ratio, libraryDestination.id);
+            } else {
+              setMedia((list) => (list.some((x) => x.id === m.id) ? list : [...list, m]));
+            }
+            setLibraryOpen(false);
+            setLibraryDestination(null);
+          }}
+          kind={type === "video" ? "video" : undefined}
+          allowedAspectRatios={libraryAspectRatios}
+        />
+      )}
+
+      {libraryDestinationOpen && (
+        <VideoLibraryDestinationDialog
+          accounts={eligible}
+          usedPlatforms={studioRenders.map((render) => render.platformId)}
+          onClose={() => setLibraryDestinationOpen(false)}
+          onSelect={(account) => {
+            setLibraryDestination(account);
+            setLibraryDestinationOpen(false);
+            setLibraryOpen(true);
           }}
         />
       )}
