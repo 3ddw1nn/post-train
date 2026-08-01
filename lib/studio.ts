@@ -17,7 +17,7 @@ import {
   concatClips,
   normalizeSlideImage,
   probe,
-  renderFadeSequence,
+  renderSequence,
   renderGrid,
   type GridOptions,
   renderPlaceholder,
@@ -97,8 +97,10 @@ export type StudioParams = {
   // Video Editor Studio's Captions timeline: timed, positioned text overlays,
   // baked into the export (unlike `caption` below, which is post text only).
   // Each is a client-rasterized transparent PNG (same idiom as slides[].caption_media_id
-  // above) plus its placement/timing — see buildFadeFilterGraph's per-caption overlay.
+  // above) plus its placement/timing — see buildFilterGraph's per-caption overlay.
   fade_captions?: { media_id: string; start_s: number; end_s: number; x: number; y: number; width: number }[];
+  // Timed image/GIF/sticker layers positioned above the composed sequence.
+  fade_visual_layers?: { media_id: string; start_s: number; end_s: number; row: number; x: number; y: number; width: number; chroma?: { enabled: boolean; color: string; similarity: number; blend: number } }[];
 };
 
 export const SCRIPT_MAX = 600; // also bounds per-generation provider cost
@@ -275,6 +277,29 @@ export async function createStudioJob(
           x: Number.isFinite(Number(c.x)) ? Math.min(100, Math.max(0, Number(c.x))) : 50,
           y: Number.isFinite(Number(c.y)) ? Math.min(100, Math.max(0, Number(c.y))) : 50,
           width: Number.isFinite(Number(c.width)) ? Math.min(100, Math.max(5, Number(c.width))) : 64,
+        }));
+      }
+      const requestedVisualLayers = Array.isArray(input.fade_visual_layers) ? input.fade_visual_layers : [];
+      if (requestedVisualLayers.length > 0) {
+        const visualIds = requestedVisualLayers.map((layer) => String(layer.media_id));
+        const visualKinds = await uploadedKinds(visualIds);
+        if (visualIds.some((id) => { const kind = visualKinds.get(id); return kind !== "image" && kind !== "video"; })) {
+          throw new DomainError(400, "Every visual layer needs an uploaded image, GIF, or video.");
+        }
+        params.fade_visual_layers = requestedVisualLayers.map((layer) => ({
+          media_id: String(layer.media_id),
+          start_s: Number.isFinite(Number(layer.start_s)) ? Math.max(0, Number(layer.start_s)) : 0,
+          end_s: Number.isFinite(Number(layer.end_s)) ? Math.max(0, Number(layer.end_s)) : 0,
+          row: Number.isFinite(Number(layer.row)) ? Math.max(0, Math.round(Number(layer.row))) : 0,
+          x: Number.isFinite(Number(layer.x)) ? Math.min(100, Math.max(0, Number(layer.x))) : 50,
+          y: Number.isFinite(Number(layer.y)) ? Math.min(100, Math.max(0, Number(layer.y))) : 50,
+          width: Number.isFinite(Number(layer.width)) ? Math.min(100, Math.max(5, Number(layer.width))) : 45,
+          ...(layer.chroma?.enabled ? { chroma: {
+            enabled: true,
+            color: /^#[0-9a-fA-F]{6}$/.test(String(layer.chroma.color)) ? String(layer.chroma.color) : "#00ff00",
+            similarity: Number.isFinite(Number(layer.chroma.similarity)) ? Math.min(1, Math.max(0.01, Number(layer.chroma.similarity))) : 0.3,
+            blend: Number.isFinite(Number(layer.chroma.blend)) ? Math.min(1, Math.max(0, Number(layer.chroma.blend))) : 0.08,
+          } } : {}),
         }));
       }
       // Pure post text — never baked into the video (matches grid-2x2's
@@ -471,7 +496,7 @@ async function renderComposite(job: StudioJobRow, params: StudioParams): Promise
       }
       await renderGrid(inputs as [string, string, string, string], out, opts);
     } else {
-      await renderFadeSequence(inputs, out, {
+      await renderSequence(inputs, out, {
         segments: params.fade_segments,
         transitions: params.fade_transitions,
         transition: params.fade_transition,
@@ -486,6 +511,10 @@ async function renderComposite(job: StudioJobRow, params: StudioParams): Promise
         captions: params.fade_captions ? await Promise.all(params.fade_captions.map(async (c, index) => ({
           path: await fetchMediaTo(dir, c.media_id, `caption-${index}`),
           x: c.x, y: c.y, width: c.width, start: c.start_s, end: c.end_s,
+        }))) : undefined,
+        visualLayers: params.fade_visual_layers ? await Promise.all(params.fade_visual_layers.map(async (layer, index) => ({
+          path: await fetchMediaTo(dir, layer.media_id, `visual-layer-${index}`),
+          row: layer.row, x: layer.x, y: layer.y, width: layer.width, start: layer.start_s, end: layer.end_s, chroma: layer.chroma,
         }))) : undefined,
       });
     }

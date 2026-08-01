@@ -253,35 +253,37 @@ export async function extractFrame(input: string, out: string, atSeconds: number
   await runFfmpeg(["-ss", Math.max(0, atSeconds).toFixed(3), "-i", input, "-frames:v", "1", "-q:v", "3", out], 30_000);
 }
 
-export type FadeSegment = { start_s?: number; end_s?: number; gap_before_s?: number; volume?: number; crop?: { x: number; y: number } };
+export type Segment = { start_s?: number; end_s?: number; gap_before_s?: number; volume?: number; crop?: { x: number; y: number } };
 /**
  * A transition at one seam. `transitions[0]` is the *opening* — the first
  * clip fading in from black instead of from a preceding clip — reusing the
  * same catalog of styles (wipe, circle, slide, ...) as every interior seam.
  * `type: "cut"` (or an absent entry) means no effect there.
  */
-export type FadeTransitionSpec = { type: string; duration: number };
-export type FadeSequenceOptions = {
-  segments?: FadeSegment[];
+export type TransitionSpec = { type: string; duration: number };
+export type SequenceOptions = {
+  segments?: Segment[];
   /** Per-seam transitions; transitions[0] is the opening. Falls back to `transition`/`transitionDuration` for any seam without its own entry. */
-  transitions?: FadeTransitionSpec[];
+  transitions?: TransitionSpec[];
   transition?: string;
   transitionDuration?: number;
   /** The whole sequence fading out to black at the tail. `type: "cut"` (or omitted) means no closing effect. */
-  closing?: FadeTransitionSpec;
+  closing?: TransitionSpec;
   /** Every audio clip mixed into the sequence — the uploaded soundtrack and
    *  any detached-from-video clip audio are the same shape server-side, each
    *  independently trimmed and positioned in the composed OUTPUT timeline. */
-  audioClips?: FadeAudioClip[];
+  audioClips?: AudioClip[];
   width?: number;
   height?: number;
   /** Timed text overlays from the Video Editor's Captions timeline — each a
    *  transparent PNG (rasterized client-side, same reason as the file header
    *  comment) composited with `overlay`, gated to its own [start,end] window
    *  in the SAME composed-timeline seconds as `outputDuration` below. */
-  captions?: FadeCaption[];
+  captions?: Caption[];
+  /** Timed visual overlays. Lower row numbers are visually higher layers. */
+  visualLayers?: VisualLayer[];
 };
-export type FadeAudioClip = {
+export type AudioClip = {
   path: string;
   /** Trim window within the source file. */
   sourceStart: number;
@@ -291,7 +293,7 @@ export type FadeAudioClip = {
   start: number;
   volume: number;
 };
-export type FadeCaption = {
+export type Caption = {
   path: string;
   /** Percent of frame width the PNG should be scaled to before compositing. */
   width: number;
@@ -301,9 +303,19 @@ export type FadeCaption = {
   start: number;
   end: number;
 };
+export type VisualLayer = {
+  path: string;
+  row: number;
+  width: number;
+  x: number;
+  y: number;
+  start: number;
+  end: number;
+  chroma?: { enabled: boolean; color: string; similarity: number; blend: number };
+};
 
 /** A segment with its source window and audio resolved against the real file. */
-export type ResolvedFadeSegment = {
+export type ResolvedSegment = {
   start: number;
   end: number;
   duration: number;
@@ -313,7 +325,7 @@ export type ResolvedFadeSegment = {
   crop: { x: number; y: number };
 };
 
-type ExtraInput = { kind: "file"; path: string } | { kind: "lavfi"; spec: string };
+type ExtraInput = { kind: "file"; path: string; loop?: boolean } | { kind: "lavfi"; spec: string };
 
 /**
  * A solid black clip lasting exactly `seconds`, for fading a real clip to/from
@@ -335,16 +347,16 @@ function blackSourceChain(index: number, width: number, height: number, seconds:
 }
 
 /**
- * Build the filtergraph for a sequence. Split out from `renderFadeSequence` so
+ * Build the filtergraph for a sequence. Split out from `renderSequence` so
  * the per-seam transition wiring can be asserted without spawning ffmpeg —
- * see lib/fade-sequence.test.mjs.
+ * see lib/video-sequence.test.mjs.
  *
  * Clips are folded left to right, one `xfade` per seam, so each seam reads its
  * own transition and duration out of `options.transitions`. The opening and
  * closing (fade to/from black) wrap that fold rather than being part of it,
  * since there's no real clip on the other side.
  */
-export function buildFadeFilterGraph(segments: ResolvedFadeSegment[], options: FadeSequenceOptions = {}) {
+export function buildFilterGraph(segments: ResolvedSegment[], options: SequenceOptions = {}) {
   if (segments.length === 0) throw new Error("Add at least one video segment.");
   const extraInputs: ExtraInput[] = [];
   const chains: string[] = [];
@@ -439,6 +451,23 @@ export function buildFadeFilterGraph(segments: ResolvedFadeSegment[], options: F
     // seam whose whole overlap equals the incoming clip's length.
   }
 
+  // Visual layers sit on top of the fully composed sequence. Render lower
+  // timeline rows first so row 0 remains the topmost visual layer.
+  const orderedVisualLayers = [...(options.visualLayers ?? [])].sort((a, b) => b.row - a.row);
+  for (const [index, layer] of orderedVisualLayers.entries()) {
+    const layerIndex = segments.length + extraInputs.length;
+    // Loop visual inputs so a short GIF (or animated overlay clip) remains
+    // visible for the full timeline window chosen by the user.
+    extraInputs.push({ kind: "file", path: layer.path, loop: true });
+    const layerWidthPx = Math.max(2, Math.round(width * (layer.width / 100)));
+    const key = layer.chroma?.enabled
+      ? `colorkey=${layer.chroma.color.replace("#", "0x")}:${layer.chroma.similarity.toFixed(3)}:${layer.chroma.blend.toFixed(3)},`
+      : "";
+    chains.push(`[${layerIndex}:v]setpts=PTS-STARTPTS+${layer.start.toFixed(3)}/TB,${key}scale=${layerWidthPx}:-1,format=rgba[visual${index}]`);
+    chains.push(`[${video}][visual${index}]overlay=x=W*${(layer.x / 100).toFixed(4)}-w/2:y=H*${(layer.y / 100).toFixed(4)}-h/2:enable='between(t,${layer.start.toFixed(3)},${layer.end.toFixed(3)})':eof_action=pass[vvisual${index}]`);
+    video = `vvisual${index}`;
+  }
+
   // Caption overlays sit on top of the fully composed sequence, so their
   // [start,end] windows are already in the same seconds as outputDuration —
   // no offsetting needed. Position uses overlay's own W/H (base video) and
@@ -482,10 +511,10 @@ export function buildFadeFilterGraph(segments: ResolvedFadeSegment[], options: F
  * their own transition — a hard cut or any xfade in lib/transitions.ts. Audio
  * follows the same edit so the preview and exported video agree.
  */
-export async function renderFadeSequence(inputs: string[], out: string, options: FadeSequenceOptions = {}): Promise<void> {
+export async function renderSequence(inputs: string[], out: string, options: SequenceOptions = {}): Promise<void> {
   if (inputs.length === 0) throw new Error("Add at least one video segment.");
   const metadata = await Promise.all(inputs.map(probe));
-  const segments: ResolvedFadeSegment[] = inputs.map((_, index) => {
+  const segments: ResolvedSegment[] = inputs.map((_, index) => {
     const source = options.segments?.[index] ?? {};
     const duration = metadata[index].duration_s ?? 0;
     const start = Math.max(0, Math.min(duration, Number(source.start_s) || 0));
@@ -498,10 +527,12 @@ export async function renderFadeSequence(inputs: string[], out: string, options:
     const gapBefore = Math.min(60, Math.max(0, Number(source.gap_before_s) || 0));
     return { start, end, duration: end - start, gapBefore, hasAudio: metadata[index].has_audio, volume: Number.isFinite(volume) ? Math.min(2, Math.max(0, volume)) : 1, crop: { x: Number.isFinite(cropX) ? Math.min(1, Math.max(0, cropX)) : 0.5, y: Number.isFinite(cropY) ? Math.min(1, Math.max(0, cropY)) : 0.5 } };
   });
-  const { chains, extraInputs, finalVideo, finalAudio } = buildFadeFilterGraph(segments, options);
+  const { chains, extraInputs, finalVideo, finalAudio } = buildFilterGraph(segments, options);
   await runFfmpeg([
     ...inputs.flatMap((input) => ["-i", input]),
-    ...extraInputs.flatMap((extra) => extra.kind === "file" ? ["-i", extra.path] : ["-f", "lavfi", "-i", extra.spec]),
+    ...extraInputs.flatMap((extra) => extra.kind === "file"
+      ? [...(extra.loop ? ["-stream_loop", "-1"] : []), "-i", extra.path]
+      : ["-f", "lavfi", "-i", extra.spec]),
     "-filter_complex", chains.join(";"),
     "-map", `[${finalVideo}]`, "-map", `[${finalAudio}]`,
     ...ENCODE, out,

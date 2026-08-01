@@ -73,6 +73,7 @@ const PATHS: Record<string, React.ReactNode> = {
   flask: <path d="M10 2v7L4.5 19a2 2 0 0 0 1.8 3h11.4a2 2 0 0 0 1.8-3L14 9V2M8.5 2h7M7 15h10" />,
   chat: <path d="M21 11.5a8.5 8.5 0 0 1-8.5 8.5c-1.5 0-3-.4-4.2-1L3 20l1-5.3A8.5 8.5 0 1 1 21 11.5Z" />,
   lock: <path d="M7 11V7a5 5 0 0 1 10 0v4M5 11h14v10H5V11Z" />,
+  unlock: <path d="M7 11V7a5 5 0 0 1 9.5-2M5 11h14v10H5V11Z" />,
   eye: <path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7ZM12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6Z" />,
   search: <path d="m21 21-4.35-4.35M10.5 18a7.5 7.5 0 1 1 0-15 7.5 7.5 0 0 1 0 15Z" />,
   wrench: (

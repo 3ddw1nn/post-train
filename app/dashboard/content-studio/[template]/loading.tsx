@@ -5,7 +5,7 @@ import { StudioChooserSkeleton, SlideshowStudioSkeleton, ThumbnailStudioSkeleton
 
 // loading.tsx doesn't receive the [template] route param, so the template
 // slug is read off the URL directly (same pattern as posts/calendar's loading).
-// Each real studio (grid-studio.tsx, studio.tsx's FadeInStudio, ai-ugc-studio.tsx)
+// Each real studio (grid-studio.tsx, studio.tsx's VideoEditorStudio, ai-ugc-studio.tsx)
 // starts in its own "choose" mode, sharing one CTA-card + drafts-card shape at
 // a template-specific max width — see StudioChooserSkeleton's own comment.
 // Slideshow and Thumbnail Maker look nothing like that shape, so they keep

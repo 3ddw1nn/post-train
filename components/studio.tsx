@@ -3,7 +3,7 @@
 // Content Studio wizards + job list. Jobs are created via
 // POST /api/app/studio/jobs and advanced by the server worker; this UI polls
 // the list while any job is still running (same polling idiom as support chat).
-import { useEffect, useRef, useState, type RefObject } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
@@ -29,7 +29,7 @@ import {
   type TransitionGroup,
   type TransitionId,
 } from "@/lib/transitions";
-import { clamp, hexToRgba as fadeHexToRgba } from "@/lib/color";
+import { clamp, hexToRgba } from "@/lib/color";
 import { localDateInputValue, nextMinuteInputValue, isPastSchedule, isPastToday, scheduleMinDate, scheduleMinTime } from "@/lib/format";
 import { StudioChooseScreen, StudioCtaCard } from "./studio-choose-screen";
 import { useEditGuard } from "./edit-guard";
@@ -232,9 +232,9 @@ async function captionToPngFile(text: string): Promise<File> {
 // model is duplicated from slideshow-studio.tsx's TextLayer/LayerView/drawLayer
 // rather than shared, since the two features diverge immediately (time range
 // vs. per-slide, one set shared across every platform vs. per-platform
-// overrides) — each Studio stays self-contained, same as FadeCropModal
+// overrides) — each Studio stays self-contained, same as CropModal
 // duplicating ImageCropModal's concept independently.
-const FADE_FONTS = [
+const FONTS = [
   { id: "sans", name: "Sans", stack: "-apple-system, 'Segoe UI', Roboto, sans-serif" },
   { id: "serif", name: "Serif", stack: "Georgia, 'Times New Roman', serif" },
   { id: "mono", name: "Mono", stack: "ui-monospace, Menlo, Consolas, monospace" },
@@ -242,7 +242,7 @@ const FADE_FONTS = [
   { id: "rounded", name: "Rounded", stack: "'Trebuchet MS', 'Segoe UI', sans-serif" },
   { id: "impact", name: "Impact", stack: "Impact, Haettenschweiler, 'Arial Narrow Bold', sans-serif" },
 ] as const;
-const FADE_TEXT_STYLES = [
+const TEXT_STYLES = [
   { id: "shadow", name: "Shadow", className: "text-white [text-shadow:0_0.06em_0_rgba(0,0,0,0.85)]", fill: "#ffffff", effect: "shadow" },
   { id: "light", name: "Light", className: "text-white", fill: "#ffffff", effect: "none" },
   { id: "dark", name: "Dark", className: "text-ink", fill: "#1c1c1e", effect: "none" },
@@ -250,7 +250,7 @@ const FADE_TEXT_STYLES = [
   { id: "pop", name: "Pop", className: "text-[#ffd63b] [text-shadow:0_0.06em_0_rgba(0,0,0,0.9)]", fill: "#ffd63b", effect: "shadow" },
 ] as const;
 
-type FadeTextLayer = {
+type TextLayer = {
   id: string;
   text: string;
   x: number; y: number; width: number; // center position / wrap width, percent of frame
@@ -262,38 +262,38 @@ type FadeTextLayer = {
   bgEnabled: boolean; bgColor: string; bgOpacity: number;
   start: number; end: number; // seconds, same coordinate space as previewTime/timelineDuration
   /** Preferred visual row in the text overlay stack, same idea as
-   *  FadeAudioClip.row — rendering and export ignore this. */
+   *  AudioClip.row — rendering and export ignore this. */
   row?: number;
   /** The overlay PNG last uploaded for this layer, reused across re-renders
-   *  as long as fadeCaptionRenderSignature hasn't changed since. */
+   *  as long as captionRenderSignature hasn't changed since. */
   renderedMediaId?: string;
   renderedSignature?: string;
 };
-function fadeLayerFont(layer: FadeTextLayer) {
-  return FADE_FONTS.find((f) => f.id === layer.font) ?? FADE_FONTS[0];
+function layerFont(layer: TextLayer) {
+  return FONTS.find((f) => f.id === layer.font) ?? FONTS[0];
 }
-function fadeLayerStyle(layer: FadeTextLayer) {
-  return FADE_TEXT_STYLES.find((s) => s.id === layer.style) ?? FADE_TEXT_STYLES[0];
+function layerStyle(layer: TextLayer) {
+  return TEXT_STYLES.find((s) => s.id === layer.style) ?? TEXT_STYLES[0];
 }
 // Video captions read much smaller than slideshow's hero text at the same
 // cqw scale (a slide is one big static hook line; a caption is a subtitle
 // that shouldn't cover the shot) — so these run well below slideshow's own
 // TEXT_SCALE_MIN/MAX/DEFAULT (4/14/8) rather than reusing them.
-const FADE_CAPTION_SCALE_MIN = 1;
-const FADE_CAPTION_SCALE_MAX = 12;
-const FADE_CAPTION_SCALE_DEFAULT = 3;
-const FADE_CAPTION_SIZE_PRESETS = [
+const CAPTION_SCALE_MIN = 1;
+const CAPTION_SCALE_MAX = 12;
+const CAPTION_SCALE_DEFAULT = 3;
+const CAPTION_SIZE_PRESETS = [
   { id: "small", name: "Small", scale: 2 },
   { id: "medium", name: "Medium", scale: 3 },
   { id: "large", name: "Large", scale: 5 },
 ] as const;
-const FADE_CAPTION_COLOR_DEFAULT = "#ffffff";
-function makeFadeTextLayer(overrides: Partial<FadeTextLayer> = {}): FadeTextLayer {
+const CAPTION_COLOR_DEFAULT = "#ffffff";
+function makeTextLayer(overrides: Partial<TextLayer> = {}): TextLayer {
   return {
     id: crypto.randomUUID(),
     text: "",
     x: 50, y: 80, width: 70,
-    scale: FADE_CAPTION_SCALE_DEFAULT, font: "sans", style: "shadow", color: FADE_CAPTION_COLOR_DEFAULT,
+    scale: CAPTION_SCALE_DEFAULT, font: "sans", style: "shadow", color: CAPTION_COLOR_DEFAULT,
     bgEnabled: true, bgColor: "#000000", bgOpacity: 100,
     start: 0, end: 3,
     ...overrides,
@@ -301,23 +301,23 @@ function makeFadeTextLayer(overrides: Partial<FadeTextLayer> = {}): FadeTextLaye
 }
 /** Fields that change what gets drawn onto the overlay PNG — used to decide
  *  whether a cached upload can be reused instead of re-rasterizing/uploading. */
-function fadeCaptionRenderSignature(layer: FadeTextLayer): string {
+function captionRenderSignature(layer: TextLayer): string {
   return JSON.stringify({ text: layer.text, width: layer.width, scale: layer.scale, font: layer.font, style: layer.style, color: layer.color, bgEnabled: layer.bgEnabled, bgColor: layer.bgColor, bgOpacity: layer.bgOpacity });
 }
 // A fixed reference frame width, independent of any platform's actual output
 // resolution — ffmpeg's overlay filter scales the resulting PNG to each
-// platform's real width at render time (see buildFadeFilterGraph), the same
+// platform's real width at render time (see buildFilterGraph), the same
 // way the old single-caption overlay used a fixed 980px reference.
-const FADE_CAPTION_REFERENCE_WIDTH = 1080;
+const CAPTION_REFERENCE_WIDTH = 1080;
 /** Rasterize one caption layer onto a transparent PNG sized to just its own
  *  box (matching drawLayer's DOM-equivalent look in slideshow-studio.tsx) —
  *  x/y placement onto the actual video happens server-side via the overlay
  *  filter's position expression, not here. */
-async function renderFadeCaptionBlob(layer: FadeTextLayer): Promise<Blob> {
-  const w = Math.max(2, Math.round((layer.width / 100) * FADE_CAPTION_REFERENCE_WIDTH));
-  const st = fadeLayerStyle(layer);
-  const font = fadeLayerFont(layer);
-  const fontSize = (layer.scale / 100) * FADE_CAPTION_REFERENCE_WIDTH;
+async function renderCaptionBlob(layer: TextLayer): Promise<Blob> {
+  const w = Math.max(2, Math.round((layer.width / 100) * CAPTION_REFERENCE_WIDTH));
+  const st = layerStyle(layer);
+  const font = layerFont(layer);
+  const fontSize = (layer.scale / 100) * CAPTION_REFERENCE_WIDTH;
   const hPad = fontSize * 0.3;
   const vPad = fontSize * 0.15;
   const innerMax = w - hPad * 2;
@@ -353,7 +353,7 @@ async function renderFadeCaptionBlob(layer: FadeTextLayer): Promise<Blob> {
     let maxLineW = 0;
     for (const ln of lines) maxLineW = Math.max(maxLineW, ctx.measureText(ln).width);
     const boxW = maxLineW + hPad * 2;
-    ctx.fillStyle = fadeHexToRgba(layer.bgColor, layer.bgOpacity ?? 100);
+    ctx.fillStyle = hexToRgba(layer.bgColor, layer.bgOpacity ?? 100);
     ctx.beginPath();
     ctx.roundRect(cx - boxW / 2, 0, boxW, canvas.height, fontSize * 0.15);
     ctx.fill();
@@ -387,7 +387,7 @@ async function renderFadeCaptionBlob(layer: FadeTextLayer): Promise<Blob> {
 // user has detached from its video — both need identical drag/trim/delete/
 // volume mechanics, just live in different timeline rows and carry a
 // different `kind` label for that reason.
-type FadeAudioClip = {
+type AudioClip = {
   id: string;
   kind: "soundtrack" | "detached";
   mediaId: string;
@@ -403,6 +403,35 @@ type FadeAudioClip = {
    *  independent: if that segment is later edited or deleted, this stays. */
   sourceSegmentId?: string;
 };
+
+type VisualLayerKind = "video" | "image" | "gif" | "sticker";
+/** Each kind gets its own independent row lane — a row index only makes
+ *  sense relative to the other layers of the same kind. */
+const VISUAL_KINDS: VisualLayerKind[] = ["video", "image", "gif", "sticker"];
+const VISUAL_KIND_LABELS: Record<VisualLayerKind, string> = { video: "Video", image: "Image", gif: "GIF", sticker: "Sticker" };
+type VisualRowCounts = Record<VisualLayerKind, number>;
+type VisualRowLocks = Record<VisualLayerKind, Record<number, boolean>>;
+const emptyVisualRowCounts = (): VisualRowCounts => ({ video: 0, image: 0, gif: 0, sticker: 0 });
+const emptyVisualRowLocks = (): VisualRowLocks => ({ video: {}, image: {}, gif: {}, sticker: {} });
+type VisualLayer = {
+  id: string;
+  media: ComposerMedia;
+  kind: VisualLayerKind;
+  start: number;
+  end: number;
+  /** Row index within this layer's own kind's lane (see VISUAL_KINDS). */
+  row: number;
+  /** Center position and width, all as percentages of the output frame. */
+  x: number;
+  y: number;
+  width: number;
+  chroma?: {
+    enabled: boolean;
+    color: string;
+    similarity: number;
+    blend: number;
+  };
+};
 /** Reads a local File's duration directly (no network round-trip needed) —
  *  used to seed a freshly-uploaded soundtrack's default trim window. */
 function probeAudioDuration(file: File): Promise<number> {
@@ -413,6 +442,43 @@ function probeAudioDuration(file: File): Promise<number> {
     audio.onerror = () => { resolve(0); URL.revokeObjectURL(audio.src); };
     audio.src = URL.createObjectURL(file);
   });
+}
+
+const BUILT_IN_MEME_SOUNDS = [
+  { id: "air-horn", name: "Air horn", category: "Hype", tags: "celebration loud win" },
+  { id: "fail-buzzer", name: "Fail buzzer", category: "Reaction", tags: "wrong loss error" },
+  { id: "pop", name: "Pop", category: "Transition", tags: "bubble quick reveal" },
+  { id: "rimshot", name: "Rimshot", category: "Comedy", tags: "joke punchline drum" },
+  { id: "dramatic-hit", name: "Dramatic hit", category: "Reaction", tags: "shock reveal impact" },
+  { id: "level-up", name: "Level up", category: "Game", tags: "success achievement power" },
+] as const;
+
+/** Original, procedurally-generated effects keep the built-in picker useful
+ *  before an external licensed sound catalog is connected. */
+function builtInMemeSoundFile(id: string): File {
+  const sampleRate = 44_100;
+  const seconds = id === "air-horn" ? 1.15 : id === "rimshot" ? 0.7 : 0.9;
+  const samples = new Float32Array(Math.floor(sampleRate * seconds));
+  for (let i = 0; i < samples.length; i++) {
+    const t = i / sampleRate;
+    const decay = Math.exp(-t * (id === "air-horn" ? 2.2 : 5.5));
+    const noise = Math.random() * 2 - 1;
+    let value = 0;
+    if (id === "air-horn") value = (Math.sin(2 * Math.PI * 233 * t) + Math.sin(2 * Math.PI * 294 * t) + Math.sin(2 * Math.PI * 349 * t)) * 0.18 * decay;
+    else if (id === "fail-buzzer") value = Math.sign(Math.sin(2 * Math.PI * (150 - t * 55) * t)) * 0.34 * decay;
+    else if (id === "pop") value = Math.sin(2 * Math.PI * (760 - t * 620) * t) * 0.65 * Math.exp(-t * 12);
+    else if (id === "rimshot") value = (noise * Math.exp(-t * 28) + Math.sin(2 * Math.PI * 190 * t) * Math.exp(-t * 10)) * 0.5;
+    else if (id === "dramatic-hit") value = (Math.sin(2 * Math.PI * 72 * t) + noise * 0.18) * 0.55 * Math.exp(-t * 4);
+    else value = (Math.sin(2 * Math.PI * (430 + t * 520) * t) + Math.sin(2 * Math.PI * (645 + t * 780) * t) * 0.35) * 0.4 * decay;
+    samples[i] = clamp(value, -1, 1);
+  }
+  const buffer = new ArrayBuffer(44 + samples.length * 2);
+  const view = new DataView(buffer);
+  const write = (offset: number, text: string) => [...text].forEach((character, index) => view.setUint8(offset + index, character.charCodeAt(0)));
+  write(0, "RIFF"); view.setUint32(4, 36 + samples.length * 2, true); write(8, "WAVE"); write(12, "fmt "); view.setUint32(16, 16, true); view.setUint16(20, 1, true); view.setUint16(22, 1, true); view.setUint32(24, sampleRate, true); view.setUint32(28, sampleRate * 2, true); view.setUint16(32, 2, true); view.setUint16(34, 16, true); write(36, "data"); view.setUint32(40, samples.length * 2, true);
+  samples.forEach((sample, index) => view.setInt16(44 + index * 2, Math.round(sample * 0x7fff), true));
+  const sound = BUILT_IN_MEME_SOUNDS.find((item) => item.id === id);
+  return new File([buffer], `${sound?.name ?? "sound-effect"}.wav`, { type: "audio/wav" });
 }
 
 /* --------------------------------- wizard ---------------------------------- */
@@ -804,21 +870,21 @@ export function StudioWizard({
 
 /* -------------------------- video editor studio -------------------------- */
 
-export type FadeInAccount = { id: number; platform: string; username: string; avatar_url: string | null };
-type FadeJobStatus = "idle" | "queued" | "generating" | "compositing" | "done" | "failed";
-type FadeTransition = TransitionId;
+export type EditorAccount = { id: number; platform: string; username: string; avatar_url: string | null };
+type JobStatus = "idle" | "queued" | "generating" | "compositing" | "done" | "failed";
+type TransitionType = TransitionId;
 
-type FadeSeam = { type: TransitionId; duration: number };
+type Seam = { type: TransitionId; duration: number };
 
 /** Matches the server-side cap in createStudioJob (lib/studio.ts). */
-const MAX_FADE_SEGMENTS = 8;
+const MAX_SEGMENTS = 8;
 
 const UNTITLED_DRAFT_TITLE = "Untitled video";
 /** Drafts saved under the studio's old name still use this as the "no title
  *  yet" sentinel, so keep recognising it when resuming one. */
 const LEGACY_UNTITLED_DRAFT_TITLES = [UNTITLED_DRAFT_TITLE, "Untitled fade-in video"];
 
-type FadeTimelineSegment = {
+type TimelineSegment = {
   id: string;
   media: ComposerMedia;
   start: number;
@@ -832,23 +898,23 @@ type FadeTimelineSegment = {
   crops: Record<string, { x: number; y: number }>;
   /** Transition into this clip: from the previous clip, or — on the first
    *  clip — from black (the "opening"). There's a symmetric `closingSeam` at
-   *  the FadeVideoEditor level for fading the tail out to black, since there's
+   *  the VideoEditor level for fading the tail out to black, since there's
    *  no segment past the last one to hang it on. */
-  transitionIn?: FadeSeam;
+  transitionIn?: Seam;
 };
 
 /** Drafts saved before per-seam transitions carry one whole-sequence setting.
  *  Segment 0 backfills from the old dedicated opening-fade field rather than
  *  the inter-clip fallback — those are semantically different settings. */
-function withSeams(segments: FadeTimelineSegment[], fallback: FadeSeam, openingFallback: FadeSeam): FadeTimelineSegment[] {
+function withSeams(segments: TimelineSegment[], fallback: Seam, openingFallback: Seam): TimelineSegment[] {
   return segments.map((segment, index) => ({ ...segment, transitionIn: segment.transitionIn ?? (index === 0 ? openingFallback : fallback) }));
 }
 
-function segmentSeam(segment: FadeTimelineSegment | undefined): FadeSeam {
+function segmentSeam(segment: TimelineSegment | undefined): Seam {
   return segment?.transitionIn ?? { type: DEFAULT_TRANSITION_ID, duration: DEFAULT_TRANSITION_DURATION };
 }
 
-type FadeDraftSnapshot = Partial<{
+type DraftSnapshot = Partial<{
   step: number;
   campaignName: string;
   publishDate: string;
@@ -856,43 +922,49 @@ type FadeDraftSnapshot = Partial<{
   selectedAccountIds: number[];
   activePlatform: string;
   platformFormatIds: Record<string, string>;
-  segments: FadeTimelineSegment[];
-  transition: FadeTransition;
+  segments: TimelineSegment[];
+  transition: TransitionType;
   transitionDuration: number;
   /** @deprecated superseded by segments[0].transitionIn — kept only so old drafts can be backfilled on resume, see withSeams. */
   fadeInDuration: number;
-  closingSeam: FadeSeam;
+  closingSeam: Seam;
   caption: string;
   platformOutputMediaIds: Record<string, string>;
   renderSignatures: Record<string, string>;
-  captionLayers: FadeTextLayer[];
-  audioClips: FadeAudioClip[];
+  captionLayers: TextLayer[];
+  audioClips: AudioClip[];
+  visualLayers: VisualLayer[];
+  visualRowCounts: VisualRowCounts;
+  visualRowLocks: VisualRowLocks;
   platformCaptions: Record<string, string>;
   captionLength: "short" | "medium" | "long";
 }>;
 
-type FadeEditorSnapshot = {
-  segments: FadeTimelineSegment[];
+type EditorSnapshot = {
+  segments: TimelineSegment[];
   activeSegmentId: string | null;
   splitAt: number;
-  transition: FadeTransition;
+  transition: TransitionType;
   transitionDuration: number;
-  closingSeam: FadeSeam;
-  captionLayers: FadeTextLayer[];
-  audioClips: FadeAudioClip[];
+  closingSeam: Seam;
+  captionLayers: TextLayer[];
+  audioClips: AudioClip[];
+  visualLayers: VisualLayer[];
+  visualRowCounts: VisualRowCounts;
+  visualRowLocks: VisualRowLocks;
 };
 
-type FadeFormatOption = { id: string; label: string; presetId: VideoPresetId; aspect: VideoAspect };
-const FADE_DEFAULT_PRESET: VideoPresetId = "vertical-short";
-function fadeFormatOptions(platformId: string): FadeFormatOption[] {
+type FormatOption = { id: string; label: string; presetId: VideoPresetId; aspect: VideoAspect };
+const DEFAULT_PRESET: VideoPresetId = "vertical-short";
+function formatOptions(platformId: string): FormatOption[] {
   return VIDEO_PRESETS.flatMap((preset) => preset.targets.filter((target) => target.platformId === platformId).map((target) => ({ id: `${preset.id}:${target.label}`, label: target.label, presetId: preset.id, aspect: preset.aspect })));
 }
-function fadeFormatFor(platformId: string, selections: Record<string, string>): FadeFormatOption {
-  const options = fadeFormatOptions(platformId);
-  return options.find((option) => option.id === selections[platformId]) ?? options.find((option) => option.aspect.id === "9:16") ?? options[0] ?? { id: `${platformId}:default`, label: platformOf(platformId)?.name ?? platformId, presetId: FADE_DEFAULT_PRESET, aspect: VIDEO_ASPECTS[0] };
+function formatFor(platformId: string, selections: Record<string, string>): FormatOption {
+  const options = formatOptions(platformId);
+  return options.find((option) => option.id === selections[platformId]) ?? options.find((option) => option.aspect.id === "9:16") ?? options[0] ?? { id: `${platformId}:default`, label: platformOf(platformId)?.name ?? platformId, presetId: DEFAULT_PRESET, aspect: VIDEO_ASPECTS[0] };
 }
 
-function fadeSegmentDuration(segment: FadeTimelineSegment) {
+function computeSegmentDuration(segment: TimelineSegment) {
   return Math.max(0.1, (segment.end ?? segment.duration ?? 0) - segment.start);
 }
 
@@ -900,7 +972,7 @@ function fadeSegmentDuration(segment: FadeTimelineSegment) {
  *  are each visually distinguishable from their neighbors in the same lane.
  *  Audio detached from a clip reuses that clip's color instead of getting
  *  its own — see the `audioClipColor` helper where it's assigned. */
-const FADE_ACCENT_COLORS = [
+const ACCENT_COLORS = [
   { border: "border-sky-400/60", labelBg: "bg-sky-950/80", chipBorder: "border-sky-400/50", chipBg: "bg-sky-500/15" },
   { border: "border-violet-400/60", labelBg: "bg-violet-950/80", chipBorder: "border-violet-400/50", chipBg: "bg-violet-500/15" },
   { border: "border-amber-400/60", labelBg: "bg-amber-950/80", chipBorder: "border-amber-400/50", chipBg: "bg-amber-500/15" },
@@ -910,24 +982,24 @@ const FADE_ACCENT_COLORS = [
   { border: "border-cyan-400/60", labelBg: "bg-cyan-950/80", chipBorder: "border-cyan-400/50", chipBg: "bg-cyan-500/15" },
   { border: "border-lime-400/60", labelBg: "bg-lime-950/80", chipBorder: "border-lime-400/50", chipBg: "bg-lime-500/15" },
 ] as const;
-function fadeAccentColor(index: number) {
-  const n = FADE_ACCENT_COLORS.length;
-  return FADE_ACCENT_COLORS[((index % n) + n) % n];
+function accentColor(index: number) {
+  const n = ACCENT_COLORS.length;
+  return ACCENT_COLORS[((index % n) + n) % n];
 }
 
 /**
  * Overlap contributed by each seam, mirroring the clamp the renderer applies in
- * buildFadeFilterGraph (lib/ffmpeg.ts) so the playhead and the exported video
+ * buildFilterGraph (lib/ffmpeg.ts) so the playhead and the exported video
  * agree on where every clip starts.
  */
-function fadeTransitionOverlaps(segments: FadeTimelineSegment[]) {
+function computeTransitionOverlaps(segments: TimelineSegment[]) {
   const overlaps = segments.map(() => 0);
   if (segments.length < 2) return overlaps;
-  let outputDuration = fadeSegmentDuration(segments[0]);
+  let outputDuration = computeSegmentDuration(segments[0]);
   outputDuration += Math.max(0, segments[0].gapBefore ?? 0);
   for (let index = 1; index < segments.length; index++) {
     const seam = segmentSeam(segments[index]);
-    const duration = fadeSegmentDuration(segments[index]);
+    const duration = computeSegmentDuration(segments[index]);
     const gap = Math.max(0, segments[index].gapBefore ?? 0);
     const overlap = seam.type === "cut" || gap > 0
       ? 0
@@ -938,23 +1010,23 @@ function fadeTransitionOverlaps(segments: FadeTimelineSegment[]) {
   return overlaps;
 }
 
-function fadeSegmentOffsets(segments: FadeTimelineSegment[]) {
-  const overlaps = fadeTransitionOverlaps(segments);
+function computeSegmentOffsets(segments: TimelineSegment[]) {
+  const overlaps = computeTransitionOverlaps(segments);
   const offsets: number[] = [];
   let elapsed = 0;
   for (let index = 0; index < segments.length; index++) {
     elapsed += Math.max(0, segments[index].gapBefore ?? 0);
     if (index > 0) elapsed -= overlaps[index];
     offsets.push(elapsed);
-    elapsed += fadeSegmentDuration(segments[index]);
+    elapsed += computeSegmentDuration(segments[index]);
   }
   return offsets;
 }
 
-function fadeTimelineDuration(segments: FadeTimelineSegment[]) {
+function computeTimelineDuration(segments: TimelineSegment[]) {
   if (segments.length === 0) return 0.1;
-  const offsets = fadeSegmentOffsets(segments);
-  return Math.max(0.1, offsets[offsets.length - 1] + fadeSegmentDuration(segments[segments.length - 1]));
+  const offsets = computeSegmentOffsets(segments);
+  return Math.max(0.1, offsets[offsets.length - 1] + computeSegmentDuration(segments[segments.length - 1]));
 }
 
 /** Magnetic snapping, the way every video editor's timeline does it: while
@@ -962,7 +1034,7 @@ function fadeTimelineDuration(segments: FadeTimelineSegment[]) {
  *  another item's start/end (or the playhead, or 0/duration), snap flush to
  *  it instead of the raw dragged position. Returns the raw value unchanged
  *  when nothing is close enough. */
-function fadeSnap(value: number, candidates: number[], threshold: number): number {
+function snapToTarget(value: number, candidates: number[], threshold: number): number {
   let best = value;
   let bestDist = threshold;
   for (const candidate of candidates) {
@@ -979,11 +1051,11 @@ function fadeSnap(value: number, candidates: number[], threshold: number): numbe
  *  text overlay boundaries, the playhead, and the timeline's own start/end —
  *  minus whichever item is currently being dragged (it shouldn't snap to
  *  itself). */
-function fadeSnapTargets(params: {
-  segments: FadeTimelineSegment[];
+function computeSnapTargets(params: {
+  segments: TimelineSegment[];
   segmentOffsets: number[];
-  audioClips: FadeAudioClip[];
-  captionLayers: FadeTextLayer[];
+  audioClips: AudioClip[];
+  captionLayers: TextLayer[];
   previewTime: number;
   timelineDuration: number;
   excludeSegmentId?: string;
@@ -994,7 +1066,7 @@ function fadeSnapTargets(params: {
   params.segments.forEach((segment, index) => {
     if (segment.id === params.excludeSegmentId) return;
     const start = params.segmentOffsets[index];
-    times.push(start, start + fadeSegmentDuration(segment));
+    times.push(start, start + computeSegmentDuration(segment));
   });
   params.audioClips.forEach((clip) => {
     if (clip.id === params.excludeAudioId) return;
@@ -1007,12 +1079,12 @@ function fadeSnapTargets(params: {
   return times;
 }
 
-function locateFadeTimelinePosition(segments: FadeTimelineSegment[], position: number) {
-  const offsets = fadeSegmentOffsets(segments);
+function locateTimelinePosition(segments: TimelineSegment[], position: number) {
+  const offsets = computeSegmentOffsets(segments);
   for (let index = 0; index < segments.length; index++) {
     const segment = segments[index];
     const offset = offsets[index];
-    const duration = fadeSegmentDuration(segment);
+    const duration = computeSegmentDuration(segment);
     if (position >= offset && position < offset + duration) {
       return {
         segment,
@@ -1025,14 +1097,14 @@ function locateFadeTimelinePosition(segments: FadeTimelineSegment[], position: n
   return null;
 }
 
-function formatFadeTime(seconds: number, tenths = false) {
+function formatTime(seconds: number, tenths = false) {
   const safe = Math.max(0, Number.isFinite(seconds) ? seconds : 0);
   const minutes = Math.floor(safe / 60);
   const remaining = safe - minutes * 60;
   return `${minutes}:${tenths ? remaining.toFixed(1).padStart(4, "0") : Math.floor(remaining).toString().padStart(2, "0")}`;
 }
 
-function fadeTimelineTicks(duration: number) {
+function timelineTicks(duration: number) {
   const interval = duration <= 30 ? 5 : duration <= 120 ? 10 : duration <= 300 ? 30 : 60;
   const ticks = Array.from({ length: Math.floor(duration / interval) + 1 }, (_, index) => index * interval);
   if (ticks[ticks.length - 1] !== duration) ticks.push(duration);
@@ -1046,7 +1118,7 @@ function fadeTimelineTicks(duration: number) {
  *  item to a specific row, or reserved an empty one via "Add Row" — falling
  *  back to the first free row when that preference would overlap. Shared by
  *  the Captions lane and every audio lane (Original/Detached/Soundtrack). */
-function fadeRowPack<T extends { start: number; end: number; row?: number }>(items: T[]): T[][] {
+function packRows<T extends { start: number; end: number; row?: number }>(items: T[]): T[][] {
   const rows: T[][] = [];
   const overlaps = (row: T[], item: T) =>
     row.some((other) => item.start < other.end && item.end > other.start);
@@ -1062,23 +1134,34 @@ function fadeRowPack<T extends { start: number; end: number; row?: number }>(ite
   }
   return rows;
 }
-function fadeCaptionRows(layers: FadeTextLayer[]): FadeTextLayer[][] {
-  return fadeRowPack(layers);
+function packCaptionRows(layers: TextLayer[]): TextLayer[][] {
+  return packRows(layers);
 }
 
-const FADE_AUDIO_ROW_HEIGHT = 40;
-const FADE_CAPTION_ROW_HEIGHT = 40;
+const AUDIO_ROW_HEIGHT = 40;
+const CAPTION_ROW_HEIGHT = 40;
+const VISUAL_ROW_HEIGHT = 44;
 
-function fadeAudioRows(clips: FadeAudioClip[]): FadeAudioClip[][] {
-  return fadeRowPack(clips);
+function packVisualRows(layers: VisualLayer[], kind: VisualLayerKind, minimumRows: number): VisualLayer[][] {
+  const rows: VisualLayer[][] = Array.from({ length: minimumRows }, () => []);
+  for (const layer of layers) {
+    if (layer.kind !== kind) continue;
+    while (rows.length <= layer.row) rows.push([]);
+    rows[layer.row].push(layer);
+  }
+  return rows;
 }
 
-function fadeFirstAvailableAudioRow(
-  clips: FadeAudioClip[],
+function packAudioRows(clips: AudioClip[]): AudioClip[][] {
+  return packRows(clips);
+}
+
+function firstAvailableAudioRow(
+  clips: AudioClip[],
   start: number,
   end: number,
 ) {
-  const rows = fadeAudioRows(clips);
+  const rows = packAudioRows(clips);
   const rowIndex = rows.findIndex((row) =>
     row.every((clip) => end <= clip.start || start >= clip.end),
   );
@@ -1088,7 +1171,7 @@ function fadeFirstAvailableAudioRow(
  *  copied item's own row) if the paste's time range fits there, otherwise
  *  the first free row *below* it — never above, so "paste over yourself"
  *  reliably reads as "new row directly under the original." */
-function fadeFirstAvailableRowFrom<T extends { start: number; end: number }>(
+function firstAvailableRowFrom<T extends { start: number; end: number }>(
   rows: T[][],
   start: number,
   end: number,
@@ -1102,13 +1185,13 @@ function fadeFirstAvailableRowFrom<T extends { start: number; end: number }>(
   return rows.length;
 }
 
-const FADE_FALLBACK_WAVEFORM = Array.from({ length: 160 }, (_, index) => {
+const FALLBACK_WAVEFORM = Array.from({ length: 160 }, (_, index) => {
   const envelope = 0.18 + 0.82 * Math.pow(Math.sin((index / 159) * Math.PI), 0.65);
   const detail = 0.12 + ((index * 37 + index * index * 11) % 88) / 100;
   return Math.min(1, envelope * detail);
 });
 
-function useFadeWaveforms(mediaIds: string[]) {
+function useWaveforms(mediaIds: string[]) {
   const [waveforms, setWaveforms] = useState<Record<string, number[]>>({});
   // Populated from the same decodeAudioData pass as the peaks — the soundtrack's
   // default trim window needs to know its own file's length, and this is
@@ -1150,7 +1233,7 @@ function useFadeWaveforms(mediaIds: string[]) {
           const ceiling = Math.max(0.01, ...peaks);
           if (!cancelled) setWaveforms((current) => ({ ...current, [id]: peaks.map((peak) => Math.min(1, peak / ceiling)) }));
         } catch {
-          if (!cancelled) setWaveforms((current) => ({ ...current, [id]: FADE_FALLBACK_WAVEFORM }));
+          if (!cancelled) setWaveforms((current) => ({ ...current, [id]: FALLBACK_WAVEFORM }));
         }
       }
       await context.close().catch(() => undefined);
@@ -1164,8 +1247,8 @@ function useFadeWaveforms(mediaIds: string[]) {
   return { waveforms, durations };
 }
 
-function FadeWaveform({ peaks, startRatio = 0, endRatio = 1, className = "", fill = "currentColor" }: { peaks?: number[]; startRatio?: number; endRatio?: number; className?: string; fill?: string }) {
-  const source = peaks?.length ? peaks : FADE_FALLBACK_WAVEFORM;
+function Waveform({ peaks, startRatio = 0, endRatio = 1, className = "", fill = "currentColor" }: { peaks?: number[]; startRatio?: number; endRatio?: number; className?: string; fill?: string }) {
+  const source = peaks?.length ? peaks : FALLBACK_WAVEFORM;
   const start = Math.max(0, Math.min(source.length - 1, Math.floor(source.length * startRatio)));
   const end = Math.max(start + 2, Math.min(source.length, Math.ceil(source.length * endRatio)));
   const visible = source.slice(start, end);
@@ -1177,7 +1260,7 @@ function FadeWaveform({ peaks, startRatio = 0, endRatio = 1, className = "", fil
   return <svg viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true" className={className}><path d={`M${top} L${bottom} Z`} fill={fill} /></svg>;
 }
 
-const FADE_WORKFLOW_STEPS = ["Build", "Captions", "Review & Summary"] as const;
+const WORKFLOW_STEPS = ["Build", "Captions", "Review & Summary"] as const;
 
 /** Custom drag types, so the timeline can tell our two drag gestures apart. */
 const TRANSITION_DND_TYPE = "application/x-transition";
@@ -1199,7 +1282,6 @@ const TIMELINE_ZOOM_STEP = 0.25;
 const TIMELINE_MIN_WIDTH_PX = 240;
 // Width of the sticky row-type gutter (w-7) — sticky-left content inside the
 // canvas has to clear it, or it renders hidden behind the gutter once scrolled.
-const FADE_TIMELINE_GUTTER_WIDTH = 28;
 const clampTimelineZoom = (value: number) => Math.min(TIMELINE_ZOOM_MAX, Math.max(TIMELINE_ZOOM_MIN, value));
 const filmstripCache = new Map<string, number>();
 const filmstripUrl = (mediaId: string) => `/api/app/media/${mediaId}/filmstrip`;
@@ -1216,7 +1298,7 @@ const filmstripUrl = (mediaId: string) => `/api/app/media/${mediaId}/filmstrip`;
  * (with crossOrigin set — presigned URLs send no CORS headers) or taints the
  * canvas so toDataURL throws (without it).
  */
-function useFadeFilmstrips(mediaIds: string[]) {
+function useFilmstrips(mediaIds: string[]) {
   const [strips, setStrips] = useState<Record<string, number>>(() => Object.fromEntries(filmstripCache));
   const requested = useRef(new Set<string>());
   const mediaKey = [...new Set(mediaIds)].sort().join("|");
@@ -1264,10 +1346,10 @@ function filmstripTileStyle(mediaId: string, index: number, frames: number): Rea
 // seeding by string gives a stable, different photo per seed. Used only for
 // the transition library's decorative previews, so if it's unreachable the
 // onError handler below swaps in the bundled local placeholder instead.
-function fadeTransitionPhotoUrl(seed: string) {
+function transitionPhotoUrl(seed: string) {
   return `https://picsum.photos/seed/${encodeURIComponent(seed)}/200/100`;
 }
-function fadeTransitionPhotoFallback(event: React.SyntheticEvent<HTMLImageElement>) {
+function transitionPhotoFallback(event: React.SyntheticEvent<HTMLImageElement>) {
   event.currentTarget.onerror = null;
   event.currentTarget.src = "/stock-photo.webp";
 }
@@ -1278,8 +1360,8 @@ function TransitionSwatch({ id, progress }: { id: TransitionId; progress: number
   const outgoingZ = preview.swapLayers ? 2 : 1;
   return <span aria-hidden="true" className="relative block h-11 w-full overflow-hidden rounded bg-neutral-900">
     {preview.backdrop && <span className="absolute inset-0" style={{ background: preview.backdrop }} />}
-    <span className="absolute inset-0 overflow-hidden" style={{ ...preview.outgoing, zIndex: outgoingZ }}><img src={fadeTransitionPhotoUrl(`${id}-a`)} onError={fadeTransitionPhotoFallback} alt="" loading="lazy" className="h-full w-full object-cover" /></span>
-    <span className="absolute inset-0 overflow-hidden" style={{ ...preview.incoming, zIndex: 3 - outgoingZ }}><img src={fadeTransitionPhotoUrl(`${id}-b`)} onError={fadeTransitionPhotoFallback} alt="" loading="lazy" className="h-full w-full object-cover" /></span>
+    <span className="absolute inset-0 overflow-hidden" style={{ ...preview.outgoing, zIndex: outgoingZ }}><img src={transitionPhotoUrl(`${id}-a`)} onError={transitionPhotoFallback} alt="" loading="lazy" className="h-full w-full object-cover" /></span>
+    <span className="absolute inset-0 overflow-hidden" style={{ ...preview.incoming, zIndex: 3 - outgoingZ }}><img src={transitionPhotoUrl(`${id}-b`)} onError={transitionPhotoFallback} alt="" loading="lazy" className="h-full w-full object-cover" /></span>
   </span>;
 }
 
@@ -1315,7 +1397,7 @@ function TransitionTile({ id, label, approx, selected, onApply }: { id: Transiti
   </button>;
 }
 
-function FadeTransitionLibrary({ selectedId, onApply }: { selectedId: TransitionId | null; onApply: (id: TransitionId) => void }) {
+function TransitionLibrary({ selectedId, onApply }: { selectedId: TransitionId | null; onApply: (id: TransitionId) => void }) {
   const [group, setGroup] = useState<TransitionGroup>(() => transitionById(selectedId ?? "")?.group ?? TRANSITION_GROUPS[0]);
   const items = TRANSITIONS.filter((entry) => entry.group === group);
   return <div className="flex flex-col gap-2">
@@ -1337,7 +1419,7 @@ function FadeTransitionLibrary({ selectedId, onApply }: { selectedId: Transition
   </div>;
 }
 
-const FADE_HOTKEYS: { label: string; win: string; mac: string }[] = [
+const HOTKEYS: { label: string; win: string; mac: string }[] = [
   { label: "Undo", win: "Ctrl+Z", mac: "⌘Z" },
   { label: "Redo", win: "Ctrl+Y", mac: "⌘⇧Z" },
   { label: "Play / Pause", win: "Space", mac: "Space" },
@@ -1348,7 +1430,7 @@ const FADE_HOTKEYS: { label: string; win: string; mac: string }[] = [
 /** Hover/focus tooltip listing the editor's keyboard shortcuts, Windows and
  *  Mac variants side by side — CSS-only (group-hover/group-focus-within), no
  *  open state to manage. */
-function FadeHotkeysTooltip() {
+function HotkeysTooltip() {
   return <div className="group relative flex">
     <button
       type="button"
@@ -1363,7 +1445,7 @@ function FadeHotkeysTooltip() {
     >
       <p className="mb-2 text-[10px] font-bold uppercase tracking-[0.14em] text-neutral-500">Keyboard shortcuts</p>
       <dl className="space-y-1.5">
-        {FADE_HOTKEYS.map((item) => (
+        {HOTKEYS.map((item) => (
           <div key={item.label} className="flex items-center justify-between gap-3">
             <dt className="text-xs text-neutral-300">{item.label}</dt>
             <dd className="flex items-center gap-1">
@@ -1380,7 +1462,7 @@ function FadeHotkeysTooltip() {
   </div>;
 }
 
-function FadeCropModal({ segment, targetAspect, initial, progressLabel, actionLabel, onSave, onClose }: { segment: FadeTimelineSegment; targetAspect: VideoAspect; initial: { x: number; y: number }; progressLabel?: string; actionLabel: string; onSave: (crop: { x: number; y: number }) => void; onClose: () => void }) {
+function CropModal({ segment, targetAspect, initial, progressLabel, actionLabel, onSave, onClose }: { segment: TimelineSegment; targetAspect: VideoAspect; initial: { x: number; y: number }; progressLabel?: string; actionLabel: string; onSave: (crop: { x: number; y: number }) => void; onClose: () => void }) {
   const [crop, setCrop] = useState(initial);
   const [videoSize, setVideoSize] = useState<{ width: number; height: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1412,12 +1494,12 @@ function FadeCropModal({ segment, targetAspect, initial, progressLabel, actionLa
   return <div className="fixed inset-0 z-[120] flex items-center justify-center bg-ink/60 p-4" role="dialog" aria-modal="true" aria-labelledby="fade-crop-title" onClick={onClose}><div className="card w-full max-w-3xl p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}><div className="flex items-start justify-between gap-3"><div><h3 id="fade-crop-title" className="text-lg font-bold">Reposition crop</h3><p className="mt-1 text-sm text-muted">{progressLabel ? `${progressLabel} · ` : ""}{canDrag ? "Drag the highlighted crop window to choose what stays visible." : "This video already matches the selected aspect ratio."}</p></div><button type="button" onClick={onClose} aria-label="Close crop dialog" className="btn-subtle !px-3"><Icon name="x" size={16} /></button></div><div className="mt-5 flex justify-center"><div ref={containerRef} className="relative touch-none select-none overflow-hidden rounded-xl bg-ink" style={{ width: frameWidth, height: frameHeight }}><video src={`/api/media-file/${segment.media.id}`} className="pointer-events-none absolute inset-0 h-full w-full" onLoadedMetadata={(event) => setVideoSize({ width: event.currentTarget.videoWidth, height: event.currentTarget.videoHeight })} muted autoPlay loop playsInline />{canDrag && <div className="absolute border-2 border-white" style={{ left: `${cropLeftPercent}%`, top: `${cropTopPercent}%`, width: `${cropWidthPercent}%`, height: `${cropHeightPercent}%`, boxShadow: "0 0 0 9999px rgba(0,0,0,0.62)", cursor: horizontalCrop ? "ew-resize" : "ns-resize" }} onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); dragStart.current = { clientX: event.clientX, clientY: event.clientY, position: horizontalCrop ? crop.x : crop.y }; }} onPointerMove={moveCrop} onPointerUp={(event) => { dragStart.current = null; event.currentTarget.releasePointerCapture(event.pointerId); }} />}</div></div><p className="mt-3 text-center text-xs font-semibold text-muted">{targetAspect.name} · {targetAspect.px} · Position {Math.round(crop.x * 100)}% horizontal, {Math.round(crop.y * 100)}% vertical</p><div className="mt-5 flex justify-end gap-2"><button type="button" onClick={() => setCrop({ x: 0.5, y: 0.5 })} className="btn-subtle"><Icon name="refresh" size={14} /> Center</button><button type="button" onClick={onClose} className="btn-subtle">Cancel</button><button type="button" onClick={() => onSave(crop)} className="btn-primary"><Icon name={actionLabel === "Save" ? "check" : "chevronRight"} size={15} /> {actionLabel}</button></div></div></div>;
 }
 
-function FadeUploadScopeDialog({ platformId, platformCount, onCurrent, onAll, onCancel }: { platformId: string; platformCount: number; onCurrent: () => void; onAll: () => void; onCancel: () => void }) {
+function UploadScopeDialog({ platformId, platformCount, onCurrent, onAll, onCancel }: { platformId: string; platformCount: number; onCurrent: () => void; onAll: () => void; onCancel: () => void }) {
   const platformName = platformId === "default" ? "current format" : platformOf(platformId)?.name ?? platformId;
   return <div className="fixed inset-0 z-[115] flex items-center justify-center bg-ink/55 p-4" role="dialog" aria-modal="true" aria-labelledby="fade-upload-scope-title"><div className="card w-full max-w-md p-5 shadow-2xl"><h3 id="fade-upload-scope-title" className="text-lg font-bold">Where should this video apply?</h3><p className="mt-1.5 text-sm text-muted">Choose one platform or crop this video consecutively for every selected aspect ratio.</p><div className="mt-5 flex flex-col gap-2"><button type="button" onClick={onCurrent} className="btn-primary justify-start">Only {platformName}</button><button type="button" onClick={onAll} className="btn-subtle justify-start" disabled={platformCount < 2}>All selected platforms{platformCount > 1 ? ` (${platformCount})` : ""}</button><button type="button" onClick={onCancel} className="btn-subtle justify-start">Cancel</button></div></div></div>;
 }
 
-function FadeVideoFormatGuide() {
+function VideoFormatGuide() {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const [position, setPosition] = useState<{ top: number; left: number } | null>(null);
@@ -1445,7 +1527,7 @@ function FadeVideoFormatGuide() {
 
 /** A tab per rendered platform, showing that platform's own output — reused
  *  on Captions, Review & Summary, and inside the Build-step preview modal. */
-function FadePlatformPreview({ platformOutputMediaIds, activePlatform, onSelectPlatform }: { platformOutputMediaIds: Record<string, string>; activePlatform: string | null; onSelectPlatform: (platformId: string) => void }) {
+function PlatformPreview({ platformOutputMediaIds, activePlatform, onSelectPlatform }: { platformOutputMediaIds: Record<string, string>; activePlatform: string | null; onSelectPlatform: (platformId: string) => void }) {
   const platformIds = Object.keys(platformOutputMediaIds);
   const active = (activePlatform && platformOutputMediaIds[activePlatform]) ? activePlatform : platformIds[0];
   const mediaId = active ? platformOutputMediaIds[active] : null;
@@ -1457,17 +1539,17 @@ function FadePlatformPreview({ platformOutputMediaIds, activePlatform, onSelectP
 }
 
 /** Full-screen preview of a rendered platform, opened from the "Preview" button. */
-function FadePreviewModal({ platformOutputMediaIds, activePlatform, onSelectPlatform, onClose }: { platformOutputMediaIds: Record<string, string>; activePlatform: string | null; onSelectPlatform: (platformId: string) => void; onClose: () => void }) {
+function PreviewModal({ platformOutputMediaIds, activePlatform, onSelectPlatform, onClose }: { platformOutputMediaIds: Record<string, string>; activePlatform: string | null; onSelectPlatform: (platformId: string) => void; onClose: () => void }) {
   return <div className="fixed inset-0 z-[120] flex items-center justify-center bg-ink/70 p-4" role="dialog" aria-modal="true" aria-labelledby="fade-preview-title" onClick={onClose}>
     <div className="card w-full max-w-lg p-4 shadow-2xl" onClick={(event) => event.stopPropagation()}>
       <div className="flex items-center justify-between gap-3"><h3 id="fade-preview-title" className="text-lg font-bold">Preview</h3><button type="button" onClick={onClose} aria-label="Close preview" className="btn-subtle !px-3"><Icon name="x" size={16} /></button></div>
-      <div className="mt-4"><FadePlatformPreview platformOutputMediaIds={platformOutputMediaIds} activePlatform={activePlatform} onSelectPlatform={onSelectPlatform} /></div>
+      <div className="mt-4"><PlatformPreview platformOutputMediaIds={platformOutputMediaIds} activePlatform={activePlatform} onSelectPlatform={onSelectPlatform} /></div>
     </div>
   </div>;
 }
 
 /** Choose which selected destinations to render (or "Select all"). */
-function FadeRenderScopeDialog({ platforms, defaultChecked, onClose, onRender }: { platforms: string[]; defaultChecked: string[]; onClose: () => void; onRender: (targets: string[]) => void }) {
+function RenderScopeDialog({ platforms, defaultChecked, onClose, onRender }: { platforms: string[]; defaultChecked: string[]; onClose: () => void; onRender: (targets: string[]) => void }) {
   const [checked, setChecked] = useState(() => new Set(defaultChecked.length > 0 ? defaultChecked : platforms));
   const allChecked = platforms.length > 0 && platforms.every((platformId) => checked.has(platformId));
   // defaultChecked only ever pre-checks platforms that still need a render
@@ -1511,15 +1593,15 @@ function FadeRenderScopeDialog({ platforms, defaultChecked, onClose, onRender }:
   </div>;
 }
 
-type FadeAttachedAudioAction = "detach" | "delete" | "split";
+type AttachedAudioAction = "detach" | "delete" | "split";
 
 /** Shown before an edit separates a source clip's embedded audio from video. */
-function FadeDetachAudioDialog({
+function DetachAudioDialog({
   action,
   onClose,
   onConfirm,
 }: {
-  action: FadeAttachedAudioAction;
+  action: AttachedAudioAction;
   onClose: () => void;
   onConfirm: () => void;
 }) {
@@ -1553,10 +1635,67 @@ function FadeDetachAudioDialog({
   </div>;
 }
 
+/** A locked visual must be deliberately unlocked before deletion. Confirming
+ *  this dialog changes only the lock state and keeps the same item selected. */
+function UnlockVisualLayerDialog({
+  layerName,
+  rowNumber,
+  onClose,
+  onConfirm,
+}: {
+  layerName: string;
+  rowNumber: number;
+  onClose: () => void;
+  onConfirm: () => void;
+}) {
+  const dialogRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const handleDialogKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key === "Tab") {
+        const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])") ?? []);
+        if (focusable.length === 0) return;
+        const first = focusable[0];
+        const last = focusable.at(-1) ?? first;
+        if (event.shiftKey && document.activeElement === first) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }
+    };
+    window.addEventListener("keydown", handleDialogKey, true);
+    return () => window.removeEventListener("keydown", handleDialogKey, true);
+  }, [onClose]);
+
+  return <div className="fixed inset-0 z-[125] flex items-center justify-center bg-ink/60 p-4" role="dialog" aria-modal="true" aria-labelledby="fade-unlock-visual-title" aria-describedby="fade-unlock-visual-description" onClick={onClose}>
+    <div ref={dialogRef} className="card w-full max-w-md p-5 shadow-2xl" onClick={(event) => event.stopPropagation()}>
+      <div className="flex items-start gap-3">
+        <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary-soft text-primary-deep"><Icon name="lock" size={17} /></span>
+        <div className="min-w-0">
+          <h3 id="fade-unlock-visual-title" className="text-lg font-bold">Unlock this layer?</h3>
+          <p id="fade-unlock-visual-description" className="mt-1.5 text-sm text-muted"><span className="font-semibold text-ink">{layerName}</span> is on locked Layer {rowNumber}. Unlocking allows every item on this row to be edited. Nothing will be deleted.</p>
+        </div>
+      </div>
+      <div className="mt-5 flex justify-end gap-2">
+        <button type="button" autoFocus onClick={onClose} className="btn-subtle">Cancel</button>
+        <button type="button" onClick={onConfirm} className="btn-primary"><Icon name="unlock" size={14} /> Unlock layer</button>
+      </div>
+    </div>
+  </div>;
+}
+
 /** One draggable/resizable/inline-editable caption box on the live preview —
  *  interaction model duplicated from slideshow-studio.tsx's LayerView (drag to
  *  move, drag the dot to resize, double-click to edit text, × to delete). */
-function FadeCaptionLayerView({ layer, selected, frameRef, onSelect, onChange, onDelete }: { layer: FadeTextLayer; selected: boolean; frameRef: RefObject<HTMLDivElement | null>; onSelect: () => void; onChange: (patch: Partial<FadeTextLayer>) => void; onDelete: () => void }) {
+function CaptionLayerView({ layer, selected, frameRef, onSelect, onChange, onDelete }: { layer: TextLayer; selected: boolean; frameRef: RefObject<HTMLDivElement | null>; onSelect: () => void; onChange: (patch: Partial<TextLayer>) => void; onDelete: () => void }) {
   const [editing, setEditing] = useState(false);
   const editRef = useRef<HTMLDivElement>(null);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -1577,8 +1716,8 @@ function FadeCaptionLayerView({ layer, selected, frameRef, onSelect, onChange, o
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [editing]);
 
-  const st = fadeLayerStyle(layer);
-  const font = fadeLayerFont(layer);
+  const st = layerStyle(layer);
+  const font = layerFont(layer);
   const hasText = layer.text.trim().length > 0;
 
   function onMoveDown(event: React.PointerEvent) {
@@ -1671,7 +1810,7 @@ function FadeCaptionLayerView({ layer, selected, frameRef, onSelect, onChange, o
           fontSize: `${layer.scale}cqw`,
           fontFamily: font.stack,
           color: layer.color || st.fill,
-          ...(layer.bgEnabled ? { backgroundColor: fadeHexToRgba(layer.bgColor, layer.bgOpacity ?? 100) } : {}),
+          ...(layer.bgEnabled ? { backgroundColor: hexToRgba(layer.bgColor, layer.bgOpacity ?? 100) } : {}),
         }}
         className={`inline-block whitespace-pre-wrap break-words rounded px-[0.3em] py-[0.12em] font-black leading-tight outline-none ${st.className} ${hasText || editing ? "" : "italic"} ${editing ? "cursor-text" : "cursor-grab select-none active:cursor-grabbing"}`}
       >
@@ -1702,7 +1841,237 @@ function FadeCaptionLayerView({ layer, selected, frameRef, onSelect, onChange, o
   );
 }
 
-function FadeStudioWorkflow({
+/** Direct-manipulation visual overlay: drag the asset itself to position it,
+ *  then use the lower-right handle to resize while preserving its aspect. */
+function VisualLayerView({ layer, selected, rowLocked, frameRef, onSelect, onBeginEdit, onChange }: {
+  layer: VisualLayer;
+  selected: boolean;
+  rowLocked: boolean;
+  frameRef: RefObject<HTMLDivElement | null>;
+  onSelect: () => void;
+  onBeginEdit: () => void;
+  onChange: (patch: Partial<VisualLayer>) => void;
+}) {
+  const gesture = useRef<{ mode: "move" | "resize"; clientX: number; clientY: number; x: number; y: number; width: number } | null>(null);
+  const locked = rowLocked;
+  function begin(event: React.PointerEvent, mode: "move" | "resize") {
+    event.stopPropagation();
+    onSelect();
+    if (locked) return;
+    onBeginEdit();
+    gesture.current = { mode, clientX: event.clientX, clientY: event.clientY, x: layer.x, y: layer.y, width: layer.width };
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+  function move(event: React.PointerEvent) {
+    const drag = gesture.current;
+    const frame = frameRef.current?.getBoundingClientRect();
+    if (!drag || !frame) return;
+    event.stopPropagation();
+    if (drag.mode === "move") {
+      onChange({
+        x: clamp(drag.x + ((event.clientX - drag.clientX) / frame.width) * 100, 0, 100),
+        y: clamp(drag.y + ((event.clientY - drag.clientY) / frame.height) * 100, 0, 100),
+      });
+    } else {
+      onChange({ width: clamp(drag.width + ((event.clientX - drag.clientX) / frame.width) * 100, 5, 100) });
+    }
+  }
+  function end(event: React.PointerEvent) {
+    gesture.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
+  return <div
+    data-keep-selection
+    role="button"
+    tabIndex={0}
+    aria-label={`${layer.kind} overlay ${layer.media.name}${locked ? ", locked" : ""}`}
+    onPointerDown={(event) => begin(event, "move")}
+    onPointerMove={move}
+    onPointerUp={end}
+    onPointerCancel={end}
+    onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); onSelect(); } }}
+    className={`absolute z-[8] touch-none select-none ${locked ? "cursor-default" : "cursor-move"}`}
+    style={{ left: `${layer.x}%`, top: `${layer.y}%`, width: `${layer.width}%`, transform: "translate(-50%, -50%)" }}
+  >
+    {layer.kind === "video"
+      ? <video src={`/api/media-file/${layer.media.id}`} autoPlay loop muted playsInline draggable={false} className={`block h-auto w-full object-contain ${selected ? "outline outline-2 outline-primary outline-offset-2" : ""}`} />
+      : <>{/* The source file keeps GIFs animated in the live preview. */}{/* eslint-disable-next-line @next/next/no-img-element */}<img src={`/api/media-file/${layer.media.id}`} alt="" draggable={false} className={`block h-auto w-full object-contain ${selected ? "outline outline-2 outline-primary outline-offset-2" : ""}`} /></>}
+    {selected && <>
+      <span className="pointer-events-none absolute -left-1 -top-6 rounded bg-primary px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white shadow">{locked ? "Locked" : layer.kind}</span>
+      {!locked && <span role="slider" tabIndex={0} aria-label="Resize visual layer" aria-valuemin={5} aria-valuemax={100} aria-valuenow={Math.round(layer.width)} onPointerDown={(event) => begin(event, "resize")} onPointerMove={move} onPointerUp={end} onPointerCancel={end} className="absolute -bottom-2 -right-2 h-4 w-4 cursor-nwse-resize rounded-sm border-2 border-white bg-primary shadow" />}
+    </>}
+  </div>;
+}
+
+function MemeSoundLibrary({ busy, onAdd, onPreview }: { busy: boolean; onAdd: (id: string) => void; onPreview: (id: string) => void }) {
+  const [query, setQuery] = useState("");
+  const normalized = query.trim().toLowerCase();
+  const sounds = BUILT_IN_MEME_SOUNDS.filter((sound) => !normalized || `${sound.name} ${sound.category} ${sound.tags}`.toLowerCase().includes(normalized));
+  return <div className="mt-4 border-t border-white/10 pt-4">
+    <div className="flex flex-wrap items-center justify-between gap-2"><div><h4 className="text-xs font-bold text-white">Meme sounds</h4><p className="text-[11px] text-neutral-500">Original built-in effects. A licensed provider can replace or extend this catalog later.</p></div><label className="relative block min-w-52"><span className="sr-only">Search meme sounds</span><Icon name="search" size={13} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-500" /><input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search reactions, game…" className="h-9 w-full rounded-lg border border-white/15 bg-black/30 pl-8 pr-3 text-xs text-white outline-none placeholder:text-neutral-600 focus:border-primary focus:ring-2 focus:ring-primary/25" /></label></div>
+    <div className="mt-3 flex gap-2 overflow-x-auto pb-1">
+      {sounds.map((sound) => <div key={sound.id} className="min-w-40 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2"><span className="block text-xs font-bold text-white">{sound.name}</span><span className="mt-0.5 block text-[10px] text-neutral-500">{sound.category}</span><div className="mt-2 flex gap-1.5"><button type="button" onClick={() => onPreview(sound.id)} className="inline-flex h-7 items-center gap-1 rounded-md border border-white/15 px-2 text-[10px] font-bold text-neutral-300 hover:border-primary hover:text-primary"><Icon name="play" size={10} /> Preview</button><button type="button" disabled={busy} onClick={() => onAdd(sound.id)} className="inline-flex h-7 items-center gap-1 rounded-md bg-primary px-2 text-[10px] font-bold text-white hover:brightness-110 disabled:opacity-40"><Icon name="plus" size={10} /> Add</button></div></div>)}
+      {sounds.length === 0 && <p className="py-3 text-xs text-neutral-500">No built-in sounds match “{query}”.</p>}
+    </div>
+  </div>;
+}
+
+type GiphyPickerType = "gifs" | "stickers";
+type GiphyVisualResult = {
+  id: string;
+  title: string;
+  url: string;
+  preview_url: string;
+  width: number | null;
+  height: number | null;
+  source: "giphy";
+  attribution: "Powered by GIPHY";
+};
+
+function GiphyPicker({ initialType, importingId, onSelect, onClose }: {
+  initialType: GiphyPickerType;
+  importingId: string | null;
+  onSelect: (item: GiphyVisualResult, type: GiphyPickerType) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [type, setType] = useState<GiphyPickerType>(initialType);
+  const [query, setQuery] = useState("");
+  const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [items, setItems] = useState<GiphyVisualResult[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [nextOffset, setNextOffset] = useState(0);
+  const [error, setError] = useState("");
+  const [retryKey, setRetryKey] = useState(0);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const requestKeyRef = useRef("");
+  const loadMoreControllerRef = useRef<AbortController | null>(null);
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => setDebouncedQuery(query.trim()), 350);
+    return () => window.clearTimeout(timer);
+  }, [query]);
+
+  useEffect(() => {
+    searchRef.current?.focus();
+    const handleKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        event.stopPropagation();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = Array.from(dialogRef.current?.querySelectorAll<HTMLElement>("button:not([disabled]), input:not([disabled]), [tabindex]:not([tabindex='-1'])") ?? []);
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable.at(-1) ?? first;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKey, true);
+    return () => window.removeEventListener("keydown", handleKey, true);
+  }, [onClose]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    loadMoreControllerRef.current?.abort();
+    loadMoreControllerRef.current = null;
+    requestKeyRef.current = `${type}:${debouncedQuery}`;
+    setLoading(true);
+    setLoadingMore(false);
+    setError("");
+    const params = new URLSearchParams({ type, limit: "24", offset: "0" });
+    if (debouncedQuery) params.set("q", debouncedQuery);
+    fetch(`/api/app/giphy?${params}`, { signal: controller.signal })
+      .then(async (response) => {
+        const body = await response.json().catch(() => null);
+        if (!response.ok) throw new Error(body?.error?.message ?? "Couldn’t load GIFs.");
+        setItems(body?.data ?? []);
+        setHasMore(!!body?.pagination?.has_more);
+        setNextOffset(Number(body?.pagination?.next_offset) || (body?.data?.length ?? 0));
+      })
+      .catch((cause) => {
+        if (cause instanceof DOMException && cause.name === "AbortError") return;
+        setItems([]);
+        setHasMore(false);
+        setError(cause instanceof Error ? cause.message : "Couldn’t load GIFs.");
+      })
+      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    return () => controller.abort();
+  }, [debouncedQuery, retryKey, type]);
+
+  async function loadMore() {
+    if (loadingMore || !hasMore) return;
+    const requestKey = `${type}:${debouncedQuery}`;
+    const controller = new AbortController();
+    loadMoreControllerRef.current?.abort();
+    loadMoreControllerRef.current = controller;
+    setLoadingMore(true);
+    setError("");
+    const params = new URLSearchParams({ type, limit: "24", offset: String(nextOffset) });
+    if (debouncedQuery) params.set("q", debouncedQuery);
+    try {
+      const response = await fetch(`/api/app/giphy?${params}`, { signal: controller.signal });
+      const body = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(body?.error?.message ?? "Couldn’t load more GIFs.");
+      if (controller.signal.aborted || requestKeyRef.current !== requestKey) return;
+      setItems((current) => [...current, ...(body?.data ?? [])]);
+      setHasMore(!!body?.pagination?.has_more);
+      setNextOffset(Number(body?.pagination?.next_offset) || nextOffset + (body?.data?.length ?? 0));
+    } catch (cause) {
+      if (cause instanceof DOMException && cause.name === "AbortError") return;
+      setError(cause instanceof Error ? cause.message : "Couldn’t load more GIFs.");
+    } finally {
+      if (loadMoreControllerRef.current === controller) {
+        loadMoreControllerRef.current = null;
+        setLoadingMore(false);
+      }
+    }
+  }
+
+  async function select(item: GiphyVisualResult) {
+    if (importingId) return;
+    setError("");
+    try {
+      await onSelect(item, type);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Couldn’t add this GIF.");
+    }
+  }
+
+  return createPortal(<div className="fixed inset-0 z-[130] flex items-center justify-center bg-ink/65 p-4" role="dialog" aria-modal="true" aria-labelledby="giphy-picker-title" onClick={onClose}>
+    <div ref={dialogRef} className="card flex max-h-[86vh] w-full max-w-4xl flex-col overflow-hidden p-0 shadow-[0_24px_70px_rgba(0,0,0,0.42)]" onClick={(event) => event.stopPropagation()}>
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-line px-5 py-4">
+        <div><h3 id="giphy-picker-title" className="text-lg font-bold">Add from GIPHY</h3><p className="mt-0.5 text-sm text-muted">Search animated media, then add it directly to this layer.</p></div>
+        <button type="button" onClick={onClose} aria-label="Close GIPHY picker" className="btn-subtle !px-3"><Icon name="x" size={16} /></button>
+      </div>
+      <div className="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3">
+        <div className="flex items-center gap-1 rounded-lg border border-line bg-page p-1" role="tablist" aria-label="GIPHY media type">
+          {(["gifs", "stickers"] as const).map((option) => <button key={option} type="button" role="tab" aria-selected={type === option} onClick={() => { setType(option); setQuery(""); setDebouncedQuery(""); }} className={`rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${type === option ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}>{option === "gifs" ? "GIFs" : "Stickers"}</button>)}
+        </div>
+        <label className="relative min-w-56 flex-1"><span className="sr-only">Search GIPHY</span><Icon name="search" size={15} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted" /><input ref={searchRef} value={query} onChange={(event) => setQuery(event.target.value)} placeholder={`Search ${type === "gifs" ? "GIFs" : "stickers"}…`} className="input !py-2 !pl-9 !pr-10" />{query && <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="absolute right-2 top-1/2 flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md text-muted hover:bg-page hover:text-ink"><Icon name="x" size={13} /></button>}</label>
+      </div>
+      <div className="min-h-72 flex-1 overflow-y-auto bg-page/50 p-4">
+        {loading && <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">{Array.from({ length: 12 }, (_, index) => <div key={index} className="aspect-square animate-pulse rounded-xl bg-line/70" />)}</div>}
+        {!loading && error && items.length === 0 && <div className="flex min-h-64 flex-col items-center justify-center text-center"><Icon name="warningTriangle" size={24} className="text-danger" /><p className="mt-3 max-w-md text-sm font-semibold text-ink">{error}</p><button type="button" onClick={() => setRetryKey((current) => current + 1)} className="btn-subtle mt-4"><Icon name="refresh" size={14} /> Try again</button></div>}
+        {!loading && !error && items.length === 0 && <div className="flex min-h-64 flex-col items-center justify-center text-center"><span className="text-3xl" aria-hidden="true">🔎</span><p className="mt-3 text-sm font-semibold text-ink">No {type === "gifs" ? "GIFs" : "stickers"} found.</p><p className="mt-1 text-xs text-muted">Try a broader search.</p></div>}
+        {!loading && items.length > 0 && <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-4">{items.map((item) => <button key={item.id} type="button" disabled={!!importingId} onClick={() => void select(item)} aria-label={`Add ${item.title}`} className="group relative aspect-square overflow-hidden rounded-xl bg-black/5 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:cursor-wait disabled:opacity-60">{/* eslint-disable-next-line @next/next/no-img-element */}<img src={item.preview_url} alt={item.title} loading="lazy" className={`h-full w-full ${type === "stickers" ? "object-contain p-2" : "object-cover"} transition-transform duration-200 group-hover:scale-[1.03]`} />{importingId === item.id && <span className="absolute inset-0 flex items-center justify-center bg-black/55 text-xs font-bold text-white"><span className="mr-2 h-4 w-4 animate-spin rounded-full border-2 border-white/30 border-t-white" />Adding…</span>}</button>)}</div>}
+        {items.length > 0 && <div className="mt-5 flex flex-col items-center gap-3">{error && <p className="text-sm font-semibold text-danger">{error}</p>}{hasMore && <button type="button" disabled={loadingMore || !!importingId} onClick={() => void loadMore()} className="btn-subtle disabled:opacity-50">{loadingMore ? <><span className="h-4 w-4 animate-spin rounded-full border-2 border-primary/25 border-t-primary" /> Loading…</> : "Load more"}</button>}</div>}
+      </div>
+      <div className="flex items-center justify-between border-t border-line px-5 py-3 text-xs text-muted"><span>Safe search · G rating</span><span className="font-black tracking-tight text-ink">Powered by GIPHY</span></div>
+    </div>
+  </div>, document.body);
+}
+
+function StudioWorkflow({
   accounts, selectedAccountIds, setSelectedAccountIds, activePlatform, setActivePlatform, platformFormatIds, setPlatformFormatIds, segments, activeSegment, setActiveSegmentId, splitAt, setSplitAt, splitActive, beginEditorEdit, setActiveTrim, duplicateActive, removeActive, setActiveVolume, muteSegmentAudio, pasteSegment, undo, redo, canUndo, canRedo,
   transition, setTransition, transitionDuration, setTransitionDuration, closingSeam, setSegmentSeam, setSegmentGap, moveSegment,
   audioClips, setAudioClips, selectedAudioClipId, setSelectedAudioClipId, audioUploading, onAudioUpload, onAudioLibrary,
@@ -1711,17 +2080,22 @@ function FadeStudioWorkflow({
   cancelling, cancelRender,
   renderScopeOpen, setRenderScopeOpen, previewOpen, setPreviewOpen,
   captionLayers, setCaptionLayers, selectedCaptionId, setSelectedCaptionId,
+  visualLayers, setVisualLayers, visualRowCounts, setVisualRowCounts, visualRowLocks, setVisualRowLocks, selectedVisualLayerId, setSelectedVisualLayerId, visualPickerOpen, onAddVisual, onMemeSound, onPreviewMemeSound,
 }: {
-  accounts: FadeInAccount[]; selectedAccountIds: Set<number>; setSelectedAccountIds: (value: Set<number> | ((current: Set<number>) => Set<number>)) => void; activePlatform: string; setActivePlatform: (value: string) => void; platformFormatIds: Record<string, string>; setPlatformFormatIds: (value: Record<string, string> | ((current: Record<string, string>) => Record<string, string>)) => void; segments: FadeTimelineSegment[]; activeSegment: FadeTimelineSegment | null;
-  setActiveSegmentId: (id: string) => void; splitAt: number; setSplitAt: (value: number) => void; splitActive: () => void; beginEditorEdit: () => void; setActiveTrim: (start: number, end: number) => void; duplicateActive: () => void; removeActive: () => void; setActiveVolume: (value: number) => void; muteSegmentAudio: (segmentId: string) => void; pasteSegment: (segment: FadeTimelineSegment, afterSegmentId: string | null) => void;
+  accounts: EditorAccount[]; selectedAccountIds: Set<number>; setSelectedAccountIds: (value: Set<number> | ((current: Set<number>) => Set<number>)) => void; activePlatform: string; setActivePlatform: (value: string) => void; platformFormatIds: Record<string, string>; setPlatformFormatIds: (value: Record<string, string> | ((current: Record<string, string>) => Record<string, string>)) => void; segments: TimelineSegment[]; activeSegment: TimelineSegment | null;
+  setActiveSegmentId: (id: string) => void; splitAt: number; setSplitAt: (value: number) => void; splitActive: () => void; beginEditorEdit: () => void; setActiveTrim: (start: number, end: number) => void; duplicateActive: () => void; removeActive: () => void; setActiveVolume: (value: number) => void; muteSegmentAudio: (segmentId: string) => void; pasteSegment: (segment: TimelineSegment, afterSegmentId: string | null) => void;
   undo: () => void; redo: () => void; canUndo: boolean; canRedo: boolean;
-  transition: FadeTransition; setTransition: (value: FadeTransition) => void; transitionDuration: number; setTransitionDuration: (value: number) => void; closingSeam: FadeSeam;
-  setSegmentSeam: (index: number, seam: FadeSeam) => void; setSegmentGap: (id: string, gapBefore: number) => void; moveSegment: (from: number, to: number) => void;
-  audioClips: FadeAudioClip[]; setAudioClips: (value: FadeAudioClip[] | ((current: FadeAudioClip[]) => FadeAudioClip[])) => void; selectedAudioClipId: string | null; setSelectedAudioClipId: (id: string | null) => void; audioUploading: boolean; onAudioUpload: () => void; onAudioLibrary: () => void;
+  transition: TransitionType; setTransition: (value: TransitionType) => void; transitionDuration: number; setTransitionDuration: (value: number) => void; closingSeam: Seam;
+  setSegmentSeam: (index: number, seam: Seam) => void; setSegmentGap: (id: string, gapBefore: number) => void; moveSegment: (from: number, to: number) => void;
+  audioClips: AudioClip[]; setAudioClips: (value: AudioClip[] | ((current: AudioClip[]) => AudioClip[])) => void; selectedAudioClipId: string | null; setSelectedAudioClipId: (id: string | null) => void; audioUploading: boolean; onAudioUpload: () => void; onAudioLibrary: () => void;
   caption: string; setCaption: (value: string) => void; uploading: boolean; uploadStage: string; onUpload: () => void; onLibrary: () => void; onCrop: () => void; fileInput: RefObject<HTMLInputElement | null>; onFile: (file: File) => void;
-  error: string; setError?: (value: string) => void; rendering: boolean; outputMediaId: string | null; initialDraft?: FadeDraftSnapshot; initialDraftId?: string; initialDraftStatus?: string;
-  captionLayers: FadeTextLayer[]; setCaptionLayers: (value: FadeTextLayer[] | ((current: FadeTextLayer[]) => FadeTextLayer[])) => void; selectedCaptionId: string | null; setSelectedCaptionId: (id: string | null) => void;
-  platformOutputMediaIds: Record<string, string>; platformRenderStatuses: Record<string, FadeJobStatus>; renderSignatures: Record<string, string>; rendersAreCurrent: boolean; dirtyRenderPlatforms: string[]; renderElapsedSeconds: number; renderStatusLabel: (status: FadeJobStatus | undefined) => string; startRender: (targets: string[]) => void;
+  error: string; setError?: (value: string) => void; rendering: boolean; outputMediaId: string | null; initialDraft?: DraftSnapshot; initialDraftId?: string; initialDraftStatus?: string;
+  captionLayers: TextLayer[]; setCaptionLayers: (value: TextLayer[] | ((current: TextLayer[]) => TextLayer[])) => void; selectedCaptionId: string | null; setSelectedCaptionId: (id: string | null) => void;
+  visualLayers: VisualLayer[]; setVisualLayers: (value: VisualLayer[] | ((current: VisualLayer[]) => VisualLayer[])) => void; visualRowCounts: VisualRowCounts; setVisualRowCounts: (value: VisualRowCounts | ((current: VisualRowCounts) => VisualRowCounts)) => void; visualRowLocks: VisualRowLocks; setVisualRowLocks: (value: VisualRowLocks | ((current: VisualRowLocks) => VisualRowLocks)) => void; selectedVisualLayerId: string | null; setSelectedVisualLayerId: (id: string | null) => void; onAddVisual: (kind: VisualLayerKind, row: number) => void;
+  visualPickerOpen: boolean;
+  onMemeSound: (id: string) => void;
+  onPreviewMemeSound: (id: string) => void;
+  platformOutputMediaIds: Record<string, string>; platformRenderStatuses: Record<string, JobStatus>; renderSignatures: Record<string, string>; rendersAreCurrent: boolean; dirtyRenderPlatforms: string[]; renderElapsedSeconds: number; renderStatusLabel: (status: JobStatus | undefined) => string; startRender: (targets: string[]) => void;
   cancelling: boolean; cancelRender: () => void;
   renderScopeOpen: boolean; setRenderScopeOpen: (value: boolean) => void; previewOpen: boolean; setPreviewOpen: (value: boolean) => void;
 }) {
@@ -1743,7 +2117,7 @@ function FadeStudioWorkflow({
       .map(([platformId, mediaId]) => ({
         media_id: mediaId,
         platform_id: platformId,
-        aspect_ratio: fadeFormatFor(platformId, platformFormatIds).aspect.name,
+        aspect_ratio: formatFor(platformId, platformFormatIds).aspect.name,
       }));
     const mediaIds = [...new Set(renderedOutputs.map((output) => output.media_id).concat(outputMediaId))];
     // The per-platform captions are the preferred post copy. When a creator
@@ -1897,7 +2271,12 @@ function FadeStudioWorkflow({
       setImproveBusy((c) => ({ ...c, [platformId]: false }));
     }
   }
-  const [editorTool, setEditorTool] = useState<"clip" | "trim" | "transition" | "volume" | "audio" | "captions">("clip");
+  const [editorTool, setEditorTool] = useState<"clip" | "trim" | "transition" | "volume" | "audio" | "captions" | "visual">("clip");
+  const previousVisualLayerCount = useRef(visualLayers.length);
+  useEffect(() => {
+    if (visualLayers.length > previousVisualLayerCount.current && selectedVisualLayerId) setEditorTool("visual");
+    previousVisualLayerCount.current = visualLayers.length;
+  }, [selectedVisualLayerId, visualLayers.length]);
   const [advancedCaptionOpen, setAdvancedCaptionOpen] = useState(false);
   // Seam N sits before segment N, so the first selectable seam is 1.
   const [selectedSeam, setSelectedSeam] = useState(1);
@@ -1906,7 +2285,6 @@ function FadeStudioWorkflow({
   // Filmstrip tiles are a fixed pixel size, but the track is laid out in
   // percentages and grows with the zoom level, so measure it.
   const [timelineCanvasWidth, setTimelineCanvasWidth] = useState(0);
-  const [timelineViewportWidth, setTimelineViewportWidth] = useState(0);
   const [previewTime, setPreviewTime] = useState(0);
   const [timelinePlaying, setTimelinePlaying] = useState(false);
   const [timelineZoom, setTimelineZoom] = useState(1);
@@ -1919,6 +2297,7 @@ function FadeStudioWorkflow({
   const timelineViewportRef = useRef<HTMLDivElement>(null);
   const audioLaneRef = useRef<HTMLDivElement>(null);
   const captionLaneRef = useRef<HTMLDivElement>(null);
+  const visualLaneRef = useRef<Record<VisualLayerKind, HTMLDivElement | null>>({ video: null, image: null, gif: null, sticker: null });
   const toggleTimelinePlaybackRef = useRef<() => void>(() => undefined);
   const advancePreviewLayerRef = useRef<() => void>(() => undefined);
   const handoffInProgress = useRef(false);
@@ -1931,10 +2310,11 @@ function FadeStudioWorkflow({
   // since only one caption can be dragged at a time.
   const captionDrag = useRef<{ id: string; side: "move" | "start" | "end"; pointerId: number; startX: number; originalStart: number; originalEnd: number; secondsPerPixel: number } | null>(null);
   const audioDrag = useRef<{ id: string; side: "move" | "start" | "end"; startX: number; originalStart: number; originalEnd: number; originalSourceStart: number; originalSourceEnd: number; secondsPerPixel: number } | null>(null);
+  const visualDrag = useRef<{ id: string; kind: VisualLayerKind; side: "move" | "start" | "end"; startX: number; originalStart: number; originalEnd: number; secondsPerPixel: number } | null>(null);
   const [audioRowDropTarget, setAudioRowDropTarget] = useState<number | null>(null);
   const [captionRowDropTarget, setCaptionRowDropTarget] = useState<number | null>(null);
   // Manually reserved empty rows, from the "Add Row" button — on top of
-  // whatever fadeRowPack needs for the clips that actually overlap in time.
+  // whatever packRows needs for the clips that actually overlap in time.
   const [audioExtraRows, setAudioExtraRows] = useState(0);
   const [captionExtraRows, setCaptionExtraRows] = useState(0);
   const [snappingEnabled, setSnappingEnabled] = useState(true);
@@ -1943,19 +2323,60 @@ function FadeStudioWorkflow({
   const [snapIndicator, setSnapIndicator] = useState<number | null>(null);
   const [detachPending, setDetachPending] = useState<{
     segmentId: string;
-    action: FadeAttachedAudioAction;
+    action: AttachedAudioAction;
     splitAt?: number;
   } | null>(null);
+  const [unlockPendingVisualLayerId, setUnlockPendingVisualLayerId] = useState<string | null>(null);
+  const unlockDialogReturnFocus = useRef<HTMLElement | null>(null);
   const draftId = useRef<string | undefined>(initialDraftId);
   // Cmd/Ctrl+C/V clipboard for the timeline — a ref, not state, since copying
   // shouldn't trigger a render and the value only ever needs to be read back
   // synchronously inside the paste handler.
   const timelineClipboard = useRef<
-    | { kind: "clip"; segment: FadeTimelineSegment }
-    | { kind: "audio"; clip: FadeAudioClip }
-    | { kind: "caption"; layer: FadeTextLayer }
+    | { kind: "clip"; segment: TimelineSegment }
+    | { kind: "audio"; clip: AudioClip }
+    | { kind: "caption"; layer: TextLayer }
+    | { kind: "visual"; layer: VisualLayer }
     | null
   >(null);
+  const requestDeleteVisualLayer = useCallback((layerId: string) => {
+    const layer = visualLayers.find((item) => item.id === layerId);
+    if (!layer) return;
+    setSelectedVisualLayerId(layer.id);
+    setSelectedCaptionId(null);
+    setSelectedAudioClipId(null);
+    setEditorTool("visual");
+    if (visualRowLocks[layer.kind][layer.row]) {
+      unlockDialogReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+      setUnlockPendingVisualLayerId(layer.id);
+      return;
+    }
+    beginEditorEdit();
+    setVisualLayers((current) => current.filter((item) => item.id !== layer.id));
+    setSelectedVisualLayerId(null);
+  }, [beginEditorEdit, setSelectedAudioClipId, setSelectedCaptionId, setSelectedVisualLayerId, setVisualLayers, visualLayers, visualRowLocks]);
+  const confirmUnlockVisualLayer = useCallback(() => {
+    if (!unlockPendingVisualLayerId) return;
+    const layer = visualLayers.find((item) => item.id === unlockPendingVisualLayerId);
+    if (!layer) {
+      setUnlockPendingVisualLayerId(null);
+      return;
+    }
+    beginEditorEdit();
+    setVisualRowLocks((current) => ({ ...current, [layer.kind]: { ...current[layer.kind], [layer.row]: false } }));
+    setSelectedVisualLayerId(layer.id);
+    setSelectedCaptionId(null);
+    setSelectedAudioClipId(null);
+    setEditorTool("visual");
+    setUnlockPendingVisualLayerId(null);
+    const returnFocus = unlockDialogReturnFocus.current;
+    window.requestAnimationFrame(() => { if (returnFocus?.isConnected) returnFocus.focus(); });
+  }, [beginEditorEdit, setSelectedAudioClipId, setSelectedCaptionId, setSelectedVisualLayerId, setVisualRowLocks, unlockPendingVisualLayerId, visualLayers]);
+  const closeUnlockVisualLayerDialog = useCallback(() => {
+    setUnlockPendingVisualLayerId(null);
+    const returnFocus = unlockDialogReturnFocus.current;
+    window.requestAnimationFrame(() => { if (returnFocus?.isConnected) returnFocus.focus(); });
+  }, []);
   const buildReady = segments.length > 0 && selectedAccountIds.size > 0 && campaignName.trim().length > 0;
   // Continuing past Build only needs ONE rendered output to exist — not a
   // current render for every selected destination. rendersAreCurrent (the
@@ -1968,8 +2389,8 @@ function FadeStudioWorkflow({
   const goTo = (target: number) => { if (target <= step || (buildReady && hasRenderedOutput)) setStep(target); };
   const selectedPlatforms = Array.from(new Set([...selectedAccountIds].map((id) => accounts.find((account) => account.id === id)?.platform).filter((platform): platform is string => !!platform)));
   const currentPlatform = selectedPlatforms.includes(activePlatform) ? activePlatform : selectedPlatforms[0] ?? "";
-  const transitionOverlaps = fadeTransitionOverlaps(segments);
-  const segmentOffsets = fadeSegmentOffsets(segments);
+  const transitionOverlaps = computeTransitionOverlaps(segments);
+  const segmentOffsets = computeSegmentOffsets(segments);
   // "Start your edit" is a first-visit screen only. Once a clip has been added,
   // deleting them all leaves the editor mounted (it has its own Add Clip /
   // Upload / Library controls) instead of throwing the user back to a screen
@@ -1978,12 +2399,12 @@ function FadeStudioWorkflow({
   const hasAddedClip = useRef(segments.length > 0);
   if (segments.length > 0) hasAddedClip.current = true;
   // With every clip deleted the ruler still has to lay out whatever audio and
-  // text rows are left over, so it needs a real span — fadeTimelineDuration's
+  // text rows are left over, so it needs a real span — computeTimelineDuration's
   // 0.1s empty floor would stretch those rows to thousands of percent wide.
   const timelineDuration = segments.length > 0
-    ? fadeTimelineDuration(segments)
-    : Math.max(10, ...audioClips.map((clip) => clip.end), ...captionLayers.map((layer) => layer.end));
-  const previewLocation = locateFadeTimelinePosition(segments, previewTime);
+    ? computeTimelineDuration(segments)
+    : Math.max(10, ...audioClips.map((clip) => clip.end), ...captionLayers.map((layer) => layer.end), ...visualLayers.map((layer) => layer.end));
+  const previewLocation = locateTimelinePosition(segments, previewTime);
   const previewInGap = segments.length > 0 && previewLocation === null;
   const activeIndex = activeSegment ? segments.findIndex((segment) => segment.id === activeSegment.id) : -1;
   const activeOffset = activeIndex >= 0 ? segmentOffsets[activeIndex] : 0;
@@ -1994,8 +2415,8 @@ function FadeStudioWorkflow({
   const transitionProgress = activeTransitionOverlap > 0 && nextOffset !== undefined
     ? Math.min(1, Math.max(0, (previewTime - nextOffset) / activeTransitionOverlap))
     : 0;
-  const { waveforms: waveformPeaks, durations: waveformDurations } = useFadeWaveforms([...segments.map((segment) => segment.media.id), ...audioClips.map((clip) => clip.mediaId)]);
-  const filmstrips = useFadeFilmstrips(segments.map((segment) => segment.media.id));
+  const { waveforms: waveformPeaks, durations: waveformDurations } = useWaveforms([...segments.map((segment) => segment.media.id), ...audioClips.map((clip) => clip.mediaId)]);
+  const filmstrips = useFilmstrips(segments.map((segment) => segment.media.id));
   // Seam index 0 is the opening (fade in from black); segments.length is the
   // closing (fade out to black), which has no segment to live on, hence the
   // special case here rather than in segmentSeam itself.
@@ -2046,15 +2467,11 @@ function FadeStudioWorkflow({
 
   useEffect(() => {
     const canvas = timelineCanvasRef.current;
-    const viewport = timelineViewportRef.current;
-    if (!canvas || !viewport) return;
+    if (!canvas) return;
     const canvasObserver = new ResizeObserver(([entry]) => setTimelineCanvasWidth(entry.contentRect.width));
-    const viewportObserver = new ResizeObserver(([entry]) => setTimelineViewportWidth(entry.contentRect.width));
     canvasObserver.observe(canvas);
-    viewportObserver.observe(viewport);
     return () => {
       canvasObserver.disconnect();
-      viewportObserver.disconnect();
     };
   }, [step]);
 
@@ -2115,7 +2532,7 @@ function FadeStudioWorkflow({
           timelineDuration,
           gapPlayback.position + (performance.now() - gapPlayback.startedAt) / 1000,
         );
-        const located = locateFadeTimelinePosition(segments, position);
+        const located = locateTimelinePosition(segments, position);
         setPreviewTime(position);
         if (located) {
           gapPlaybackRef.current = null;
@@ -2176,6 +2593,7 @@ function FadeStudioWorkflow({
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
+      if (unlockPendingVisualLayerId || visualPickerOpen) return;
       if (step !== 0 || target?.closest("input, textarea, [contenteditable='true']")) return;
       const key = event.key.toLowerCase();
       const commandModifier = event.metaKey || event.ctrlKey;
@@ -2207,6 +2625,12 @@ function FadeStudioWorkflow({
               event.preventDefault();
               timelineClipboard.current = { kind: "audio", clip };
             }
+          } else if (editorTool === "visual" && selectedVisualLayerId) {
+            const layer = visualLayers.find((item) => item.id === selectedVisualLayerId);
+            if (layer) {
+              event.preventDefault();
+              timelineClipboard.current = { kind: "visual", layer };
+            }
           } else if ((editorTool === "clip" || editorTool === "trim") && activeSegment) {
             event.preventDefault();
             timelineClipboard.current = { kind: "clip", segment: activeSegment };
@@ -2224,10 +2648,10 @@ function FadeStudioWorkflow({
             const duration = clipboard.layer.end - clipboard.layer.start;
             const start = previewTime;
             const end = start + duration;
-            const rows = fadeCaptionRows(captionLayers);
+            const rows = packCaptionRows(captionLayers);
             const originalRow = rows.findIndex((row) => row.some((item) => item.id === clipboard.layer.id));
-            const row = fadeFirstAvailableRowFrom(rows, start, end, originalRow >= 0 ? originalRow : rows.length);
-            const pasted: FadeTextLayer = { ...clipboard.layer, id: crypto.randomUUID(), start, end, row };
+            const row = firstAvailableRowFrom(rows, start, end, originalRow >= 0 ? originalRow : rows.length);
+            const pasted: TextLayer = { ...clipboard.layer, id: crypto.randomUUID(), start, end, row };
             setCaptionLayers((current) => [...current, pasted]);
             setSelectedCaptionId(pasted.id);
             setSelectedAudioClipId(null);
@@ -2237,16 +2661,35 @@ function FadeStudioWorkflow({
             const duration = clipboard.clip.end - clipboard.clip.start;
             const start = previewTime;
             const end = start + duration;
-            const rows = fadeAudioRows(audioClips);
+            const rows = packAudioRows(audioClips);
             const originalRow = rows.findIndex((row) => row.some((item) => item.id === clipboard.clip.id));
-            const row = fadeFirstAvailableRowFrom(rows, start, end, originalRow >= 0 ? originalRow : rows.length);
-            const pasted: FadeAudioClip = { ...clipboard.clip, id: crypto.randomUUID(), start, end, row };
+            const row = firstAvailableRowFrom(rows, start, end, originalRow >= 0 ? originalRow : rows.length);
+            const pasted: AudioClip = { ...clipboard.clip, id: crypto.randomUUID(), start, end, row };
             setAudioClips((current) => [...current, pasted]);
             setSelectedAudioClipId(pasted.id);
             setSelectedCaptionId(null);
             setEditorTool("audio");
+          } else if (clipboard.kind === "visual") {
+            beginEditorEdit();
+            const duration = clipboard.layer.end - clipboard.layer.start;
+            const start = previewTime;
+            const end = start + duration;
+            const kindLocks = visualRowLocks[clipboard.layer.kind];
+            const kindRowCount = visualRowCounts[clipboard.layer.kind];
+            let row = clipboard.layer.row;
+            if (kindLocks[row]) {
+              const availableRow = Array.from({ length: Math.max(kindRowCount, 1) }, (_, index) => index).find((index) => !kindLocks[index]);
+              row = availableRow ?? kindRowCount;
+            }
+            const pasted: VisualLayer = { ...clipboard.layer, id: crypto.randomUUID(), start, end, row };
+            setVisualLayers((current) => [...current, pasted]);
+            setVisualRowCounts((current) => ({ ...current, [clipboard.layer.kind]: Math.max(current[clipboard.layer.kind], row + 1) }));
+            setSelectedVisualLayerId(pasted.id);
+            setSelectedCaptionId(null);
+            setSelectedAudioClipId(null);
+            setEditorTool("visual");
           } else {
-            const located = locateFadeTimelinePosition(segments, previewTime);
+            const located = locateTimelinePosition(segments, previewTime);
             pasteSegment(clipboard.segment, located?.segment.id ?? null);
             setEditorTool("clip");
           }
@@ -2278,6 +2721,9 @@ function FadeStudioWorkflow({
           beginEditorEdit();
           setAudioClips((current) => current.filter((clip) => clip.id !== selectedAudioClipId));
           setSelectedAudioClipId(null);
+        } else if (editorTool === "visual" && selectedVisualLayerId) {
+          event.preventDefault();
+          requestDeleteVisualLayer(selectedVisualLayerId);
         } else if (editorTool === "volume" && activeSegment) {
           event.preventDefault();
           setDetachPending({ segmentId: activeSegment.id, action: "delete" });
@@ -2289,7 +2735,7 @@ function FadeStudioWorkflow({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [step, segments, editorTool, selectedCaptionId, selectedAudioClipId, activeSegment, activeSeam.type, seamIndex, transitionDuration, captionLayers, audioClips, previewTime, beginEditorEdit, removeActive, pasteSegment, undo, redo, canUndo, canRedo, setCaptionLayers, setSelectedCaptionId, setAudioClips, setSelectedAudioClipId, setSegmentSeam, setEditorTool]);
+  }, [unlockPendingVisualLayerId, visualPickerOpen, step, segments, editorTool, selectedCaptionId, selectedAudioClipId, selectedVisualLayerId, activeSegment, activeSeam.type, seamIndex, transitionDuration, captionLayers, audioClips, visualLayers, visualRowCounts, visualRowLocks, previewTime, beginEditorEdit, removeActive, pasteSegment, requestDeleteVisualLayer, undo, redo, canUndo, canRedo, setCaptionLayers, setSelectedCaptionId, setAudioClips, setSelectedAudioClipId, setVisualLayers, setSelectedVisualLayerId, setSegmentSeam, setEditorTool]);
 
   useEffect(() => {
     if (!campaignName.trim() && segments.length === 0) return;
@@ -2305,7 +2751,7 @@ function FadeStudioWorkflow({
             mode: "custom",
             title: campaignName || UNTITLED_DRAFT_TITLE,
             cover_image_url: null,
-            state: { step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds: [...selectedAccountIds], activePlatform, platformFormatIds, platformOutputMediaIds, renderSignatures, captionLayers, audioClips, platformCaptions, captionLength },
+            state: { step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds: [...selectedAccountIds], activePlatform, platformFormatIds, platformOutputMediaIds, renderSignatures, captionLayers, audioClips, visualLayers, visualRowCounts, visualRowLocks, platformCaptions, captionLength },
           }),
         });
         if (!response.ok) throw new Error("Draft save failed.");
@@ -2315,23 +2761,25 @@ function FadeStudioWorkflow({
       } catch { setDraftStatus("idle"); }
     }, 750);
     return () => window.clearTimeout(timer);
-  }, [step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds, activePlatform, platformFormatIds, platformOutputMediaIds, renderSignatures, captionLayers, audioClips, platformCaptions, captionLength]);
+  }, [step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds, activePlatform, platformFormatIds, platformOutputMediaIds, renderSignatures, captionLayers, audioClips, visualLayers, visualRowCounts, visualRowLocks, platformCaptions, captionLength]);
 
   if (step === 0) {
     const selectedCaptionLayer = captionLayers.find((layer) => layer.id === selectedCaptionId) ?? null;
     const selectedAudioClip = audioClips.find((clip) => clip.id === selectedAudioClipId) ?? null;
-    const audioRows = fadeAudioRows(audioClips);
+    const selectedVisualLayer = visualLayers.find((layer) => layer.id === selectedVisualLayerId) ?? null;
+    const unlockPendingVisualLayer = visualLayers.find((layer) => layer.id === unlockPendingVisualLayerId) ?? null;
+    const visualRowsByKind = Object.fromEntries(VISUAL_KINDS.map((kind) => [kind, packVisualRows(visualLayers, kind, visualRowCounts[kind])])) as Record<VisualLayerKind, VisualLayer[][]>;
+    const audioRows = packAudioRows(audioClips);
     const audioRowCount = audioRows.length + audioExtraRows + (audioRowDropTarget !== null ? 1 : 0);
-    const captionRows = fadeCaptionRows(captionLayers);
+    const captionRows = packCaptionRows(captionLayers);
     const captionRowCount = captionRows.length + captionExtraRows + (captionRowDropTarget !== null ? 1 : 0);
     const compactTimelineRuler = timelineZoom <= 0.5;
-    const fixedLaneControlWidth = Math.max(160, timelineViewportWidth - FADE_TIMELINE_GUTTER_WIDTH - 10);
-    const patchCaption = (patch: Partial<FadeTextLayer>) => {
+    const patchCaption = (patch: Partial<TextLayer>) => {
       if (!selectedCaptionLayer) return;
       const id = selectedCaptionLayer.id;
       setCaptionLayers((current) => current.map((l) => (l.id === id ? { ...l, ...patch } : l)));
     };
-    const currentAspect = currentPlatform ? fadeFormatFor(currentPlatform, platformFormatIds).aspect : VIDEO_ASPECTS[0];
+    const currentAspect = currentPlatform ? formatFor(currentPlatform, platformFormatIds).aspect : VIDEO_ASPECTS[0];
     const currentCrop = activeSegment?.crops[currentPlatform] ?? activeSegment?.crops.default ?? { x: 0.5, y: 0.5 };
     const nextCrop = nextSegment?.crops[currentPlatform] ?? nextSegment?.crops.default ?? { x: 0.5, y: 0.5 };
     // The whole seam simulation comes out of the shared catalog, so every
@@ -2429,7 +2877,7 @@ function FadeStudioWorkflow({
         advancePreviewLayer();
       }
     };
-    const handleLayerLoaded = (event: React.SyntheticEvent<HTMLVideoElement>, isActiveLayer: boolean, segment: FadeTimelineSegment | null | undefined) => {
+    const handleLayerLoaded = (event: React.SyntheticEvent<HTMLVideoElement>, isActiveLayer: boolean, segment: TimelineSegment | null | undefined) => {
       if (!segment) return;
       if (isActiveLayer) {
         const end = segment.end ?? segment.duration ?? segment.start;
@@ -2455,7 +2903,7 @@ function FadeStudioWorkflow({
         return;
       }
       const position = previewTime >= timelineDuration - 0.05 ? 0 : previewTime;
-      const located = locateFadeTimelinePosition(segments, position);
+      const located = locateTimelinePosition(segments, position);
       setTimelinePlaying(true);
       if (!located) {
         previewRef.current?.pause();
@@ -2481,7 +2929,7 @@ function FadeStudioWorkflow({
       audioPreviewRefs.current.forEach((audio) => audio.pause());
       gapPlaybackRef.current = null;
       setTimelinePlaying(false);
-      const located = locateFadeTimelinePosition(segments, targetTime);
+      const located = locateTimelinePosition(segments, targetTime);
       setPreviewTime(targetTime);
       if (!located) return;
       setActiveSegmentId(located.segment.id);
@@ -2507,7 +2955,7 @@ function FadeStudioWorkflow({
     };
     const beginClipPositionDrag = (
       event: React.PointerEvent<HTMLElement>,
-      segment: FadeTimelineSegment,
+      segment: TimelineSegment,
     ) => {
       if (event.button !== 0 || (event.target as HTMLElement).closest("[data-trim-handle], [data-clip-reorder]")) return;
       const rect = timelineCanvasRef.current?.getBoundingClientRect();
@@ -2543,8 +2991,8 @@ function FadeStudioWorkflow({
         const base = index >= 0 ? segmentOffsets[index] - drag.originalGap : 0;
         const rawStart = base + rawGap;
         const snapThreshold = 8 * drag.secondsPerPixel;
-        const targets = fadeSnapTargets({ segments, segmentOffsets, audioClips, captionLayers, previewTime, timelineDuration, excludeSegmentId: drag.id });
-        const snappedStart = fadeSnap(rawStart, targets, snapThreshold);
+        const targets = computeSnapTargets({ segments, segmentOffsets, audioClips, captionLayers, previewTime, timelineDuration, excludeSegmentId: drag.id });
+        const snappedStart = snapToTarget(rawStart, targets, snapThreshold);
         setSnapIndicator(snappedStart !== rawStart ? snappedStart : null);
         gapBefore = Math.max(0, Math.min(60, snappedStart - base));
       }
@@ -2555,7 +3003,7 @@ function FadeStudioWorkflow({
       clipPositionDrag.current = null;
       setSnapIndicator(null);
     };
-    const beginTimelineTrim = (event: React.PointerEvent<HTMLElement>, segment: FadeTimelineSegment, side: "start" | "end", segmentOffset: number) => {
+    const beginTimelineTrim = (event: React.PointerEvent<HTMLElement>, segment: TimelineSegment, side: "start" | "end", segmentOffset: number) => {
       event.preventDefault();
       event.stopPropagation();
       const rect = timelineCanvasRef.current?.getBoundingClientRect();
@@ -2628,7 +3076,7 @@ function FadeStudioWorkflow({
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
       timelineTrimDrag.current = null;
     };
-    const beginCaptionDrag = (event: React.PointerEvent<HTMLElement>, layer: FadeTextLayer, side: "move" | "start" | "end", rowIndex: number) => {
+    const beginCaptionDrag = (event: React.PointerEvent<HTMLElement>, layer: TextLayer, side: "move" | "start" | "end", rowIndex: number) => {
       event.preventDefault();
       event.stopPropagation();
       const rect = timelineCanvasRef.current?.getBoundingClientRect();
@@ -2658,7 +3106,7 @@ function FadeStudioWorkflow({
       const targetRow =
         drag.side === "move" && lane && laneRect
           ? Math.round(clamp(
-              Math.floor((event.clientY - laneRect.top + lane.scrollTop) / FADE_CAPTION_ROW_HEIGHT),
+              Math.floor((event.clientY - laneRect.top + lane.scrollTop) / CAPTION_ROW_HEIGHT),
               0,
               captionRowCount - 1,
             ))
@@ -2666,9 +3114,9 @@ function FadeStudioWorkflow({
       if (targetRow !== null) setCaptionRowDropTarget(targetRow);
       const snapThreshold = snappingEnabled ? 8 * drag.secondsPerPixel : 0;
       const snapTargets = snapThreshold > 0
-        ? fadeSnapTargets({ segments, segmentOffsets, audioClips, captionLayers, previewTime, timelineDuration, excludeCaptionId: drag.id })
+        ? computeSnapTargets({ segments, segmentOffsets, audioClips, captionLayers, previewTime, timelineDuration, excludeCaptionId: drag.id })
         : [];
-      const snap = (raw: number) => (snapThreshold > 0 ? fadeSnap(raw, snapTargets, snapThreshold) : raw);
+      const snap = (raw: number) => (snapThreshold > 0 ? snapToTarget(raw, snapTargets, snapThreshold) : raw);
       let snappedTime: number | null = null;
       let nextStart = drag.originalStart;
       let nextEnd = drag.originalEnd;
@@ -2702,7 +3150,7 @@ function FadeStudioWorkflow({
       captionDrag.current = null;
       setSnapIndicator(null);
       setCaptionLayers((current) =>
-        fadeCaptionRows(current)
+        packCaptionRows(current)
           .filter((row) => row.length > 0)
           .flatMap((row, rowIndex) => row.map((layer) => ({ ...layer, row: rowIndex }))),
       );
@@ -2723,12 +3171,67 @@ function FadeStudioWorkflow({
     function addCaptionLayer() {
       beginEditorEdit();
       const start = Math.min(previewTime, Math.max(0, timelineDuration - 0.5));
-      const layer = makeFadeTextLayer({ start, end: Math.min(timelineDuration, start + 3) });
+      const layer = makeTextLayer({ start, end: Math.min(timelineDuration, start + 3) });
       setCaptionLayers((current) => [...current, layer]);
       setSelectedCaptionId(layer.id);
       setSelectedAudioClipId(null);
       setEditorTool("captions");
     }
+    const beginVisualDrag = (event: React.PointerEvent<HTMLElement>, layer: VisualLayer, side: "move" | "start" | "end") => {
+      event.preventDefault();
+      event.stopPropagation();
+      setSelectedVisualLayerId(layer.id);
+      setSelectedCaptionId(null);
+      setSelectedAudioClipId(null);
+      setEditorTool("visual");
+      if (visualRowLocks[layer.kind][layer.row]) return;
+      const rect = timelineCanvasRef.current?.getBoundingClientRect();
+      if (!rect || rect.width <= 0) return;
+      beginEditorEdit();
+      event.currentTarget.setPointerCapture(event.pointerId);
+      visualDrag.current = { id: layer.id, kind: layer.kind, side, startX: event.clientX, originalStart: layer.start, originalEnd: layer.end, secondsPerPixel: timelineDuration / rect.width };
+      if (side !== "move") setPreviewTime(side === "start" ? layer.start : layer.end);
+    };
+    const moveVisualDrag = (event: React.PointerEvent<HTMLElement>) => {
+      const drag = visualDrag.current;
+      if (!drag || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
+      const delta = (event.clientX - drag.startX) * drag.secondsPerPixel;
+      const kindRows = visualRowsByKind[drag.kind];
+      const kindLocks = visualRowLocks[drag.kind];
+      const laneRect = visualLaneRef.current[drag.kind]?.getBoundingClientRect();
+      const targetRow = drag.side === "move" && laneRect
+        ? Math.round(clamp(Math.floor((event.clientY - laneRect.top) / VISUAL_ROW_HEIGHT), 0, Math.max(0, kindRows.length - 1)))
+        : null;
+      setVisualLayers((current) => current.map((layer) => {
+        if (layer.id !== drag.id) return layer;
+        if (drag.side === "move") {
+          const span = drag.originalEnd - drag.originalStart;
+          const start = clamp(drag.originalStart + delta, 0, timelineDuration - span);
+          const row = targetRow !== null && !kindLocks[targetRow] ? targetRow : layer.row;
+          return { ...layer, start, end: start + span, row };
+        }
+        if (drag.side === "start") return { ...layer, start: clamp(drag.originalStart + delta, 0, drag.originalEnd - 0.2) };
+        return { ...layer, end: clamp(drag.originalEnd + delta, drag.originalStart + 0.2, timelineDuration) };
+      }));
+    };
+    const endVisualDrag = (event: React.PointerEvent<HTMLElement>) => {
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      visualDrag.current = null;
+    };
+    const deleteVisualRow = (kind: VisualLayerKind, rowIndex: number) => {
+      if (visualRowsByKind[kind][rowIndex]?.length || visualRowLocks[kind][rowIndex]) return;
+      beginEditorEdit();
+      setVisualLayers((current) => current.map((layer) => layer.kind === kind && layer.row > rowIndex ? { ...layer, row: layer.row - 1 } : layer));
+      setVisualRowLocks((current) => ({
+        ...current,
+        [kind]: Object.fromEntries(Object.entries(current[kind]).flatMap(([key, value]) => {
+          const row = Number(key);
+          if (row === rowIndex) return [];
+          return [[String(row > rowIndex ? row - 1 : row), value]];
+        })),
+      }));
+      setVisualRowCounts((current) => ({ ...current, [kind]: Math.max(0, current[kind] - 1) }));
+    };
     // Whole-block drag moves start/end together (source window unchanged);
     // the "start"/"end" trim handles move the source AND output window
     // together in lockstep (same idea as clip trims), unlike captions'
@@ -2736,7 +3239,7 @@ function FadeStudioWorkflow({
     // move with it, or the trimmed-off audio would just play at the old spot.
     const beginAudioDrag = (
       event: React.PointerEvent<HTMLElement>,
-      clip: FadeAudioClip,
+      clip: AudioClip,
       side: "move" | "start" | "end",
       rowIndex: number,
     ) => {
@@ -2765,7 +3268,7 @@ function FadeStudioWorkflow({
       const targetRow =
         drag.side === "move" && lane && laneRect
           ? Math.round(clamp(
-              Math.floor((event.clientY - laneRect.top + lane.scrollTop) / FADE_AUDIO_ROW_HEIGHT),
+              Math.floor((event.clientY - laneRect.top + lane.scrollTop) / AUDIO_ROW_HEIGHT),
               0,
               audioRowCount - 1,
             ))
@@ -2773,9 +3276,9 @@ function FadeStudioWorkflow({
       if (targetRow !== null) setAudioRowDropTarget(targetRow);
       const snapThreshold = snappingEnabled ? 8 * drag.secondsPerPixel : 0;
       const snapTargets = snapThreshold > 0
-        ? fadeSnapTargets({ segments, segmentOffsets, audioClips, captionLayers, previewTime, timelineDuration, excludeAudioId: drag.id })
+        ? computeSnapTargets({ segments, segmentOffsets, audioClips, captionLayers, previewTime, timelineDuration, excludeAudioId: drag.id })
         : [];
-      const snap = (raw: number) => (snapThreshold > 0 ? fadeSnap(raw, snapTargets, snapThreshold) : raw);
+      const snap = (raw: number) => (snapThreshold > 0 ? snapToTarget(raw, snapTargets, snapThreshold) : raw);
       const draggedClip = audioClips.find((item) => item.id === drag.id);
       const sourceDuration = draggedClip ? (waveformDurations[draggedClip.mediaId] ?? Infinity) : Infinity;
       let snappedTime: number | null = null;
@@ -2811,7 +3314,7 @@ function FadeStudioWorkflow({
       audioDrag.current = null;
       setSnapIndicator(null);
       setAudioClips((current) =>
-        fadeAudioRows(current)
+        packAudioRows(current)
           .filter((row) => row.length > 0)
           .flatMap((row, rowIndex) => row.map((clip) => ({ ...clip, row: rowIndex }))),
       );
@@ -2832,8 +3335,8 @@ function FadeStudioWorkflow({
     // A still-attached segment's audio needs confirmation before it becomes
     // independent or is removed. Plain selection and volume changes stay inline.
     function requestDetach(
-      segment: FadeTimelineSegment,
-      action: FadeAttachedAudioAction = "detach",
+      segment: TimelineSegment,
+      action: AttachedAudioAction = "detach",
       at?: number,
     ) {
       setDetachPending({ segmentId: segment.id, action, splitAt: at });
@@ -2852,8 +3355,8 @@ function FadeStudioWorkflow({
         if (activeSegment?.id === segment.id && previewRef.current) previewRef.current.volume = 0;
         if (nextSegment?.id === segment.id && transitionPreviewRef.current) transitionPreviewRef.current.volume = 0;
         const offset = segmentOffsets[index];
-        const duration = fadeSegmentDuration(segment);
-        const clip: FadeAudioClip = {
+        const duration = computeSegmentDuration(segment);
+        const clip: AudioClip = {
           id: crypto.randomUUID(), kind: "detached", mediaId: segment.media.id, name: segment.media.name,
           sourceStart: segment.start, sourceEnd: segment.end ?? segment.duration ?? segment.start + duration,
           start: offset, end: offset + duration, volume: segment.volume ?? 1, sourceSegmentId: segment.id,
@@ -2878,7 +3381,7 @@ function FadeStudioWorkflow({
             sourceStart: sourcePoint,
           };
           setAudioClips((current) => {
-            const row = fadeFirstAvailableAudioRow(current, first.start, second.end);
+            const row = firstAvailableAudioRow(current, first.start, second.end);
             return [...current, { ...first, row }, { ...second, row }];
           });
           setSelectedAudioClipId(second.id);
@@ -2888,7 +3391,7 @@ function FadeStudioWorkflow({
           muteSegmentAudio(segment.id);
           setAudioClips((current) => [
             ...current,
-            { ...clip, row: fadeFirstAvailableAudioRow(current, clip.start, clip.end) },
+            { ...clip, row: firstAvailableAudioRow(current, clip.start, clip.end) },
           ]);
           setSelectedAudioClipId(clip.id);
           setSelectedCaptionId(null);
@@ -2911,13 +3414,13 @@ function FadeStudioWorkflow({
       editorTool === "volume" &&
       !!activeSegment &&
       previewTime >= activeOffset + 0.1 &&
-      previewTime <= activeOffset + fadeSegmentDuration(activeSegment) - 0.1;
+      previewTime <= activeOffset + computeSegmentDuration(activeSegment) - 0.1;
     const activeSourceEnd = activeSegment?.end ?? activeSegment?.duration ?? 0;
     const canSplitVideo =
       !!activeSegment &&
       !!activeSegment.duration &&
       previewTime >= activeOffset + 0.1 &&
-      previewTime <= activeOffset + fadeSegmentDuration(activeSegment) - 0.1 &&
+      previewTime <= activeOffset + computeSegmentDuration(activeSegment) - 0.1 &&
       splitAt >= activeSegment.start + 0.1 &&
       splitAt <= activeSourceEnd - 0.1;
     const canSplitSelectedItem =
@@ -2989,21 +3492,21 @@ function FadeStudioWorkflow({
      *  they need identical drag/trim/select mechanics, just different rows. */
     // Audio detached from a clip keeps that clip's color (still "part of" it
     // visually); a standalone soundtrack clip gets its own color instead.
-    function audioClipColor(clip: FadeAudioClip) {
+    function audioClipColor(clip: AudioClip) {
       if (clip.kind === "detached" && clip.sourceSegmentId) {
         const segmentIndex = segments.findIndex((segment) => segment.id === clip.sourceSegmentId);
-        if (segmentIndex >= 0) return fadeAccentColor(segmentIndex);
+        if (segmentIndex >= 0) return accentColor(segmentIndex);
       }
-      return fadeAccentColor(audioClips.findIndex((item) => item.id === clip.id));
+      return accentColor(audioClips.findIndex((item) => item.id === clip.id));
     }
-    function renderAudioBlock(clip: FadeAudioClip, top: number, height: number, rowIndex: number) {
+    function renderAudioBlock(clip: AudioClip, top: number, height: number, rowIndex: number) {
       const left = (clip.start / timelineDuration) * 100;
       const width = ((clip.end - clip.start) / timelineDuration) * 100;
       const selected = editorTool === "audio" && selectedAudioClipId === clip.id;
       const sourceDuration = waveformDurations[clip.mediaId] || clip.sourceEnd || 1;
       const color = audioClipColor(clip);
       return <div key={clip.id} role="button" tabIndex={0}
-        aria-label={`${clip.kind === "soundtrack" ? "Audio clip" : "Detached audio"} "${clip.name}", row ${rowIndex + 1}, ${formatFadeTime(clip.end - clip.start, true)}`}
+        aria-label={`${clip.kind === "soundtrack" ? "Audio clip" : "Detached audio"} "${clip.name}", row ${rowIndex + 1}, ${formatTime(clip.end - clip.start, true)}`}
         onPointerDown={(event) => beginAudioDrag(event, clip, "move", rowIndex)}
         onPointerMove={moveAudioDrag}
         onPointerUp={endAudioDrag}
@@ -3029,7 +3532,7 @@ function FadeStudioWorkflow({
         style={{ left: `${left}%`, width: `${width}%`, top, height }}
       >
         <span className="absolute left-2 top-1 z-10 max-w-[80%] truncate rounded bg-black/60 px-1 text-[9px] font-semibold text-neutral-400">{clip.name}</span>
-        <FadeWaveform peaks={waveformPeaks[clip.mediaId]} startRatio={clip.sourceStart / sourceDuration} endRatio={clip.sourceEnd / sourceDuration} className="absolute inset-x-1 top-1/2 h-[calc(100%_-_16px)] w-[calc(100%_-_8px)] -translate-y-1/2 text-[#555]" />
+        <Waveform peaks={waveformPeaks[clip.mediaId]} startRatio={clip.sourceStart / sourceDuration} endRatio={clip.sourceEnd / sourceDuration} className="absolute inset-x-1 top-1/2 h-[calc(100%_-_16px)] w-[calc(100%_-_8px)] -translate-y-1/2 text-[#555]" />
         {selected && <>
           <span data-audio-trim-handle role="slider" tabIndex={0} aria-label="Trim start" onPointerDown={(event) => beginAudioDrag(event, clip, "start", rowIndex)} onPointerMove={moveAudioDrag} onPointerUp={endAudioDrag} onPointerCancel={endAudioDrag} className="absolute inset-y-0 left-0 z-10 w-2.5 cursor-ew-resize touch-none bg-primary" />
           <span data-audio-trim-handle role="slider" tabIndex={0} aria-label="Trim end" onPointerDown={(event) => beginAudioDrag(event, clip, "end", rowIndex)} onPointerMove={moveAudioDrag} onPointerUp={endAudioDrag} onPointerCancel={endAudioDrag} className="absolute inset-y-0 right-0 z-10 w-2.5 cursor-ew-resize touch-none bg-primary" />
@@ -3042,12 +3545,12 @@ function FadeStudioWorkflow({
       {editGuard.dialog}
       <button type="button" onClick={() => history.back()} data-edit-guard-exempt className="inline-flex items-center gap-1 text-sm font-medium text-muted hover:text-primary-deep"><Icon name="chevronLeft" size={15} /> Content Studio</button>
       <div className="mt-2 flex flex-wrap items-end justify-between gap-3"><div><h1 className="flex items-center gap-2 text-2xl font-bold"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white"><Icon name="video" size={18} /></span>Video Editor Studio</h1><p className="mt-1 text-sm text-muted">Edit your sequence, then tailor it for every selected destination.</p></div><div className="flex items-center gap-3">{draftLocked && <span className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-deep"><Icon name="check" size={13} /> Finished</span>}{draftStatus !== "idle" && <span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted">{draftStatus === "saving" ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary/25 border-t-primary" /> : <Icon name="check" size={13} className="text-primary" />}{draftStatus === "saving" ? "Saving draft…" : "Saved as draft"}</span>}</div></div>
-      <div className="card mt-5 px-6 py-5" data-edit-guard-exempt><div className="flex items-center">{FADE_WORKFLOW_STEPS.map((label, index) => <div key={label} className="flex flex-1 items-center last:flex-none"><button type="button" onClick={() => goTo(index)} className="flex min-h-11 min-w-11 flex-col items-center gap-2 rounded-lg px-1"><span className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-black ${index === 0 ? "border-primary bg-primary-soft text-primary-deep ring-4 ring-primary-soft/70" : "border-line bg-white text-muted"}`}>{index + 1}</span><span className={`text-xs font-black uppercase tracking-[0.12em] ${index === 0 ? "text-primary-deep" : "text-muted"}`}>{label}</span></button>{index < 2 && <span className="mx-4 mb-8 h-0.5 flex-1 bg-line sm:mx-8" />}</div>)}</div></div>
+      <div className="card mt-5 px-6 py-5" data-edit-guard-exempt><div className="flex items-center">{WORKFLOW_STEPS.map((label, index) => <div key={label} className="flex flex-1 items-center last:flex-none"><button type="button" onClick={() => goTo(index)} className="flex min-h-11 min-w-11 flex-col items-center gap-2 rounded-lg px-1"><span className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-black ${index === 0 ? "border-primary bg-primary-soft text-primary-deep ring-4 ring-primary-soft/70" : "border-line bg-white text-muted"}`}>{index + 1}</span><span className={`text-xs font-black uppercase tracking-[0.12em] ${index === 0 ? "text-primary-deep" : "text-muted"}`}>{label}</span></button>{index < 2 && <span className="mx-4 mb-8 h-0.5 flex-1 bg-line sm:mx-8" />}</div>)}</div></div>
       <section className="mt-4 rounded-2xl border border-line bg-white shadow-[0_16px_42px_rgba(18,34,43,0.08)]">
         <div className="grid gap-4 border-b border-line px-5 py-4 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end"><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Campaign name</span><input className="input mt-2" value={campaignName} onChange={(event) => setCampaignName(event.target.value)} placeholder="Name this video" /></label><div><div className="flex flex-wrap gap-2"><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Publish date</span><input type="date" min={scheduleMinDate(publishDate, earliestPublishDate)} className="input mt-2" value={publishDate} onChange={(event) => updatePublishDate(event.target.value)} /></label><label className="block"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Time</span><input type="time" min={scheduleMinTime(publishDate, publishTime, earliestPublishDate, earliestPublishTime)} className="input mt-2" value={publishTime} onChange={(event) => updatePublishTime(event.target.value)} /></label></div>{publishScheduleIsPastToday ? <p className="mt-2 flex items-center justify-end gap-1.5 text-xs font-semibold text-amber-700" role="alert"><Icon name="warningTriangle" size={14} />This time has already passed today. Your post will go live immediately.</p> : publishScheduleIsPast && <p className="mt-2 flex items-center justify-end gap-1.5 text-xs font-semibold text-red-700" role="alert"><Icon name="warningTriangle" size={14} />Can't schedule posts in the past.</p>}</div></div>
         <div className="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Post to</span>{accounts.map((account) => <button key={account.id} type="button" aria-pressed={selectedAccountIds.has(account.id)} onClick={() => setSelectedAccountIds((current) => { const next = new Set(current); next.has(account.id) ? next.delete(account.id) : next.add(account.id); return next; })} className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-xs font-bold transition-colors ${selectedAccountIds.has(account.id) ? "border-primary bg-primary-soft text-primary-deep" : "border-line text-muted hover:border-primary/50"}`}><AccountAvatar username={account.username} platformId={account.platform} avatarUrl={account.avatar_url} selected={selectedAccountIds.has(account.id)} size={25} /><span className="max-w-24 truncate">{account.username}</span></button>)}</div>
         {segments.length === 0 && !hasAddedClip.current ? <div className="flex min-h-80 flex-col items-center justify-center p-8 text-center"><span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-soft text-primary-deep"><Icon name="video" size={27} /></span><h2 className="mt-4 text-xl font-bold">Start your edit</h2><p className="mt-1 max-w-md text-sm text-muted">Add a video, then use the timeline to split clips and control transitions.</p><div className="mt-5 flex gap-2"><button type="button" onClick={onUpload} className="btn-primary"><Icon name="upload" size={15} /> Upload video</button><button type="button" onClick={onLibrary} className="btn-subtle">Library</button></div>{uploading && <p className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-primary-deep"><span className="h-4 w-4 animate-spin rounded-full border-2 border-primary/25 border-t-primary" />{uploadStage}</p>}</div> : <div className="bg-[#080808] text-white">
-          {selectedPlatforms.length > 0 && <div className="flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#101010] px-4 py-3"><span className="mr-1 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">Preview format</span><FadeVideoFormatGuide />{selectedPlatforms.map((platformId) => { const format = fadeFormatFor(platformId, platformFormatIds); return <div key={platformId} className={`flex items-center rounded-lg border text-xs font-semibold ${currentPlatform === platformId ? "border-primary bg-primary/15 text-white" : "border-white/10 bg-white/5 text-neutral-400"}`}><button type="button" onClick={() => setActivePlatform(platformId)} className="flex items-center gap-1.5 self-stretch px-3 py-2"><PlatformIcon id={platformId} size={14} darkSurface />{platformOf(platformId)?.name ?? platformId}</button><Select value={format.id} ariaLabel={`${platformOf(platformId)?.name ?? platformId} aspect ratio`} onChange={(value) => { setPlatformFormatIds((current) => ({ ...current, [platformId]: value })); setActivePlatform(platformId); }} options={fadeFormatOptions(platformId).map((option) => ({ value: option.id, label: option.aspect.name }))} tone="dark" width={148} align="right" className="min-h-9 w-[76px] rounded-l-none border-y-0 border-r-0 border-l border-white/10 bg-transparent px-2 py-1.5 text-xs hover:bg-white/10" /></div>; })}</div>}
+          {selectedPlatforms.length > 0 && <div className="flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#101010] px-4 py-3"><span className="mr-1 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">Preview format</span><VideoFormatGuide />{selectedPlatforms.map((platformId) => { const format = formatFor(platformId, platformFormatIds); return <div key={platformId} className={`flex items-center rounded-lg border text-xs font-semibold ${currentPlatform === platformId ? "border-primary bg-primary/15 text-white" : "border-white/10 bg-white/5 text-neutral-400"}`}><button type="button" onClick={() => setActivePlatform(platformId)} className="flex items-center gap-1.5 self-stretch px-3 py-2"><PlatformIcon id={platformId} size={14} darkSurface />{platformOf(platformId)?.name ?? platformId}</button><Select value={format.id} ariaLabel={`${platformOf(platformId)?.name ?? platformId} aspect ratio`} onChange={(value) => { setPlatformFormatIds((current) => ({ ...current, [platformId]: value })); setActivePlatform(platformId); }} options={formatOptions(platformId).map((option) => ({ value: option.id, label: option.aspect.name }))} tone="dark" width={148} align="right" className="min-h-9 w-[76px] rounded-l-none border-y-0 border-r-0 border-l border-white/10 bg-transparent px-2 py-1.5 text-xs hover:bg-white/10" /></div>; })}</div>}
           <div className="relative flex min-h-[410px] items-center justify-center border-b border-white/10 bg-black px-4 py-5 sm:min-h-[500px]">
             <button type="button" onClick={onCrop} className="absolute right-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-2 text-xs font-semibold text-white backdrop-blur hover:bg-white/15"><Icon name="expand" size={14} /> Recrop</button>
             <div ref={captionFrameRef} className="relative max-h-[450px] max-w-full overflow-hidden rounded-lg bg-neutral-950 [container-type:inline-size]" style={{ aspectRatio: `${currentAspect.width}/${currentAspect.height}`, width: `${Math.min(760, 450 * currentAspect.width / currentAspect.height)}px` }}>
@@ -3076,8 +3579,20 @@ function FadeStudioWorkflow({
 	                onEnded={() => { if (frontPreviewLayer === "b") advancePreviewLayer(); }}
 	              />
 	              {previewInGap && <div className="absolute inset-0 z-[4] bg-black" aria-label="Blank timeline gap" />}
+	              {[...visualLayers].sort((a, b) => a.kind === b.kind ? b.row - a.row : VISUAL_KINDS.indexOf(a.kind) - VISUAL_KINDS.indexOf(b.kind)).filter((layer) => previewTime >= layer.start && previewTime <= layer.end).map((layer) => (
+                  <VisualLayerView
+                    key={layer.id}
+                    layer={layer}
+                    selected={editorTool === "visual" && selectedVisualLayerId === layer.id}
+                    rowLocked={!!visualRowLocks[layer.kind][layer.row]}
+                    frameRef={captionFrameRef}
+                    onSelect={() => { setSelectedVisualLayerId(layer.id); setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("visual"); }}
+                    onBeginEdit={beginEditorEdit}
+                    onChange={(patch) => setVisualLayers((current) => current.map((item) => item.id === layer.id ? { ...item, ...patch } : item))}
+                  />
+                ))}
 	              {captionLayers.filter((layer) => previewTime >= layer.start && previewTime <= layer.end).map((layer) => (
-                <FadeCaptionLayerView
+                <CaptionLayerView
                   key={layer.id}
                   layer={layer}
                   selected={editorTool === "captions" && selectedCaptionId === layer.id}
@@ -3094,7 +3609,7 @@ function FadeStudioWorkflow({
               <button type="button" onClick={undo} disabled={!canUndo} className="flex h-9 w-9 items-center justify-center rounded-lg text-neutral-300 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-30" aria-label="Undo last edit" title="Undo (Ctrl+Z / ⌘Z)"><Icon name="undo" size={18} /></button>
               <button type="button" onClick={redo} disabled={!canRedo} className="flex h-9 w-9 items-center justify-center rounded-lg text-neutral-300 hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-30" aria-label="Redo last edit" title="Redo (Ctrl+Y / ⌘⇧Z)"><Icon name="redo" size={18} /></button>
             </div>
-            <div className="flex items-center gap-3 justify-self-center"><button type="button" data-edit-guard-exempt onClick={playTimeline} className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-black shadow-sm hover:bg-neutral-200" aria-label={timelinePlaying ? "Pause timeline" : "Play timeline"}><Icon name={timelinePlaying ? "pause" : "play"} size={16} /></button><span className="min-w-32 font-mono text-sm text-neutral-300">{formatFadeTime(previewTime, true)} / {formatFadeTime(timelineDuration, true)}</span></div>
+            <div className="flex items-center gap-3 justify-self-center"><button type="button" data-edit-guard-exempt onClick={playTimeline} className="flex h-10 w-10 items-center justify-center rounded-full bg-white text-black shadow-sm hover:bg-neutral-200" aria-label={timelinePlaying ? "Pause timeline" : "Play timeline"}><Icon name={timelinePlaying ? "pause" : "play"} size={16} /></button><span className="min-w-32 font-mono text-sm text-neutral-300">{formatTime(previewTime, true)} / {formatTime(timelineDuration, true)}</span></div>
             <div className="flex items-center gap-1 justify-self-end"><span className="mr-1 text-[10px] font-bold uppercase tracking-[0.12em] text-neutral-500">Zoom {Math.round(timelineZoom * 100)}%</span><button type="button" onClick={() => setTimelineZoom((current) => clampTimelineZoom(current - TIMELINE_ZOOM_STEP))} disabled={timelineZoom <= TIMELINE_ZOOM_MIN} className="flex h-8 w-8 items-center justify-center rounded-lg text-lg leading-none text-neutral-300 hover:bg-white/10 disabled:opacity-30" aria-label="Zoom timeline out">−</button><button type="button" onClick={() => setTimelineZoom((current) => clampTimelineZoom(current + TIMELINE_ZOOM_STEP))} disabled={timelineZoom >= TIMELINE_ZOOM_MAX} className="flex h-8 w-8 items-center justify-center rounded-lg text-neutral-300 hover:bg-white/10 disabled:opacity-30" aria-label="Zoom timeline in"><Icon name="plus" size={14} /></button></div>
           </div>
           <div className="border-b border-white/10 bg-[#0b0b0b] px-4 py-4">
@@ -3117,9 +3632,9 @@ function FadeStudioWorkflow({
                     Snap to
                   </span>
                 </div>
-                <FadeHotkeysTooltip />
+                <HotkeysTooltip />
               </div>
-              <span>{formatFadeTime(timelineDuration)} total · {segments.length}/{MAX_FADE_SEGMENTS} clips</span>
+              <span>{formatTime(timelineDuration)} total · {segments.length}/{MAX_SEGMENTS} clips</span>
             </div>
             <div ref={timelineViewportRef} className="max-h-[60vh] overflow-auto rounded-xl border border-white/10 bg-black [scrollbar-color:#3f3f46_#111]">
               <div className="flex">
@@ -3131,6 +3646,15 @@ function FadeStudioWorkflow({
                   <div className="flex h-[74px] shrink-0 items-center justify-center border-t border-white/5" title="Video"><Icon name="video" size={13} /></div>
                   <div className="flex h-7 shrink-0 items-center justify-center border-t border-white/5" title="Clip audio (attached)"><Icon name="audio" size={10} /></div>
                   <div className="h-12 shrink-0 border-t border-white/5" />
+                  {VISUAL_KINDS.map((kind) => <Fragment key={`gutter-visual-group-${kind}`}>
+                    <div className="h-12 shrink-0 border-t border-white/5" />
+                    {Array.from({ length: visualRowsByKind[kind].length }, (_, rowIndex) => (
+                      <div key={`gutter-${kind}-${rowIndex}`} className="flex shrink-0 items-center justify-center gap-0.5 border-t border-white/5" style={{ height: VISUAL_ROW_HEIGHT }} title={`${VISUAL_KIND_LABELS[kind]} row ${rowIndex + 1}`}>
+                        {kind === "gif" ? <span className="text-[8px] font-black">GIF</span> : <Icon name={kind === "sticker" ? "star" : kind === "video" ? "video" : "image"} size={11} />}
+                        <span className="font-mono text-[9px]">{rowIndex + 1}</span>
+                      </div>
+                    ))}
+                  </Fragment>)}
                   {Array.from({ length: audioRowCount }, (_, rowIndex) => (
                     <div key={`gutter-audio-${rowIndex}`} className="flex h-10 shrink-0 items-center justify-center gap-0.5 border-t border-white/5" title={`Audio row ${rowIndex + 1}`}>
                       <Icon name="audio" size={11} />
@@ -3148,7 +3672,7 @@ function FadeStudioWorkflow({
                 </div>
 	              <div ref={timelineCanvasRef} onPointerMove={moveCaptionDrag} onPointerUp={endCaptionDrag} onPointerCancel={endCaptionDrag} className="relative min-h-[194px] shrink-0 select-none" style={{ width: `${Math.max(TIMELINE_MIN_WIDTH_PX, timelineDuration * TIMELINE_PIXELS_PER_SECOND * timelineZoom)}px` }}>
                 <button type="button" data-keep-selection className="relative block h-10 w-full cursor-crosshair border-b border-white/10 bg-[#101010] text-left" aria-label="Seek timeline" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); seekFromTimelinePointer(event.clientX); }} onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) seekFromTimelinePointer(event.clientX); }} onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}>
-                  {fadeTimelineTicks(timelineDuration).map((tick) => (
+                  {timelineTicks(timelineDuration).map((tick) => (
                     <span
                       key={tick}
                       className="absolute inset-y-0 border-l border-white/15"
@@ -3167,7 +3691,7 @@ function FadeStudioWorkflow({
                             : "absolute left-1.5 top-2 whitespace-nowrap font-mono text-[10px] text-neutral-500"
                         }
                       >
-                        {formatFadeTime(tick)}
+                        {formatTime(tick)}
                       </span>
                     </span>
                   ))}
@@ -3181,13 +3705,13 @@ function FadeStudioWorkflow({
                       key={`gap-${segment.id}`}
                       className="absolute inset-y-1 flex items-center justify-center overflow-hidden rounded-md border border-dashed border-white/15 bg-black text-[9px] font-semibold text-neutral-500"
                       style={{ left: `${((offset - gap) / timelineDuration) * 100}%`, width: `${(gap / timelineDuration) * 100}%` }}
-                      title={`Blank gap · ${formatFadeTime(gap, true)}`}
+                      title={`Blank gap · ${formatTime(gap, true)}`}
                     >
-                      <span className="truncate px-1">Blank · {formatFadeTime(gap, true)}</span>
+                      <span className="truncate px-1">Blank · {formatTime(gap, true)}</span>
                     </div>;
                   })}
                   {segments.map((segment, index) => {
-                    const segmentDuration = fadeSegmentDuration(segment);
+                    const segmentDuration = computeSegmentDuration(segment);
                     const segmentOffset = segmentOffsets[index];
                     const selected = activeSegment?.id === segment.id && ["clip", "trim"].includes(editorTool);
                     const sourceDuration = Math.max(0.1, segment.duration ?? segment.end ?? 0.1);
@@ -3198,8 +3722,8 @@ function FadeStudioWorkflow({
                     const clipPixels = (segmentDuration / timelineDuration) * timelineCanvasWidth;
                     const tileCount = Math.max(1, Math.min(80, Math.ceil(clipPixels / FILMSTRIP_TILE_PX)));
                     const segmentEnd = segment.end ?? sourceDuration;
-                    const clipColor = fadeAccentColor(index);
-                    return <div key={segment.id} role="button" tabIndex={0} aria-label={`Clip ${index + 1}, ${formatFadeTime(segmentDuration, true)}${(segment.gapBefore ?? 0) > 0 ? `, preceded by ${formatFadeTime(segment.gapBefore ?? 0, true)} of blank space` : ""}`}
+                    const clipColor = accentColor(index);
+                    return <div key={segment.id} role="button" tabIndex={0} aria-label={`Clip ${index + 1}, ${formatTime(segmentDuration, true)}${(segment.gapBefore ?? 0) > 0 ? `, preceded by ${formatTime(segment.gapBefore ?? 0, true)} of blank space` : ""}`}
                       onPointerDown={(event) => beginClipPositionDrag(event, segment)}
                       onPointerMove={moveClipPositionDrag}
                       onPointerUp={endClipPositionDrag}
@@ -3261,7 +3785,7 @@ function FadeStudioWorkflow({
                         className={`absolute inset-x-0 bottom-0 flex cursor-grab items-center gap-1 ${clipColor.labelBg} px-2 py-1 active:cursor-grabbing`}
                       >
                         <Icon name="dots" size={11} className="shrink-0 text-neutral-500" />
-                        <span className="min-w-0"><span className="block truncate text-[11px] font-bold text-white">Clip {index + 1} · {formatFadeTime(segmentDuration, true)}</span><span className="block truncate text-[9px] text-neutral-400">{segment.media.name}</span></span>
+                        <span className="min-w-0"><span className="block truncate text-[11px] font-bold text-white">Clip {index + 1} · {formatTime(segmentDuration, true)}</span><span className="block truncate text-[9px] text-neutral-400">{segment.media.name}</span></span>
                       </span>
                       {selected && <><span data-trim-handle role="slider" tabIndex={0} aria-label={`Trim start of clip ${index + 1}`} aria-valuemin={0} aria-valuemax={segment.end ?? segment.duration ?? 0} aria-valuenow={segment.start} onPointerDown={(event) => beginTimelineTrim(event, segment, "start", segmentOffset)} onPointerMove={moveTimelineTrim} onPointerUp={endTimelineTrim} onPointerCancel={endTimelineTrim} className="absolute inset-y-0 left-0 z-30 w-2 cursor-ew-resize touch-none bg-primary before:absolute before:left-1/2 before:top-1/2 before:h-5 before:w-0.5 before:-translate-x-1/2 before:-translate-y-1/2 before:rounded-full before:bg-white/80" /><span data-trim-handle role="slider" tabIndex={0} aria-label={`Trim end of clip ${index + 1}`} aria-valuemin={segment.start} aria-valuemax={segment.duration ?? segment.end ?? 0} aria-valuenow={segment.end ?? segment.duration ?? 0} onPointerDown={(event) => beginTimelineTrim(event, segment, "end", segmentOffset)} onPointerMove={moveTimelineTrim} onPointerUp={endTimelineTrim} onPointerCancel={endTimelineTrim} className="absolute inset-y-0 right-0 z-30 w-2 cursor-ew-resize touch-none bg-primary before:absolute before:left-1/2 before:top-1/2 before:h-5 before:w-0.5 before:-translate-x-1/2 before:-translate-y-1/2 before:rounded-full before:bg-white/80" /></>}
                     </div>;
@@ -3344,7 +3868,7 @@ function FadeStudioWorkflow({
                     // covers drafts saved before that fix.
                     if (segment.audioRemoved) return null;
                     if (audioClips.some((clip) => clip.kind === "detached" && clip.sourceSegmentId === segment.id)) return null;
-                    const segmentDuration = fadeSegmentDuration(segment);
+                    const segmentDuration = computeSegmentDuration(segment);
                     const segmentOffset = segmentOffsets[index];
                     const sourceDuration = Math.max(0.1, segment.duration ?? segment.end ?? 0.1);
                     // Selected here means "click to inspect/adjust volume" (unchanged,
@@ -3353,14 +3877,14 @@ function FadeStudioWorkflow({
                     // confirmation, since dragging/trimming/deleting audio that's
                     // still glued to its video doesn't make sense without detaching first.
                     const selected = activeSegment?.id === segment.id && editorTool === "volume";
-                    const clipColor = fadeAccentColor(index);
+                    const clipColor = accentColor(index);
                     return <div key={`audio-${segment.id}`} role="button" tabIndex={0}
                       onPointerDown={(event) => { if ((event.target as HTMLElement).closest("[data-audio-trim-handle]")) return; seekFromTimelinePointer(event.clientX); setActiveSegmentId(segment.id); setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("volume"); }}
                       className={`absolute inset-y-0.5 overflow-hidden rounded border text-left ${selected ? `${clipColor.chipBg} border-white/40` : `${clipColor.chipBg} ${clipColor.chipBorder} hover:brightness-125`}`}
                       style={{ left: `${(segmentOffset / timelineDuration) * 100}%`, width: `${(segmentDuration / timelineDuration) * 100}%` }}
                       title={`Clip ${index + 1} audio at ${Math.round((segment.volume ?? 1) * 100)}%`}
                     >
-                      <FadeWaveform peaks={waveformPeaks[segment.media.id]} startRatio={segment.start / sourceDuration} endRatio={(segment.end ?? sourceDuration) / sourceDuration} className="absolute inset-1 h-[calc(100%_-_8px)] w-[calc(100%_-_8px)] text-[#656565]" />
+                      <Waveform peaks={waveformPeaks[segment.media.id]} startRatio={segment.start / sourceDuration} endRatio={(segment.end ?? sourceDuration) / sourceDuration} className="absolute inset-1 h-[calc(100%_-_8px)] w-[calc(100%_-_8px)] text-[#656565]" />
                       {selected && <>
                         <span data-audio-trim-handle role="slider" tabIndex={0} aria-label="Trim clip audio start (detaches it from the video)" onPointerDown={(event) => { event.stopPropagation(); requestDetach(segment); }} className="absolute inset-y-0 left-0 z-10 w-2.5 cursor-ew-resize touch-none bg-primary/70" />
                         <span data-audio-trim-handle role="slider" tabIndex={0} aria-label="Trim clip audio end (detaches it from the video)" onPointerDown={(event) => { event.stopPropagation(); requestDetach(segment); }} className="absolute inset-y-0 right-0 z-10 w-2.5 cursor-ew-resize touch-none bg-primary/70" />
@@ -3369,20 +3893,58 @@ function FadeStudioWorkflow({
                   })}
                 </div>
                 <div className="relative flex h-12 items-center border-b border-white/10 bg-[#0a0a0a]">
-                  <button
-                    type="button"
-                    onClick={onUpload}
-                    disabled={segments.length >= MAX_FADE_SEGMENTS}
-                    className="sticky left-8 flex min-h-10 items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 text-[11px] font-semibold text-neutral-500 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40"
-                    style={{ width: fixedLaneControlWidth }}
-                  >
-                    <Icon name="plus" size={12} /> Add Clip
-                  </button>
+                  <div className="sticky left-2 z-20 flex items-center gap-2 pointer-events-auto">
+                    <button type="button" onClick={onUpload} disabled={segments.length >= MAX_SEGMENTS} className="flex h-10 shrink-0 items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 px-3 text-[11px] font-semibold text-neutral-500 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-40">
+                      <Icon name="plus" size={12} /> Add Clip
+                    </button>
+                  </div>
                 </div>
+                {VISUAL_KINDS.map((kind) => {
+                  const rows = visualRowsByKind[kind];
+                  const kindLocks = visualRowLocks[kind];
+                  const kindLabel = VISUAL_KIND_LABELS[kind];
+                  const kindIcon = (size: number) => kind === "gif" ? <span className="font-black">GIF</span> : <Icon name={kind === "sticker" ? "star" : kind === "video" ? "video" : "image"} size={size} />;
+                  return <Fragment key={`visual-section-${kind}`}>
+                    <div className="relative flex h-12 items-center border-b border-white/10 bg-[#0a0a0a]">
+                      <div className="sticky left-2 z-20 flex items-center gap-2 pointer-events-auto">
+                        <button type="button" onClick={() => { beginEditorEdit(); setVisualRowCounts((current) => ({ ...current, [kind]: current[kind] + 1 })); }} className="flex h-10 shrink-0 items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 px-3 text-[11px] font-semibold text-neutral-500 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                          <Icon name="plus" size={12} /> Add Row
+                        </button>
+                        <button type="button" onClick={() => onAddVisual(kind, rows.length)} className="flex h-10 shrink-0 items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 px-3 text-[11px] font-semibold text-neutral-500 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+                          {kindIcon(12)} Add {kindLabel}
+                        </button>
+                      </div>
+                    </div>
+                    {rows.length > 0 && <div ref={(el) => { visualLaneRef.current[kind] = el; }} className="relative border-b border-white/10 bg-[#0a0a0a]" style={{ height: rows.length * VISUAL_ROW_HEIGHT }} aria-label={`${kindLabel} overlay tracks`}>
+                      {rows.map((row, rowIndex) => {
+                        const locked = !!kindLocks[rowIndex];
+                        return <div key={`${kind}-row-${rowIndex}`} className="absolute inset-x-0 flex items-center border-t border-white/[0.06] first:border-t-0" style={{ top: rowIndex * VISUAL_ROW_HEIGHT, height: VISUAL_ROW_HEIGHT }}>
+                          <div className="sticky left-2 z-20 flex items-center gap-1 pointer-events-auto">
+                            <button type="button" onClick={() => { beginEditorEdit(); setVisualRowLocks((current) => ({ ...current, [kind]: { ...current[kind], [rowIndex]: !locked } })); }} aria-pressed={locked} aria-label={`${locked ? "Unlock" : "Lock"} ${kindLabel} row ${rowIndex + 1}`} title={locked ? "Unlock row" : "Lock row"} className={`flex h-8 w-8 items-center justify-center rounded-lg border ${locked ? "border-primary/60 bg-primary/20 text-primary" : "border-white/15 bg-black/70 text-neutral-400 hover:text-white"}`}><Icon name={locked ? "lock" : "unlock"} size={13} /></button>
+                            <span className="rounded bg-black/70 px-2 py-1 text-[10px] font-bold text-neutral-400">{kindLabel} {rowIndex + 1}</span>
+                          </div>
+                          {row.length === 0 && <div className="sticky left-40 z-10 flex items-center gap-1.5 pointer-events-auto">
+                            <button type="button" disabled={locked} onClick={() => onAddVisual(kind, rowIndex)} className="inline-flex h-8 items-center gap-1 rounded-lg border border-dashed border-white/15 px-2 text-[10px] font-bold text-neutral-400 hover:border-primary hover:text-primary disabled:opacity-35">{kindIcon(12)} {kindLabel}</button>
+                            <button type="button" disabled={locked} onClick={() => deleteVisualRow(kind, rowIndex)} aria-label={`Delete empty ${kindLabel.toLowerCase()} row ${rowIndex + 1}`} className="ml-1 flex h-8 w-8 items-center justify-center rounded-lg text-red-300 hover:bg-red-400/10 disabled:opacity-35" title={locked ? "Unlock this row before deleting it" : "Delete empty row"}><Icon name="trash" size={12} /></button>
+                          </div>}
+                          {row.map((layer) => {
+                            const selected = editorTool === "visual" && selectedVisualLayerId === layer.id;
+                            const left = (layer.start / timelineDuration) * 100;
+                            const width = ((layer.end - layer.start) / timelineDuration) * 100;
+                            return <div key={layer.id} role="button" tabIndex={0} data-keep-selection onPointerDown={(event) => { if ((event.target as HTMLElement).closest("[data-visual-trim-handle]")) return; beginVisualDrag(event, layer, "move"); }} onPointerMove={moveVisualDrag} onPointerUp={endVisualDrag} onPointerCancel={endVisualDrag} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedVisualLayerId(layer.id); setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("visual"); } }} className={`absolute touch-none overflow-hidden rounded-md border text-left ${locked ? "cursor-default opacity-70" : "cursor-grab"} ${selected ? "border-primary bg-primary/25 ring-1 ring-primary" : "border-cyan-400/50 bg-cyan-500/15 hover:brightness-125"}`} style={{ left: `${left}%`, width: `${width}%`, top: 5, height: VISUAL_ROW_HEIGHT - 10 }}>
+                              <span className={`block truncate py-2 text-[10px] font-bold text-white ${selected ? "px-5" : "px-2"}`}>{layer.media.name}</span>
+                              {selected && !locked && <><span data-visual-trim-handle role="slider" tabIndex={0} aria-label="Trim visual layer start" aria-valuemin={0} aria-valuemax={layer.end - 0.2} aria-valuenow={layer.start} onPointerDown={(event) => beginVisualDrag(event, layer, "start")} onPointerMove={moveVisualDrag} onPointerUp={endVisualDrag} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); beginEditorEdit(); const delta = event.key === "ArrowLeft" ? -0.1 : 0.1; setVisualLayers((current) => current.map((item) => item.id === layer.id ? { ...item, start: clamp(item.start + delta, 0, item.end - 0.2) } : item)); }} className="absolute inset-y-0 left-0 z-20 w-4 cursor-ew-resize bg-primary/90" /><span data-visual-trim-handle role="slider" tabIndex={0} aria-label="Trim visual layer end" aria-valuemin={layer.start + 0.2} aria-valuemax={timelineDuration} aria-valuenow={layer.end} onPointerDown={(event) => beginVisualDrag(event, layer, "end")} onPointerMove={moveVisualDrag} onPointerUp={endVisualDrag} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); beginEditorEdit(); const delta = event.key === "ArrowLeft" ? -0.1 : 0.1; setVisualLayers((current) => current.map((item) => item.id === layer.id ? { ...item, end: clamp(item.end + delta, item.start + 0.2, timelineDuration) } : item)); }} className="absolute inset-y-0 right-0 z-20 w-4 cursor-ew-resize bg-primary/90" /></>}
+                            </div>;
+                          })}
+                        </div>;
+                      })}
+                    </div>}
+                  </Fragment>;
+                })}
                 {(audioClips.length > 0 || audioExtraRows > 0) && <div
                   ref={audioLaneRef}
                   className="relative border-b border-white/10 bg-[#0a0a0a]"
-                  style={{ height: audioRowCount * FADE_AUDIO_ROW_HEIGHT }}
+                  style={{ height: audioRowCount * AUDIO_ROW_HEIGHT }}
                   aria-label="Audio clips tracks"
                 >
                   {Array.from({ length: audioRowCount }, (_, rowIndex) => {
@@ -3390,7 +3952,7 @@ function FadeStudioWorkflow({
                     return <div
                       key={`audio-row-${rowIndex}`}
                       className={`pointer-events-none absolute inset-x-0 flex items-center border-t border-white/[0.06] transition-colors first:border-t-0 ${audioRowDropTarget === rowIndex ? "bg-primary/10 ring-1 ring-inset ring-primary/50" : ""}`}
-                      style={{ top: rowIndex * FADE_AUDIO_ROW_HEIGHT, height: FADE_AUDIO_ROW_HEIGHT }}
+                      style={{ top: rowIndex * AUDIO_ROW_HEIGHT, height: AUDIO_ROW_HEIGHT }}
                     >
                       {rowEmpty && <button
                         type="button"
@@ -3406,26 +3968,26 @@ function FadeStudioWorkflow({
                   {audioRows.map((row, rowIndex) => row.map((clip) =>
                     renderAudioBlock(
                       clip,
-                      rowIndex * FADE_AUDIO_ROW_HEIGHT + 4,
-                      FADE_AUDIO_ROW_HEIGHT - 8,
+                      rowIndex * AUDIO_ROW_HEIGHT + 4,
+                      AUDIO_ROW_HEIGHT - 8,
                       rowIndex,
                     ),
                   ))}
                 </div>}
                 <div className="relative flex h-12 items-center border-t border-white/10 bg-[#0a0a0a]">
-                  <div className="sticky left-8 flex items-center gap-2" style={{ width: fixedLaneControlWidth }}>
+                  <div className="sticky left-2 z-20 flex items-center gap-2 pointer-events-auto">
                     <button
                       type="button"
                       onClick={() => setAudioExtraRows((current) => current + 1)}
                       title="Reserve an empty row to drag audio clips into"
-                      className="flex min-h-10 shrink-0 items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 px-3 text-[11px] font-semibold text-neutral-500 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      className="flex h-10 shrink-0 items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 px-3 text-[11px] font-semibold text-neutral-500 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     >
                       <Icon name="plus" size={12} /> Add Row
                     </button>
                     <button
                       type="button"
                       onClick={() => { setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("audio"); }}
-                      className="flex min-h-10 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 text-[11px] font-semibold text-neutral-500 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      className="flex h-10 shrink-0 items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 px-3 text-[11px] font-semibold text-neutral-500 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     >
                       <Icon name="plus" size={12} /> Add Audio Clip
                     </button>
@@ -3434,7 +3996,7 @@ function FadeStudioWorkflow({
                 {(captionLayers.length > 0 || captionExtraRows > 0) && <div
                   ref={captionLaneRef}
                   className="relative border-t border-white/10 bg-[#0a0a0a]"
-                  style={{ height: captionRowCount * FADE_CAPTION_ROW_HEIGHT }}
+                  style={{ height: captionRowCount * CAPTION_ROW_HEIGHT }}
                   aria-label="Text overlays track"
                 >
                   {Array.from({ length: captionRowCount }, (_, rowIndex) => {
@@ -3442,7 +4004,7 @@ function FadeStudioWorkflow({
                     return <div
                       key={`caption-row-${rowIndex}`}
                       className={`pointer-events-none absolute inset-x-0 flex items-center border-t border-white/[0.06] transition-colors first:border-t-0 ${captionRowDropTarget === rowIndex ? "bg-primary/10 ring-1 ring-inset ring-primary/50" : ""}`}
-                      style={{ top: rowIndex * FADE_CAPTION_ROW_HEIGHT, height: FADE_CAPTION_ROW_HEIGHT }}
+                      style={{ top: rowIndex * CAPTION_ROW_HEIGHT, height: CAPTION_ROW_HEIGHT }}
                     >
                       {rowEmpty && <button
                         type="button"
@@ -3459,17 +4021,17 @@ function FadeStudioWorkflow({
                     const left = (layer.start / timelineDuration) * 100;
                     const width = ((layer.end - layer.start) / timelineDuration) * 100;
                     const selected = editorTool === "captions" && selectedCaptionId === layer.id;
-                    const color = fadeAccentColor(captionLayers.findIndex((item) => item.id === layer.id));
+                    const color = accentColor(captionLayers.findIndex((item) => item.id === layer.id));
                     return <div key={layer.id} role="button" tabIndex={0}
                       data-keep-selection
-                      aria-label={`Text overlay "${layer.text.trim() || "empty"}", ${formatFadeTime(layer.end - layer.start, true)}`}
+                      aria-label={`Text overlay "${layer.text.trim() || "empty"}", ${formatTime(layer.end - layer.start, true)}`}
                       onPointerDown={(event) => {
                         if ((event.target as HTMLElement).closest("[data-caption-trim-handle]")) return;
                         beginCaptionDrag(event, layer, "move", rowIndex);
                       }}
                       onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedCaptionId(layer.id); setSelectedAudioClipId(null); setEditorTool("captions"); seekTimeline(layer.start); } }}
                       className={`absolute touch-none overflow-hidden rounded-md border text-left transition-colors ${selected ? "border-primary bg-primary/25 ring-1 ring-primary" : `${color.chipBorder} ${color.chipBg} hover:brightness-125`}`}
-                      style={{ left: `${left}%`, width: `${width}%`, top: rowIndex * FADE_CAPTION_ROW_HEIGHT + 4, height: FADE_CAPTION_ROW_HEIGHT - 8 }}
+                      style={{ left: `${left}%`, width: `${width}%`, top: rowIndex * CAPTION_ROW_HEIGHT + 4, height: CAPTION_ROW_HEIGHT - 8 }}
                     >
                       <span className={`block truncate py-2.5 text-[10px] font-bold text-white ${selected ? "px-5" : "px-2"}`}>{layer.text.trim() || "Text overlay"}</span>
                       {selected && <>
@@ -3480,19 +4042,19 @@ function FadeStudioWorkflow({
                   }))}
                 </div>}
                 <div className="relative flex h-12 items-center border-t border-white/10 bg-[#0a0a0a]">
-                  <div className="sticky left-8 flex items-center gap-2" style={{ width: fixedLaneControlWidth }}>
+                  <div className="sticky left-2 z-20 flex items-center gap-2 pointer-events-auto">
                     <button
                       type="button"
                       onClick={() => setCaptionExtraRows((current) => current + 1)}
                       title="Reserve an empty row to drag text overlays into"
-                      className="flex min-h-10 shrink-0 items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 px-3 text-[11px] font-semibold text-neutral-500 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      className="flex h-10 shrink-0 items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 px-3 text-[11px] font-semibold text-neutral-500 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     >
                       <Icon name="plus" size={12} /> Add Row
                     </button>
                     <button
                       type="button"
                       onClick={addCaptionLayer}
-                      className="flex min-h-10 min-w-0 flex-1 items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 text-[11px] font-semibold text-neutral-500 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                      className="flex h-10 shrink-0 items-center justify-center gap-1 rounded-lg border border-dashed border-white/15 px-3 text-[11px] font-semibold text-neutral-500 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
                     >
                       <Icon name="plus" size={12} /> Add Text Overlay
                     </button>
@@ -3503,12 +4065,35 @@ function FadeStudioWorkflow({
                   className="pointer-events-none absolute inset-y-0 z-40 w-0.5 bg-primary shadow-[0_0_8px_rgba(45,212,191,0.9)]"
                   style={{ left: `${Math.min(100, Math.max(0, (snapIndicator / timelineDuration) * 100))}%` }}
                 />}
-                <div className="pointer-events-none absolute inset-y-0 z-30 w-px bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.35)]" style={{ left: `${Math.min(100, Math.max(0, (previewTime / timelineDuration) * 100))}%` }}><span className="absolute -left-1.5 top-0 h-3 w-3 rotate-45 rounded-[2px] bg-white" /><span className="absolute left-2 top-1 rounded bg-white px-1.5 py-0.5 font-mono text-[9px] font-bold text-black shadow">{formatFadeTime(previewTime, true)}</span></div>
+                <div className="pointer-events-none absolute inset-y-0 z-30 w-px bg-white shadow-[0_0_0_1px_rgba(0,0,0,0.35)]" style={{ left: `${Math.min(100, Math.max(0, (previewTime / timelineDuration) * 100))}%` }}><span className="absolute -left-1.5 top-0 h-3 w-3 rotate-45 rounded-[2px] bg-white" /><span className="absolute left-2 top-1 rounded bg-white px-1.5 py-0.5 font-mono text-[9px] font-bold text-black shadow">{formatTime(previewTime, true)}</span></div>
               </div>
               </div>
             </div>
           </div>
           <div className="min-h-24 border-b border-white/10 px-4 py-4">
+            {editorTool === "visual" && selectedVisualLayer && (() => {
+              const rowLocked = !!visualRowLocks[selectedVisualLayer.kind][selectedVisualLayer.row];
+              const locked = rowLocked;
+              const patchVisual = (patch: Partial<VisualLayer>) => setVisualLayers((current) => current.map((layer) => layer.id === selectedVisualLayer.id ? { ...layer, ...patch } : layer));
+              const chroma = selectedVisualLayer.chroma ?? { enabled: false, color: "#00ff00", similarity: 0.3, blend: 0.08 };
+              return <section aria-labelledby="visual-layer-settings-heading">
+                <div className="flex flex-wrap items-center justify-between gap-3">
+                  <div className="flex min-w-0 items-center gap-2"><Icon name="image" size={15} className="text-neutral-400" /><div className="min-w-0"><h3 id="visual-layer-settings-heading" className="text-sm font-bold text-white">Visual Layer Settings</h3><p className="max-w-80 truncate text-xs text-neutral-500">{selectedVisualLayer.media.name} · {VISUAL_KIND_LABELS[selectedVisualLayer.kind]} {selectedVisualLayer.row + 1}</p></div></div>
+                  <div className="flex items-center gap-2">
+                    {locked && <span className="inline-flex items-center gap-1 text-xs font-semibold text-amber-300"><Icon name="lock" size={13} /> Unlock the row to edit</span>}
+                    <button type="button" onClick={() => requestDeleteVisualLayer(selectedVisualLayer.id)} title={locked ? "Unlock this layer before deleting it" : "Delete this layer"} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-red-400/25 bg-red-400/10 px-3 text-xs font-bold text-red-200 hover:bg-red-400/20"><Icon name="trash" size={14} /> Delete</button>
+                  </div>
+                </div>
+                <div className="mt-4 grid gap-4 md:grid-cols-3">
+                  {(["x", "y", "width"] as const).map((field) => <label key={field} className="text-xs font-semibold text-neutral-300"><span className="flex justify-between"><span>{field === "x" ? "Horizontal" : field === "y" ? "Vertical" : "Size"}</span><span className="font-mono text-neutral-400">{Math.round(selectedVisualLayer[field])}%</span></span><input type="range" min={field === "width" ? 5 : 0} max="100" step="1" disabled={locked} value={selectedVisualLayer[field]} onPointerDown={beginEditorEdit} onChange={(event) => patchVisual({ [field]: Number(event.target.value) })} className="mt-2 w-full accent-primary disabled:opacity-35" /></label>)}
+                </div>
+                <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-white/10 pt-4">
+                  <button type="button" disabled={locked} onClick={() => { beginEditorEdit(); patchVisual({ x: 50, y: 50, width: selectedVisualLayer.kind === "sticker" ? 25 : 45 }); }} className="min-h-9 rounded-lg border border-white/15 px-3 text-xs font-bold text-white hover:bg-white/10 disabled:opacity-35">Reset position</button>
+                  <label className="inline-flex min-h-9 items-center gap-2 text-xs font-bold text-white"><input type="checkbox" checked={chroma.enabled} disabled={locked} onChange={(event) => { beginEditorEdit(); patchVisual({ chroma: { ...chroma, enabled: event.target.checked } }); }} className="accent-primary" /> Green screen</label>
+                  {chroma.enabled && <><label className="flex items-center gap-2 text-xs font-semibold text-neutral-300">Key color <input type="color" value={chroma.color} disabled={locked} onPointerDown={beginEditorEdit} onChange={(event) => patchVisual({ chroma: { ...chroma, color: event.target.value } })} className="h-8 w-10 rounded border border-white/15 bg-transparent" /></label><label className="min-w-40 text-xs font-semibold text-neutral-300">Tolerance · {Math.round(chroma.similarity * 100)}%<input type="range" min="0.05" max="0.65" step="0.01" value={chroma.similarity} disabled={locked} onPointerDown={beginEditorEdit} onChange={(event) => patchVisual({ chroma: { ...chroma, similarity: Number(event.target.value) } })} className="ml-2 align-middle accent-primary" /></label><label className="min-w-40 text-xs font-semibold text-neutral-300">Edge blend · {Math.round(chroma.blend * 100)}%<input type="range" min="0" max="0.3" step="0.01" value={chroma.blend} disabled={locked} onPointerDown={beginEditorEdit} onChange={(event) => patchVisual({ chroma: { ...chroma, blend: Number(event.target.value) } })} className="ml-2 align-middle accent-primary" /></label><span className="text-[11px] text-neutral-500">Applied in the rendered video.</span></>}
+                </div>
+              </section>;
+            })()}
             {editorTool === "clip" && activeSegment && (
               <section aria-labelledby="clip-settings-heading">
                 <div className="flex min-w-0 items-center justify-between gap-3">
@@ -3586,7 +4171,7 @@ function FadeStudioWorkflow({
               </div>
               <div className="border-t border-white/10 pt-3">
                 <p className="mb-2 text-[11px] text-neutral-500">Drag a transition onto a block on the timeline, or click one to apply it to the seam selected above{seamIndex > 0 && seamIndex < segments.length ? <> (<span className="font-bold text-neutral-300">{seamIndex}→{seamIndex + 1}</span>)</> : null}. The block&rsquo;s width is the transition&rsquo;s length — drag it to lengthen.</p>
-                <FadeTransitionLibrary selectedId={activeSeam.type} onApply={(id) => applySeamTransition(seamIndex, id)} />
+                <TransitionLibrary selectedId={activeSeam.type} onApply={(id) => applySeamTransition(seamIndex, id)} />
                 {transitionById(activeSeam.type)?.approx && <p className="mt-2 text-[11px] text-amber-400/80">The preview for {transitionLabel(activeSeam.type)} is an approximation — the rendered result will differ in detail.</p>}
               </div>
             </div>}
@@ -3663,6 +4248,7 @@ function FadeStudioWorkflow({
                       <button type="button" onClick={onAudioLibrary} className="inline-flex min-h-10 items-center gap-2 rounded-lg border border-white/15 px-3 text-xs font-bold text-white transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"><Icon name="image" size={14} />Library</button>
                     </div>
                   </div>
+                  <MemeSoundLibrary busy={audioUploading} onAdd={onMemeSound} onPreview={onPreviewMemeSound} />
                 </section>;
               }
               const id = selectedClip.id;
@@ -3769,18 +4355,18 @@ function FadeStudioWorkflow({
                     <div className="min-w-0">
                       <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-neutral-500">Font</p>
                       <div className="flex flex-wrap gap-1">
-                        {FADE_FONTS.map((f) => <button key={f.id} type="button" onClick={() => patchCaption({ font: f.id })} style={{ fontFamily: f.stack }} className={`rounded-lg px-2.5 py-1.5 text-sm font-bold transition-colors ${selectedCaptionLayer.font === f.id ? "border border-primary bg-white/10 text-white" : "border border-transparent text-neutral-400 hover:text-white"}`}>{f.name}</button>)}
+                        {FONTS.map((f) => <button key={f.id} type="button" onClick={() => patchCaption({ font: f.id })} style={{ fontFamily: f.stack }} className={`rounded-lg px-2.5 py-1.5 text-sm font-bold transition-colors ${selectedCaptionLayer.font === f.id ? "border border-primary bg-white/10 text-white" : "border border-transparent text-neutral-400 hover:text-white"}`}>{f.name}</button>)}
                       </div>
                     </div>
                     <div className="min-w-0">
                       <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-neutral-500">Font Size</p>
                       <div className="flex flex-wrap gap-1">
-                        {FADE_CAPTION_SIZE_PRESETS.map((size) => <button key={size.id} type="button" onClick={() => patchCaption({ scale: size.scale })} className={`rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${selectedCaptionLayer.scale === size.scale ? "border border-primary bg-white/10 text-white" : "border border-transparent text-neutral-400 hover:text-white"}`}>{size.name}</button>)}
+                        {CAPTION_SIZE_PRESETS.map((size) => <button key={size.id} type="button" onClick={() => patchCaption({ scale: size.scale })} className={`rounded-lg px-3 py-1.5 text-sm font-bold transition-colors ${selectedCaptionLayer.scale === size.scale ? "border border-primary bg-white/10 text-white" : "border border-transparent text-neutral-400 hover:text-white"}`}>{size.name}</button>)}
                       </div>
-                      <input type="range" min={FADE_CAPTION_SCALE_MIN} max={FADE_CAPTION_SCALE_MAX} step={0.25} value={selectedCaptionLayer.scale} onChange={(event) => patchCaption({ scale: Number(event.target.value) })} aria-label="Font size" className="mt-3 w-full cursor-pointer accent-primary" />
+                      <input type="range" min={CAPTION_SCALE_MIN} max={CAPTION_SCALE_MAX} step={0.25} value={selectedCaptionLayer.scale} onChange={(event) => patchCaption({ scale: Number(event.target.value) })} aria-label="Font size" className="mt-3 w-full cursor-pointer accent-primary" />
                       <label className="mt-2 flex items-center gap-2 text-xs font-semibold text-neutral-400">Size
                         <span className="flex items-center rounded-lg border border-white/10 bg-black/30 px-2 py-1">
-                          <input type="number" min={FADE_CAPTION_SCALE_MIN} max={FADE_CAPTION_SCALE_MAX} step={0.25} value={selectedCaptionLayer.scale} onChange={(event) => patchCaption({ scale: clamp(Number(event.target.value), FADE_CAPTION_SCALE_MIN, FADE_CAPTION_SCALE_MAX) })} className="w-14 bg-transparent text-right font-mono text-xs font-bold text-white outline-none" aria-label="Font size value" />
+                          <input type="number" min={CAPTION_SCALE_MIN} max={CAPTION_SCALE_MAX} step={0.25} value={selectedCaptionLayer.scale} onChange={(event) => patchCaption({ scale: clamp(Number(event.target.value), CAPTION_SCALE_MIN, CAPTION_SCALE_MAX) })} className="w-14 bg-transparent text-right font-mono text-xs font-bold text-white outline-none" aria-label="Font size value" />
                           <span className="ml-1 font-mono text-neutral-500">cqw</span>
                         </span>
                       </label>
@@ -3788,9 +4374,9 @@ function FadeStudioWorkflow({
                     <div className="min-w-0">
                       <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-neutral-500">Style</p>
                       <div className="grid grid-cols-3 gap-1.5">
-                        {FADE_TEXT_STYLES.map((style) => <button key={style.id} type="button" onClick={() => patchCaption({ style: style.id })} aria-pressed={selectedCaptionLayer.style === style.id} title={style.name} className={`flex h-12 items-center justify-center rounded-lg border p-1.5 transition-colors ${selectedCaptionLayer.style === style.id ? "border-primary ring-2 ring-primary/30" : "border-white/10 hover:border-primary/50"}`}>
+                        {TEXT_STYLES.map((style) => <button key={style.id} type="button" onClick={() => patchCaption({ style: style.id })} aria-pressed={selectedCaptionLayer.style === style.id} title={style.name} className={`flex h-12 items-center justify-center rounded-lg border p-1.5 transition-colors ${selectedCaptionLayer.style === style.id ? "border-primary ring-2 ring-primary/30" : "border-white/10 hover:border-primary/50"}`}>
                           <span className="flex h-full w-full items-center justify-center rounded-md bg-gradient-to-br from-neutral-500 via-neutral-600 to-neutral-800">
-                            <span className={`rounded px-1.5 py-0.5 text-sm font-black ${style.className}`} style={{ color: selectedCaptionLayer.color || style.fill, ...(selectedCaptionLayer.bgEnabled ? { backgroundColor: fadeHexToRgba(selectedCaptionLayer.bgColor, selectedCaptionLayer.bgOpacity ?? 100) } : {}) }}>Aa</span>
+                            <span className={`rounded px-1.5 py-0.5 text-sm font-black ${style.className}`} style={{ color: selectedCaptionLayer.color || style.fill, ...(selectedCaptionLayer.bgEnabled ? { backgroundColor: hexToRgba(selectedCaptionLayer.bgColor, selectedCaptionLayer.bgOpacity ?? 100) } : {}) }}>Aa</span>
                           </span>
                         </button>)}
                       </div>
@@ -3798,8 +4384,8 @@ function FadeStudioWorkflow({
                     <div className="min-w-0">
                       <p className="mb-2 text-xs font-black uppercase tracking-[0.1em] text-neutral-500">Font Color</p>
                       <label className="flex min-w-0 items-center gap-1.5 rounded-lg border border-white/10 bg-black/30 px-2 py-1">
-                        <input type="color" value={selectedCaptionLayer.color || FADE_CAPTION_COLOR_DEFAULT} onChange={(event) => patchCaption({ color: event.target.value })} className="h-6 w-6 shrink-0 cursor-pointer border-0 bg-transparent p-0" aria-label="Font color" />
-                        <input type="text" value={selectedCaptionLayer.color || FADE_CAPTION_COLOR_DEFAULT} onChange={(event) => patchCaption({ color: event.target.value })} className="w-full min-w-0 bg-transparent font-mono text-xs font-bold text-white outline-none" aria-label="Font color hex code" spellCheck={false} />
+                        <input type="color" value={selectedCaptionLayer.color || CAPTION_COLOR_DEFAULT} onChange={(event) => patchCaption({ color: event.target.value })} className="h-6 w-6 shrink-0 cursor-pointer border-0 bg-transparent p-0" aria-label="Font color" />
+                        <input type="text" value={selectedCaptionLayer.color || CAPTION_COLOR_DEFAULT} onChange={(event) => patchCaption({ color: event.target.value })} className="w-full min-w-0 bg-transparent font-mono text-xs font-bold text-white outline-none" aria-label="Font color hex code" spellCheck={false} />
                       </label>
                     </div>
                     <div className="min-w-0">
@@ -3842,7 +4428,7 @@ function FadeStudioWorkflow({
               Split
             </button>
             <button type="button" aria-pressed={editorTool === "trim"} onClick={() => { setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("trim"); }} className={`flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium hover:bg-white/10 hover:text-white ${editorTool === "trim" ? "bg-white/10 text-white" : "text-neutral-300"}`}><Icon name="trim" size={19} />Trim</button>
-            <button type="button" onClick={duplicateActive} disabled={segments.length >= MAX_FADE_SEGMENTS} className="flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium text-neutral-300 hover:bg-white/10 hover:text-white disabled:opacity-35"><Icon name="copy" size={19} />Duplicate</button>
+            <button type="button" onClick={duplicateActive} disabled={segments.length >= MAX_SEGMENTS} className="flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium text-neutral-300 hover:bg-white/10 hover:text-white disabled:opacity-35"><Icon name="copy" size={19} />Duplicate</button>
             <button type="button" onClick={onUpload} className="flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium text-neutral-300 hover:bg-white/10 hover:text-white"><Icon name="upload" size={19} />Upload</button>
             <button type="button" onClick={onLibrary} className="flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium text-neutral-300 hover:bg-white/10 hover:text-white"><Icon name="image" size={19} />Library</button>
             <button type="button" onClick={onCrop} className="flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium text-neutral-300 hover:bg-white/10 hover:text-white"><Icon name="expand" size={19} />Recrop</button>
@@ -3874,9 +4460,10 @@ function FadeStudioWorkflow({
           </div>
         </div>
         <input ref={fileInput} type="file" accept="video/*" className="hidden" onChange={(event) => { if (event.target.files?.[0]) onFile(event.target.files[0]); event.target.value = ""; }} />
-        {renderScopeOpen && <FadeRenderScopeDialog platforms={selectedPlatforms} defaultChecked={dirtyRenderPlatforms.length > 0 ? dirtyRenderPlatforms : selectedPlatforms} onClose={() => setRenderScopeOpen(false)} onRender={(targets) => { setRenderScopeOpen(false); startRender(targets); }} />}
-        {previewOpen && <FadePreviewModal platformOutputMediaIds={platformOutputMediaIds} activePlatform={previewPlatform} onSelectPlatform={setPreviewPlatform} onClose={() => setPreviewOpen(false)} />}
-        {detachPending && <FadeDetachAudioDialog action={detachPending.action} onClose={() => setDetachPending(null)} onConfirm={confirmDetach} />}
+        {renderScopeOpen && <RenderScopeDialog platforms={selectedPlatforms} defaultChecked={dirtyRenderPlatforms.length > 0 ? dirtyRenderPlatforms : selectedPlatforms} onClose={() => setRenderScopeOpen(false)} onRender={(targets) => { setRenderScopeOpen(false); startRender(targets); }} />}
+        {previewOpen && <PreviewModal platformOutputMediaIds={platformOutputMediaIds} activePlatform={previewPlatform} onSelectPlatform={setPreviewPlatform} onClose={() => setPreviewOpen(false)} />}
+        {detachPending && <DetachAudioDialog action={detachPending.action} onClose={() => setDetachPending(null)} onConfirm={confirmDetach} />}
+        {unlockPendingVisualLayer && <UnlockVisualLayerDialog layerName={unlockPendingVisualLayer.media.name} rowNumber={unlockPendingVisualLayer.row + 1} onClose={closeUnlockVisualLayerDialog} onConfirm={confirmUnlockVisualLayer} />}
       </section>
       {error && <p className="mt-4 rounded-xl border border-danger/30 bg-danger/5 px-4 py-3 text-sm font-semibold text-danger">{error}</p>}
     </div>;
@@ -3886,12 +4473,12 @@ function FadeStudioWorkflow({
     {editGuard.dialog}
     <button type="button" onClick={() => history.back()} data-edit-guard-exempt className="inline-flex items-center gap-1 text-sm font-medium text-muted hover:text-primary-deep"><Icon name="chevronLeft" size={15} /> Content Studio</button>
     <div className="mt-2 flex flex-wrap items-end justify-between gap-3"><div><h1 className="flex items-center gap-2 text-2xl font-bold"><span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary text-white"><Icon name="video" size={18} /></span>Video Editor Studio</h1><p className="mt-1 text-sm text-muted">Build a short sequence, split clips, and control how every transition lands.</p></div>{draftLocked && <span className="inline-flex items-center gap-1.5 text-xs font-bold text-primary-deep"><Icon name="check" size={13} /> Finished</span>}</div>
-    <div className="card mt-5 px-6 py-5" data-edit-guard-exempt><div className="flex items-center">{FADE_WORKFLOW_STEPS.map((label, index) => <div key={label} className="flex flex-1 items-center last:flex-none"><button type="button" onClick={() => goTo(index)} className="group flex min-h-11 min-w-11 flex-col items-center gap-2 rounded-lg px-1"><span className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-black ${index < step ? "border-primary bg-primary text-white" : index === step ? "border-primary bg-primary-soft text-primary-deep ring-4 ring-primary-soft/70" : "border-line bg-white text-muted"}`}>{index < step ? <Icon name="check" size={17} /> : index + 1}</span><span className={`text-xs font-black uppercase tracking-[0.12em] ${index === step ? "text-primary-deep" : index < step ? "text-ink" : "text-muted"}`}>{label}</span></button>{index < 2 && <span className={`mx-4 mb-8 h-0.5 flex-1 sm:mx-8 ${index < step ? "bg-primary" : "bg-line"}`} />}</div>)}</div></div>
+    <div className="card mt-5 px-6 py-5" data-edit-guard-exempt><div className="flex items-center">{WORKFLOW_STEPS.map((label, index) => <div key={label} className="flex flex-1 items-center last:flex-none"><button type="button" onClick={() => goTo(index)} className="group flex min-h-11 min-w-11 flex-col items-center gap-2 rounded-lg px-1"><span className={`flex h-9 w-9 items-center justify-center rounded-full border-2 text-sm font-black ${index < step ? "border-primary bg-primary text-white" : index === step ? "border-primary bg-primary-soft text-primary-deep ring-4 ring-primary-soft/70" : "border-line bg-white text-muted"}`}>{index < step ? <Icon name="check" size={17} /> : index + 1}</span><span className={`text-xs font-black uppercase tracking-[0.12em] ${index === step ? "text-primary-deep" : index < step ? "text-ink" : "text-muted"}`}>{label}</span></button>{index < 2 && <span className={`mx-4 mb-8 h-0.5 flex-1 sm:mx-8 ${index < step ? "bg-primary" : "bg-line"}`} />}</div>)}</div></div>
     {draftStatus !== "idle" && <div className="mt-3 flex justify-end"><span className="inline-flex items-center gap-1.5 text-xs font-semibold text-muted">{draftStatus === "saving" ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-primary/25 border-t-primary" /> : <Icon name="check" size={13} className="text-primary" />}{draftStatus === "saving" ? "Saving draft…" : "Saved as draft"}</span></div>}
-    <div className="card mt-4 p-5 sm:p-6"><div className="flex items-center justify-between gap-3 border-b border-line pb-4"><div><p className="text-xs font-bold uppercase tracking-[0.12em] text-muted">Step {step + 1} of 3</p><h2 className="text-lg font-bold">{FADE_WORKFLOW_STEPS[step]}</h2></div>{uploading && <span className="inline-flex items-center gap-2 text-sm font-semibold text-primary-deep"><span className="h-4 w-4 animate-spin rounded-full border-2 border-primary/25 border-t-primary" /> {uploadStage}</span>}</div>
+    <div className="card mt-4 p-5 sm:p-6"><div className="flex items-center justify-between gap-3 border-b border-line pb-4"><div><p className="text-xs font-bold uppercase tracking-[0.12em] text-muted">Step {step + 1} of 3</p><h2 className="text-lg font-bold">{WORKFLOW_STEPS[step]}</h2></div>{uploading && <span className="inline-flex items-center gap-2 text-sm font-semibold text-primary-deep"><span className="h-4 w-4 animate-spin rounded-full border-2 border-primary/25 border-t-primary" /> {uploadStage}</span>}</div>
       {step === 1 && (
         <div className="mt-5">
-          <FadePlatformPreview platformOutputMediaIds={platformOutputMediaIds} activePlatform={previewPlatform} onSelectPlatform={setPreviewPlatform} />
+          <PlatformPreview platformOutputMediaIds={platformOutputMediaIds} activePlatform={previewPlatform} onSelectPlatform={setPreviewPlatform} />
           <div className="mt-5">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">AI caption brief</p>
@@ -4024,7 +4611,7 @@ function FadeStudioWorkflow({
             <div className="mt-4 grid gap-4 lg:grid-cols-[minmax(0,1fr)_320px]">
               <div className="overflow-hidden rounded-xl border border-line bg-white">
                 <div className="border-b border-line px-4 py-3 text-sm font-semibold">{selectedAccountIds.size} selected destination{selectedAccountIds.size === 1 ? "" : "s"}</div>
-                <div className="p-4"><FadePlatformPreview platformOutputMediaIds={platformOutputMediaIds} activePlatform={previewPlatform} onSelectPlatform={setPreviewPlatform} /></div>
+                <div className="p-4"><PlatformPreview platformOutputMediaIds={platformOutputMediaIds} activePlatform={previewPlatform} onSelectPlatform={setPreviewPlatform} /></div>
               </div>
               <div className="rounded-xl border border-line bg-white p-4">
                 {activeReviewPlatform ? (
@@ -4054,8 +4641,8 @@ function FadeStudioWorkflow({
   </div>;
 }
 
-function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initialDraft, initialDraftId, initialDraftStatus }: { onExit: () => void; accounts: FadeInAccount[]; initialClip: ComposerMedia | null; initialCaption: string; initialDraft?: FadeDraftSnapshot; initialDraftId?: string; initialDraftStatus?: string }) {
-  const [segments, setSegments] = useState<FadeTimelineSegment[]>(() => initialDraft?.segments?.length
+function VideoEditor({ onExit, accounts, initialClip, initialCaption, initialDraft, initialDraftId, initialDraftStatus }: { onExit: () => void; accounts: EditorAccount[]; initialClip: ComposerMedia | null; initialCaption: string; initialDraft?: DraftSnapshot; initialDraftId?: string; initialDraftStatus?: string }) {
+  const [segments, setSegments] = useState<TimelineSegment[]>(() => initialDraft?.segments?.length
     // Drafts saved before per-seam transitions get the old whole-sequence
     // setting backfilled onto every seam (segment 0 from the old dedicated
     // opening-fade field instead), so they resume looking identical.
@@ -4067,20 +4654,35 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
     : initialClip ? [{ id: crypto.randomUUID(), media: initialClip, start: 0, end: null, duration: null, volume: 1, crops: { default: { x: 0.5, y: 0.5 } } }] : []);
   const [activeSegmentId, setActiveSegmentId] = useState<string | null>(() => initialDraft?.segments?.[0]?.id ?? null);
   const [splitAt, setSplitAt] = useState(1);
-  const [transition, setTransition] = useState<FadeTransition>(() => initialDraft?.transition ?? "fade");
+  const [transition, setTransition] = useState<TransitionType>(() => initialDraft?.transition ?? "fade");
   const [transitionDuration, setTransitionDuration] = useState(() => initialDraft?.transitionDuration ?? 0.5);
   // No opening fade by default here — the default is on segment 0 itself
   // (either freshly stamped by addMedia, or backfilled above from an old draft).
-  const [closingSeam, setClosingSeam] = useState<FadeSeam>(() => initialDraft?.closingSeam ?? { type: "cut", duration: 0.5 });
-  const [audioClips, setAudioClips] = useState<FadeAudioClip[]>(() => initialDraft?.audioClips ?? []);
+  const [closingSeam, setClosingSeam] = useState<Seam>(() => initialDraft?.closingSeam ?? { type: "cut", duration: 0.5 });
+  const [audioClips, setAudioClips] = useState<AudioClip[]>(() => initialDraft?.audioClips ?? []);
   const [selectedAudioClipId, setSelectedAudioClipId] = useState<string | null>(null);
   const [audioUploading, setAudioUploading] = useState(false);
   const [audioLibraryOpen, setAudioLibraryOpen] = useState(false);
   // Timed text overlays baked into the export — separate from `caption`
   // below (plain post text, never rendered). See the captions-timeline
   // section near the top of this file for the type/rasterizer.
-  const [captionLayers, setCaptionLayers] = useState<FadeTextLayer[]>(() => initialDraft?.captionLayers ?? []);
+  const [captionLayers, setCaptionLayers] = useState<TextLayer[]>(() => initialDraft?.captionLayers ?? []);
   const [selectedCaptionId, setSelectedCaptionId] = useState<string | null>(null);
+  const [visualLayers, setVisualLayers] = useState<VisualLayer[]>(() => initialDraft?.visualLayers ?? []);
+  const [visualRowCounts, setVisualRowCounts] = useState<VisualRowCounts>(() => {
+    const counts = emptyVisualRowCounts();
+    for (const kind of VISUAL_KINDS) {
+      const layerRows = (initialDraft?.visualLayers ?? []).filter((layer) => layer.kind === kind).map((layer) => layer.row + 1);
+      counts[kind] = Math.max(initialDraft?.visualRowCounts?.[kind] ?? 0, ...layerRows, 0);
+    }
+    return counts;
+  });
+  const [visualRowLocks, setVisualRowLocks] = useState<VisualRowLocks>(() => {
+    const locks = emptyVisualRowLocks();
+    for (const kind of VISUAL_KINDS) locks[kind] = initialDraft?.visualRowLocks?.[kind] ?? {};
+    return locks;
+  });
+  const [selectedVisualLayerId, setSelectedVisualLayerId] = useState<string | null>(null);
   // Clicking anywhere outside a caption box or its styling panel clears the
   // selection (so its border/handles disappear) — same idiom as slideshow's
   // text layers. Clicks on a caption box or its resize/delete controls stop
@@ -4102,13 +4704,13 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
   const [activePlatform, setActivePlatform] = useState(() => initialDraft?.activePlatform ?? "");
   const [platformFormatIds, setPlatformFormatIds] = useState<Record<string, string>>(() => initialDraft?.platformFormatIds ?? {});
   const [pendingScopeMedia, setPendingScopeMedia] = useState<ComposerMedia | null>(null);
-  const [cropFlow, setCropFlow] = useState<{ segment: FadeTimelineSegment; keys: string[]; current: number } | null>(null);
+  const [cropFlow, setCropFlow] = useState<{ segment: TimelineSegment; keys: string[]; current: number } | null>(null);
   const [libraryOpen, setLibraryOpen] = useState(false);
   // One job per destination platform, so Continue can require every platform
   // to have a current render instead of just whichever tab is active.
   const [jobIds, setJobIds] = useState<Record<string, string>>({});
   const [platformOutputMediaIds, setPlatformOutputMediaIds] = useState<Record<string, string>>(() => initialDraft?.platformOutputMediaIds ?? {});
-  const [platformRenderStatuses, setPlatformRenderStatuses] = useState<Record<string, FadeJobStatus>>({});
+  const [platformRenderStatuses, setPlatformRenderStatuses] = useState<Record<string, JobStatus>>({});
   const [renderSignatures, setRenderSignatures] = useState<Record<string, string>>(() => initialDraft?.renderSignatures ?? {});
   const [pendingRenderSignatures, setPendingRenderSignatures] = useState<Record<string, string>>({});
   const [renderStartedAt, setRenderStartedAt] = useState<number | null>(null);
@@ -4120,7 +4722,7 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
   // Scalars mirroring the maps' aggregate state — first/overall values, kept
   // for anything (autosave, back-compat) that just wants "the" job.
   const [jobId, setJobId] = useState<string | null>(null);
-  const [status, setStatus] = useState<FadeJobStatus>("idle");
+  const [status, setStatus] = useState<JobStatus>("idle");
   // Unlike platformOutputMediaIds, this scalar was never itself saved to the
   // draft — so a draft reopened after every platform finished rendering in a
   // PREVIOUS session came back with this stuck at null (Finish gates on it)
@@ -4130,11 +4732,16 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
     () => Object.values(initialDraft?.platformOutputMediaIds ?? {})[0] ?? null,
   );
   const [error, setError] = useState("");
-  const undoStack = useRef<FadeEditorSnapshot[]>([]);
-  const redoStack = useRef<FadeEditorSnapshot[]>([]);
+  const undoStack = useRef<EditorSnapshot[]>([]);
+  const redoStack = useRef<EditorSnapshot[]>([]);
   const [historyState, setHistoryState] = useState({ canUndo: false, canRedo: false });
   const input = useRef<HTMLInputElement>(null);
   const audioInput = useRef<HTMLInputElement>(null);
+  const visualInput = useRef<HTMLInputElement>(null);
+  const visualUploadTarget = useRef<{ kind: VisualLayerKind; row: number } | null>(null);
+  const [giphyPickerType, setGiphyPickerType] = useState<GiphyPickerType | null>(null);
+  const [giphyImportingId, setGiphyImportingId] = useState<string | null>(null);
+  const giphyReturnFocus = useRef<HTMLElement | null>(null);
   const activeSegment = segments.find((segment) => segment.id === activeSegmentId) ?? segments[0] ?? null;
   const rendering = status === "queued" || status === "generating" || status === "compositing";
 
@@ -4144,12 +4751,13 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
   // (matches grid-2x2's platformCaptions), never baked into the video, so
   // editing it must never mark a completed render stale.
   function renderSignatureFor(platformId: string) {
-    const format = fadeFormatFor(platformId, platformFormatIds);
+    const format = formatFor(platformId, platformFormatIds);
     return JSON.stringify({
       segments: segments.map((segment) => ({ id: segment.media.id, start: segment.start, end: segment.end, volume: segment.volume, gapBefore: segment.gapBefore ?? 0, transitionIn: segmentSeam(segment), crop: segment.crops[platformId] ?? segment.crops.default })),
       closingSeam,
       // Audio clips are shared across every platform, same as captions.
       audioClips: audioClips.map((clip) => ({ mediaId: clip.mediaId, sourceStart: clip.sourceStart, sourceEnd: clip.sourceEnd, start: clip.start, volume: clip.volume })),
+      visualLayers: visualLayers.map((layer) => ({ mediaId: layer.media.id, kind: layer.kind, start: layer.start, end: layer.end, row: layer.row, x: layer.x, y: layer.y, width: layer.width, chroma: layer.chroma })),
       preset: format.presetId,
       aspect: format.aspect.id,
       // Captions are shared across every platform (not per-platform like
@@ -4161,7 +4769,7 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
     (platformId) => !platformOutputMediaIds[platformId] || renderSignatures[platformId] !== renderSignatureFor(platformId),
   );
   const rendersAreCurrent = selectedPlatforms.length > 0 && dirtyRenderPlatforms.length === 0;
-  const renderStatusLabel = (jobStatus: FadeJobStatus | undefined) => {
+  const renderStatusLabel = (jobStatus: JobStatus | undefined) => {
     if (jobStatus === "queued") return "Queued";
     if (jobStatus === "compositing") return "Compositing";
     if (jobStatus === "generating") return "Rendering";
@@ -4169,14 +4777,14 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
     if (jobStatus === "failed") return "Failed";
     return "Preparing";
   };
-  const captureEditorState = (): FadeEditorSnapshot => ({ segments, activeSegmentId, splitAt, transition, transitionDuration, closingSeam, captionLayers, audioClips });
+  const captureEditorState = (): EditorSnapshot => ({ segments, activeSegmentId, splitAt, transition, transitionDuration, closingSeam, captionLayers, audioClips, visualLayers, visualRowCounts, visualRowLocks });
   const syncHistoryState = () => setHistoryState({ canUndo: undoStack.current.length > 0, canRedo: redoStack.current.length > 0 });
   function rememberEditorState() {
     undoStack.current = [...undoStack.current, captureEditorState()].slice(-10);
     redoStack.current = [];
     syncHistoryState();
   }
-  function restoreEditorState(snapshot: FadeEditorSnapshot) {
+  function restoreEditorState(snapshot: EditorSnapshot) {
     setSegments(snapshot.segments);
     setActiveSegmentId(snapshot.activeSegmentId);
     setSplitAt(snapshot.splitAt);
@@ -4185,8 +4793,12 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
     setClosingSeam(snapshot.closingSeam);
     setCaptionLayers(snapshot.captionLayers);
     setAudioClips(snapshot.audioClips);
+    setVisualLayers(snapshot.visualLayers);
+    setVisualRowCounts(snapshot.visualRowCounts);
+    setVisualRowLocks(snapshot.visualRowLocks);
     setSelectedCaptionId(null);
     setSelectedAudioClipId(null);
+    setSelectedVisualLayerId(null);
   }
   function undoEdit() {
     const previous = undoStack.current.at(-1);
@@ -4205,7 +4817,7 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
     syncHistoryState();
   }
   const addMedia = (media: ComposerMedia, crops: Record<string, { x: number; y: number }> = { default: { x: 0.5, y: 0.5 } }) => {
-    if (segments.length >= MAX_FADE_SEGMENTS) { setError(`A sequence can hold up to ${MAX_FADE_SEGMENTS} clips.`); return; }
+    if (segments.length >= MAX_SEGMENTS) { setError(`A sequence can hold up to ${MAX_SEGMENTS} clips.`); return; }
     rememberEditorState();
     const segment = { id: crypto.randomUUID(), media, start: 0, end: null, duration: null, volume: 1, crops, transitionIn: { type: transition, duration: transitionDuration } };
     setSegments((current) => [...current, segment]);
@@ -4229,18 +4841,79 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
     try {
       const [media, duration] = await Promise.all([uploadOneFile(file), probeAudioDuration(file)]);
       rememberEditorState();
-      const timelineDuration = fadeTimelineDuration(segments);
+      const timelineDuration = computeTimelineDuration(segments);
       const sourceEnd = duration > 0 ? Math.min(duration, timelineDuration || duration) : timelineDuration || 30;
       const id = crypto.randomUUID();
       setAudioClips((current) => [
         ...current,
-        { id, kind: "soundtrack", mediaId: media.id, name: media.name, sourceStart: 0, sourceEnd, start: 0, end: sourceEnd, volume: 1, row: fadeFirstAvailableAudioRow(current, 0, sourceEnd) },
+        { id, kind: "soundtrack", mediaId: media.id, name: media.name, sourceStart: 0, sourceEnd, start: 0, end: sourceEnd, volume: 1, row: firstAvailableAudioRow(current, 0, sourceEnd) },
       ]);
       setSelectedAudioClipId(id);
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : "Couldn’t upload this audio file.");
     } finally {
       setAudioUploading(false);
+    }
+  }
+  async function addVisualFile(file: File): Promise<boolean> {
+    const target = visualUploadTarget.current;
+    if (!target) return false;
+    setError("");
+    if (target.kind === "video" && !file.type.startsWith("video/")) {
+      setError("Choose a video file for this layer.");
+      return false;
+    }
+    if (target.kind === "gif" && file.type !== "image/gif") {
+      setError("Choose a GIF file for this layer.");
+      return false;
+    }
+    if (target.kind !== "video" && !file.type.startsWith("image/")) {
+      setError("Choose an image, GIF, or sticker image.");
+      return false;
+    }
+    try {
+      const media = await uploadOneFile(file);
+      rememberEditorState();
+      const duration = Math.max(1, computeTimelineDuration(segments) || 5);
+      const layer: VisualLayer = {
+        id: crypto.randomUUID(), media, kind: target.kind, start: 0, end: duration, row: target.row,
+        x: 50, y: 50, width: target.kind === "sticker" ? 25 : target.kind === "gif" ? 32 : 45,
+        chroma: { enabled: false, color: "#00ff00", similarity: 0.3, blend: 0.08 },
+      };
+      setVisualLayers((current) => [...current, layer]);
+      setVisualRowCounts((current) => ({ ...current, [target.kind]: Math.max(current[target.kind], target.row + 1) }));
+      setSelectedVisualLayerId(layer.id);
+      return true;
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Couldn’t upload this visual layer.");
+      return false;
+    }
+  }
+  const closeGiphyPicker = useCallback(() => {
+    setGiphyPickerType(null);
+    const returnFocus = giphyReturnFocus.current;
+    window.requestAnimationFrame(() => { if (returnFocus?.isConnected) returnFocus.focus(); });
+  }, []);
+  async function importGiphyVisual(item: GiphyVisualResult, pickerType: GiphyPickerType) {
+    const target = visualUploadTarget.current;
+    if (target) {
+      visualUploadTarget.current = { ...target, kind: pickerType === "stickers" ? "sticker" : "gif" };
+    }
+    setGiphyImportingId(item.id);
+    try {
+      const response = await fetch("/api/app/giphy", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ id: item.id, url: item.url }),
+      });
+      const body = response.ok ? await response.blob() : await response.json().catch(() => null);
+      if (!response.ok) throw new Error((body as { error?: { message?: string } } | null)?.error?.message ?? "Couldn’t import this GIF.");
+      const safeName = item.title.replace(/[^a-z0-9 _-]+/gi, "").trim().slice(0, 80) || `giphy-${item.id}`;
+      const added = await addVisualFile(new File([body as Blob], `${safeName}.gif`, { type: "image/gif" }));
+      if (!added) throw new Error("The GIF downloaded, but couldn’t be added to this layer.");
+      closeGiphyPicker();
+    } finally {
+      setGiphyImportingId(null);
     }
   }
   function splitActive() {
@@ -4257,7 +4930,7 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
     setActiveSegmentId(second.id);
   }
   function duplicateActive() {
-    if (!activeSegment || segments.length >= MAX_FADE_SEGMENTS) return;
+    if (!activeSegment || segments.length >= MAX_SEGMENTS) return;
     rememberEditorState();
     const duplicate = { ...activeSegment, id: crypto.randomUUID(), gapBefore: 0, transitionIn: { type: "cut", duration: transitionDuration } };
     setSegments((current) => {
@@ -4273,7 +4946,7 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
   /** Set the seam at `index`: 0 is the opening (segment 0's transitionIn),
    *  segments.length is the closing (no segment to hang it on, so it lives in
    *  its own state), and everything between is a normal inter-clip seam. */
-  function setSegmentSeam(index: number, seam: FadeSeam) {
+  function setSegmentSeam(index: number, seam: Seam) {
     if (index < 0 || index > segments.length) return;
     if (index === segments.length) { setClosingSeam(seam); return; }
     setSegments((current) => current.map((segment, position) =>
@@ -4288,7 +4961,7 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
         ? {
             ...segment,
             gapBefore,
-            ...(gapBefore > 0 ? { transitionIn: { type: "cut", duration: transitionDuration } as FadeSeam } : {}),
+            ...(gapBefore > 0 ? { transitionIn: { type: "cut", duration: transitionDuration } as Seam } : {}),
           }
         : segment,
     ));
@@ -4320,10 +4993,10 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
   async function ensureCaptionUploads() {
     const layers = captionLayers.filter((layer) => layer.text.trim());
     const resolved = await Promise.all(layers.map(async (layer) => {
-      const signature = fadeCaptionRenderSignature(layer);
+      const signature = captionRenderSignature(layer);
       let mediaId = layer.renderedSignature === signature ? layer.renderedMediaId : undefined;
       if (!mediaId) {
-        const blob = await renderFadeCaptionBlob(layer);
+        const blob = await renderCaptionBlob(layer);
         const media = await uploadOneFile(new File([blob], "caption.png", { type: "image/png" }));
         mediaId = media.id;
       }
@@ -4345,14 +5018,14 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
     const signatures = Object.fromEntries(targets.map((platformId) => [platformId, renderSignatureFor(platformId)]));
     setJobIds({});
     setPendingRenderSignatures(signatures);
-    setPlatformRenderStatuses(Object.fromEntries(targets.map((platformId) => [platformId, "queued" as FadeJobStatus])));
+    setPlatformRenderStatuses(Object.fromEntries(targets.map((platformId) => [platformId, "queued" as JobStatus])));
     setRenderStartedAt(Date.now());
     setRenderElapsedSeconds(0);
     setStatus("queued");
     try {
-      const fadeCaptions = await ensureCaptionUploads();
+      const captionsPayload = await ensureCaptionUploads();
       const started = await Promise.all(targets.map(async (platformId) => {
-        const format = fadeFormatFor(platformId, platformFormatIds);
+        const format = formatFor(platformId, platformFormatIds);
         const response = await fetch("/api/app/studio/jobs", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
@@ -4367,7 +5040,8 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
             fade_transition_duration: transitionDuration,
             fade_closing: closingSeam,
             ...(audioClips.length > 0 ? { fade_audio_clips: audioClips.map((clip) => ({ media_id: clip.mediaId, source_start_s: clip.sourceStart, source_end_s: clip.sourceEnd, start_s: clip.start, volume: clip.volume })) } : {}),
-            ...(fadeCaptions.length > 0 ? { fade_captions: fadeCaptions } : {}),
+            ...(captionsPayload.length > 0 ? { fade_captions: captionsPayload } : {}),
+            ...(visualLayers.length > 0 ? { fade_visual_layers: visualLayers.map((layer) => ({ media_id: layer.media.id, start_s: layer.start, end_s: layer.end, row: layer.row, x: layer.x, y: layer.y, width: layer.width, chroma: layer.chroma?.enabled ? layer.chroma : undefined })) } : {}),
           }),
         });
         const data = await response.json();
@@ -4381,7 +5055,7 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
     } catch (cause) {
       setStatus("failed");
       setRenderStartedAt(null);
-      setPlatformRenderStatuses((current) => Object.fromEntries(Object.keys(current).map((platformId) => [platformId, "failed" as FadeJobStatus])));
+      setPlatformRenderStatuses((current) => Object.fromEntries(Object.keys(current).map((platformId) => [platformId, "failed" as JobStatus])));
       setError(cause instanceof Error ? cause.message : "Couldn’t start the render.");
     }
   }
@@ -4424,7 +5098,7 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
           return [platformId, response.ok ? await response.json() : null] as const;
         }));
         if (entries.some(([, job]) => !job)) { setPollNonce((n) => n + 1); return; }
-        setPlatformRenderStatuses((current) => ({ ...current, ...Object.fromEntries(entries.map(([platformId, job]) => [platformId, job.status as FadeJobStatus])) }));
+        setPlatformRenderStatuses((current) => ({ ...current, ...Object.fromEntries(entries.map(([platformId, job]) => [platformId, job.status as JobStatus])) }));
         const failed = entries.find(([, job]) => job.status === "failed")?.[1];
         if (failed) {
           setStatus("failed");
@@ -4467,19 +5141,20 @@ function FadeVideoEditor({ onExit, accounts, initialClip, initialCaption, initia
   }, [segments]);
 
   const cropFlowKey = cropFlow?.keys[cropFlow.current] ?? currentPlatform;
-  const cropFlowFormat = cropFlowKey === "default" ? { aspect: VIDEO_ASPECTS[0] } : fadeFormatFor(cropFlowKey, platformFormatIds);
+  const cropFlowFormat = cropFlowKey === "default" ? { aspect: VIDEO_ASPECTS[0] } : formatFor(cropFlowKey, platformFormatIds);
   const scopeOpen = pendingScopeMedia !== null || cropTargetId !== null;
-  return <><FadeStudioWorkflow accounts={accounts} selectedAccountIds={selectedAccountIds} setSelectedAccountIds={setSelectedAccountIds} activePlatform={activePlatform} setActivePlatform={setActivePlatform} platformFormatIds={platformFormatIds} setPlatformFormatIds={setPlatformFormatIds} segments={segments} activeSegment={activeSegment} setActiveSegmentId={setActiveSegmentId} splitAt={splitAt} setSplitAt={setSplitAt} splitActive={splitActive} beginEditorEdit={rememberEditorState} setActiveTrim={(start, end) => { if (!activeSegment) return; setSegments((current) => current.map((segment) => segment.id === activeSegment.id ? { ...segment, start, end } : segment)); }} duplicateActive={duplicateActive} removeActive={() => { if (!activeSegment) return; rememberEditorState(); setSegments((current) => current.filter((segment) => segment.id !== activeSegment.id)); }} setActiveVolume={(volume) => { if (!activeSegment) return; rememberEditorState(); setSegments((current) => current.map((segment) => segment.id === activeSegment.id ? { ...segment, volume, audioRemoved: false } : segment)); }} muteSegmentAudio={(segmentId) => setSegments((current) => current.map((segment) => segment.id === segmentId ? { ...segment, volume: 0, audioRemoved: true } : segment))} pasteSegment={(segment, afterSegmentId) => { if (segments.length >= MAX_FADE_SEGMENTS) return; rememberEditorState(); const pasted = { ...segment, id: crypto.randomUUID(), gapBefore: 0, transitionIn: { type: "cut", duration: transitionDuration } }; setSegments((current) => { const afterIndex = afterSegmentId ? current.findIndex((s) => s.id === afterSegmentId) : -1; const next = [...current]; next.splice(afterIndex >= 0 ? afterIndex + 1 : current.length, 0, pasted); return next; }); setActiveSegmentId(pasted.id); }} undo={undoEdit} redo={redoEdit} canUndo={historyState.canUndo} canRedo={historyState.canRedo} transition={transition} setTransition={(value) => { rememberEditorState(); setTransition(value); }} transitionDuration={transitionDuration} setTransitionDuration={(value) => { rememberEditorState(); setTransitionDuration(value); }} closingSeam={closingSeam} setSegmentSeam={setSegmentSeam} setSegmentGap={setSegmentGap} moveSegment={moveSegment} audioClips={audioClips} setAudioClips={setAudioClips} selectedAudioClipId={selectedAudioClipId} setSelectedAudioClipId={setSelectedAudioClipId} audioUploading={audioUploading} onAudioUpload={() => audioInput.current?.click()} onAudioLibrary={() => setAudioLibraryOpen(true)} caption={caption} setCaption={setCaption} uploading={uploading} uploadStage={uploadStage} onUpload={() => input.current?.click()} onLibrary={() => setLibraryOpen(true)} onCrop={() => activeSegment && setCropTargetId(activeSegment.id)} fileInput={input} onFile={addFile} error={error} rendering={rendering} outputMediaId={outputMediaId} initialDraft={initialDraft} initialDraftId={initialDraftId} initialDraftStatus={initialDraftStatus}
+  return <><StudioWorkflow accounts={accounts} selectedAccountIds={selectedAccountIds} setSelectedAccountIds={setSelectedAccountIds} activePlatform={activePlatform} setActivePlatform={setActivePlatform} platformFormatIds={platformFormatIds} setPlatformFormatIds={setPlatformFormatIds} segments={segments} activeSegment={activeSegment} setActiveSegmentId={setActiveSegmentId} splitAt={splitAt} setSplitAt={setSplitAt} splitActive={splitActive} beginEditorEdit={rememberEditorState} setActiveTrim={(start, end) => { if (!activeSegment) return; setSegments((current) => current.map((segment) => segment.id === activeSegment.id ? { ...segment, start, end } : segment)); }} duplicateActive={duplicateActive} removeActive={() => { if (!activeSegment) return; rememberEditorState(); setSegments((current) => current.filter((segment) => segment.id !== activeSegment.id)); }} setActiveVolume={(volume) => { if (!activeSegment) return; rememberEditorState(); setSegments((current) => current.map((segment) => segment.id === activeSegment.id ? { ...segment, volume, audioRemoved: false } : segment)); }} muteSegmentAudio={(segmentId) => setSegments((current) => current.map((segment) => segment.id === segmentId ? { ...segment, volume: 0, audioRemoved: true } : segment))} pasteSegment={(segment, afterSegmentId) => { if (segments.length >= MAX_SEGMENTS) return; rememberEditorState(); const pasted = { ...segment, id: crypto.randomUUID(), gapBefore: 0, transitionIn: { type: "cut", duration: transitionDuration } }; setSegments((current) => { const afterIndex = afterSegmentId ? current.findIndex((s) => s.id === afterSegmentId) : -1; const next = [...current]; next.splice(afterIndex >= 0 ? afterIndex + 1 : current.length, 0, pasted); return next; }); setActiveSegmentId(pasted.id); }} undo={undoEdit} redo={redoEdit} canUndo={historyState.canUndo} canRedo={historyState.canRedo} transition={transition} setTransition={(value) => { rememberEditorState(); setTransition(value); }} transitionDuration={transitionDuration} setTransitionDuration={(value) => { rememberEditorState(); setTransitionDuration(value); }} closingSeam={closingSeam} setSegmentSeam={setSegmentSeam} setSegmentGap={setSegmentGap} moveSegment={moveSegment} audioClips={audioClips} setAudioClips={setAudioClips} selectedAudioClipId={selectedAudioClipId} setSelectedAudioClipId={setSelectedAudioClipId} audioUploading={audioUploading} onAudioUpload={() => audioInput.current?.click()} onAudioLibrary={() => setAudioLibraryOpen(true)} caption={caption} setCaption={setCaption} uploading={uploading} uploadStage={uploadStage} onUpload={() => input.current?.click()} onLibrary={() => setLibraryOpen(true)} onCrop={() => activeSegment && setCropTargetId(activeSegment.id)} fileInput={input} onFile={addFile} error={error} rendering={rendering} outputMediaId={outputMediaId} initialDraft={initialDraft} initialDraftId={initialDraftId} initialDraftStatus={initialDraftStatus}
     platformOutputMediaIds={platformOutputMediaIds} platformRenderStatuses={platformRenderStatuses} renderSignatures={renderSignatures} rendersAreCurrent={rendersAreCurrent} dirtyRenderPlatforms={dirtyRenderPlatforms} renderElapsedSeconds={renderElapsedSeconds} renderStatusLabel={renderStatusLabel} startRender={(targets) => void startRender(targets)} cancelling={cancelling} cancelRender={() => void cancelRender()}
     renderScopeOpen={renderScopeOpen} setRenderScopeOpen={setRenderScopeOpen} previewOpen={previewOpen} setPreviewOpen={setPreviewOpen}
-    captionLayers={captionLayers} setCaptionLayers={setCaptionLayers} selectedCaptionId={selectedCaptionId} setSelectedCaptionId={setSelectedCaptionId} />{libraryOpen && <MediaLibraryModal kind="video" onClose={() => setLibraryOpen(false)} onPick={(media) => { setLibraryOpen(false); setPendingScopeMedia(media); }} />}{audioLibraryOpen && <MediaLibraryModal kind="audio" onClose={() => setAudioLibraryOpen(false)} onPick={(media) => { rememberEditorState(); const timelineDuration = fadeTimelineDuration(segments); const sourceEnd = timelineDuration || 30; const id = crypto.randomUUID(); setAudioClips((current) => [...current, { id, kind: "soundtrack", mediaId: media.id, name: media.name, sourceStart: 0, sourceEnd, start: 0, end: sourceEnd, volume: 1, row: fadeFirstAvailableAudioRow(current, 0, sourceEnd) }]); setSelectedAudioClipId(id); setAudioLibraryOpen(false); }} />}<input ref={audioInput} type="file" accept="audio/*" className="hidden" onChange={(event) => { if (event.target.files?.[0]) void addAudioFile(event.target.files[0]); event.target.value = ""; }} />{scopeOpen && <FadeUploadScopeDialog platformId={currentPlatform} platformCount={selectedPlatforms.length} onCurrent={() => beginCropFlow(false)} onAll={() => beginCropFlow(true)} onCancel={() => { setPendingScopeMedia(null); setCropTargetId(null); }} />}{cropFlow && <FadeCropModal segment={cropFlow.segment} targetAspect={cropFlowFormat.aspect} initial={cropFlow.segment.crops[cropFlowKey] ?? { x: 0.5, y: 0.5 }} progressLabel={cropFlow.keys.length > 1 ? `Crop ${cropFlow.current + 1} of ${cropFlow.keys.length} · ${platformOf(cropFlowKey)?.name ?? cropFlowKey}` : undefined} actionLabel={cropFlow.current < cropFlow.keys.length - 1 ? "Next crop" : "Save"} onClose={() => setCropFlow(null)} onSave={(crop) => { const updated = { ...cropFlow.segment, crops: { ...cropFlow.segment.crops, [cropFlowKey]: crop } }; if (cropFlow.current < cropFlow.keys.length - 1) { setCropFlow({ ...cropFlow, segment: updated, current: cropFlow.current + 1 }); } else { rememberEditorState(); setSegments((current) => current.some((segment) => segment.id === updated.id) ? current.map((segment) => segment.id === updated.id ? updated : segment) : [...current, updated]); setActiveSegmentId(updated.id); setCropFlow(null); } }} />}</>;
+    captionLayers={captionLayers} setCaptionLayers={setCaptionLayers} selectedCaptionId={selectedCaptionId} setSelectedCaptionId={setSelectedCaptionId}
+    visualLayers={visualLayers} setVisualLayers={setVisualLayers} visualRowCounts={visualRowCounts} setVisualRowCounts={setVisualRowCounts} visualRowLocks={visualRowLocks} setVisualRowLocks={setVisualRowLocks} selectedVisualLayerId={selectedVisualLayerId} setSelectedVisualLayerId={setSelectedVisualLayerId} visualPickerOpen={giphyPickerType !== null} onAddVisual={(kind, row) => { visualUploadTarget.current = { kind, row }; if (kind === "gif" || kind === "sticker") { giphyReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setGiphyPickerType(kind === "sticker" ? "stickers" : "gifs"); return; } if (visualInput.current) { visualInput.current.accept = kind === "video" ? "video/*" : "image/*"; visualInput.current.click(); } }} onMemeSound={(id) => void addAudioFile(builtInMemeSoundFile(id))} onPreviewMemeSound={(id) => { const url = URL.createObjectURL(builtInMemeSoundFile(id)); const audio = new Audio(url); const release = () => URL.revokeObjectURL(url); audio.addEventListener("ended", release, { once: true }); audio.addEventListener("error", release, { once: true }); void audio.play().catch(release); }} />{giphyPickerType && <GiphyPicker initialType={giphyPickerType} importingId={giphyImportingId} onSelect={importGiphyVisual} onClose={closeGiphyPicker} />}{libraryOpen && <MediaLibraryModal kind="video" onClose={() => setLibraryOpen(false)} onPick={(media) => { setLibraryOpen(false); setPendingScopeMedia(media); }} />}{audioLibraryOpen && <MediaLibraryModal kind="audio" onClose={() => setAudioLibraryOpen(false)} onPick={(media) => { rememberEditorState(); const timelineDuration = computeTimelineDuration(segments); const sourceEnd = timelineDuration || 30; const id = crypto.randomUUID(); setAudioClips((current) => [...current, { id, kind: "soundtrack", mediaId: media.id, name: media.name, sourceStart: 0, sourceEnd, start: 0, end: sourceEnd, volume: 1, row: firstAvailableAudioRow(current, 0, sourceEnd) }]); setSelectedAudioClipId(id); setAudioLibraryOpen(false); }} />}<input ref={audioInput} type="file" accept="audio/*" className="hidden" onChange={(event) => { if (event.target.files?.[0]) void addAudioFile(event.target.files[0]); event.target.value = ""; }} /><input ref={visualInput} type="file" accept="image/*,video/*" className="hidden" onChange={(event) => { if (event.target.files?.[0]) void addVisualFile(event.target.files[0]); event.target.value = ""; }} />{scopeOpen && <UploadScopeDialog platformId={currentPlatform} platformCount={selectedPlatforms.length} onCurrent={() => beginCropFlow(false)} onAll={() => beginCropFlow(true)} onCancel={() => { setPendingScopeMedia(null); setCropTargetId(null); }} />}{cropFlow && <CropModal segment={cropFlow.segment} targetAspect={cropFlowFormat.aspect} initial={cropFlow.segment.crops[cropFlowKey] ?? { x: 0.5, y: 0.5 }} progressLabel={cropFlow.keys.length > 1 ? `Crop ${cropFlow.current + 1} of ${cropFlow.keys.length} · ${platformOf(cropFlowKey)?.name ?? cropFlowKey}` : undefined} actionLabel={cropFlow.current < cropFlow.keys.length - 1 ? "Next crop" : "Save"} onClose={() => setCropFlow(null)} onSave={(crop) => { const updated = { ...cropFlow.segment, crops: { ...cropFlow.segment.crops, [cropFlowKey]: crop } }; if (cropFlow.current < cropFlow.keys.length - 1) { setCropFlow({ ...cropFlow, segment: updated, current: cropFlow.current + 1 }); } else { rememberEditorState(); setSegments((current) => current.some((segment) => segment.id === updated.id) ? current.map((segment) => segment.id === updated.id ? updated : segment) : [...current, updated]); setActiveSegmentId(updated.id); setCropFlow(null); } }} />}</>;
 
 }
 
 
-export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) {
+export function VideoEditorStudio({ accounts = [] }: { accounts?: EditorAccount[] }) {
   const [mode, setMode] = useState<"choose" | "wizard">("choose");
-  const [resumeDraft, setResumeDraft] = useState<{ id: string; state: FadeDraftSnapshot; status?: string } | null>(null);
+  const [resumeDraft, setResumeDraft] = useState<{ id: string; state: DraftSnapshot; status?: string } | null>(null);
   const [step, setStep] = useState(0);
   const [clip, setClip] = useState<ComposerMedia | null>(null);
   const [campaignName, setCampaignName] = useState("");
@@ -4488,7 +5163,7 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<number>>(new Set());
   const [caption, setCaption] = useState("");
   const [jobId, setJobId] = useState<string | null>(null);
-  const [jobStatus, setJobStatus] = useState<FadeJobStatus>("idle");
+  const [jobStatus, setJobStatus] = useState<JobStatus>("idle");
   const [outputMediaId, setOutputMediaId] = useState<string | null>(null);
   const [pollTick, setPollTick] = useState(0);
   const [renderError, setRenderError] = useState("");
@@ -4523,7 +5198,7 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
   }, []);
 
   useEffect(() => {
-    // The active FadeVideoEditor owns draft persistence. This legacy shell
+    // The active VideoEditor owns draft persistence. This legacy shell
     // only lists and opens drafts, so it must never overwrite its richer state.
     if (mode === "wizard" || (!campaignName.trim() && !clip)) return;
     const timer = setTimeout(async () => {
@@ -4572,7 +5247,7 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
   function reset() { setStep(0); setClip(null); setCampaignName(""); setSelectedAccountIds(new Set()); setCaption(""); setJobId(null); setJobStatus("idle"); setOutputMediaId(null); setRenderError(""); draftId.current = undefined; setDraftStatus("idle"); }
   function resume(draft: StudioDraftRow) {
     try {
-      const raw = JSON.parse(draft.state) as FadeDraftSnapshot & { clip?: ComposerMedia | null };
+      const raw = JSON.parse(draft.state) as DraftSnapshot & { clip?: ComposerMedia | null };
       const segments = raw.segments?.map((segment) => ({ ...segment, volume: Number.isFinite(segment.volume) ? segment.volume : 1, crops: segment.crops ?? { default: { x: 0.5, y: 0.5 } } }))
         ?? (raw.clip ? [{ id: crypto.randomUUID(), media: raw.clip, start: 0, end: null, duration: null, volume: 1, crops: { default: { x: 0.5, y: 0.5 } } }] : []);
       setResumeDraft({
@@ -4602,7 +5277,7 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
   }
   async function publishFinishedDraft(draft: StudioDraftRow) {
     try {
-      const state = JSON.parse(draft.state) as FadeDraftSnapshot & { outputMediaId?: string | null };
+      const state = JSON.parse(draft.state) as DraftSnapshot & { outputMediaId?: string | null };
       const mediaIds = [...new Set(Object.values(state.platformOutputMediaIds ?? {}).concat(state.outputMediaId ?? "").filter(Boolean))];
       if (mediaIds.length > 0) {
         const selectedAccountIds = new Set(state.selectedAccountIds ?? []);
@@ -4610,7 +5285,7 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
         const outputMetadata = Object.entries(state.platformOutputMediaIds ?? {}).map(([platformId, mediaId]) => ({
           media_id: mediaId,
           platform_id: platformId,
-          aspect_ratio: fadeFormatFor(platformId, state.platformFormatIds ?? {}).aspect.name,
+          aspect_ratio: formatFor(platformId, state.platformFormatIds ?? {}).aspect.name,
         }));
         const platformCaptions = Object.fromEntries(platformIds.flatMap((platformId) => {
           const text = state.platformCaptions?.[platformId]?.trim() || state.caption?.trim();
@@ -4642,7 +5317,7 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
     }
   }
 
-  if (mode === "wizard") return <FadeVideoEditor onExit={() => { setMode("choose"); void refetchDrafts(); }} accounts={accounts} initialClip={resumeDraft?.state.segments?.[0]?.media ?? clip} initialCaption={resumeDraft?.state.caption ?? caption} initialDraft={resumeDraft?.state} initialDraftId={resumeDraft?.id} initialDraftStatus={resumeDraft?.status} />;
+  if (mode === "wizard") return <VideoEditor onExit={() => { setMode("choose"); void refetchDrafts(); }} accounts={accounts} initialClip={resumeDraft?.state.segments?.[0]?.media ?? clip} initialCaption={resumeDraft?.state.caption ?? caption} initialDraft={resumeDraft?.state} initialDraftId={resumeDraft?.id} initialDraftStatus={resumeDraft?.status} />;
 
   if (mode === "choose")
     return (
@@ -4663,7 +5338,7 @@ export function FadeInStudio({ accounts = [] }: { accounts?: FadeInAccount[] }) 
         renderPreview={(draft) => {
           let media: ComposerMedia | null = null;
           try {
-            const state = JSON.parse(draft.state) as FadeDraftSnapshot & { clip?: ComposerMedia | null };
+            const state = JSON.parse(draft.state) as DraftSnapshot & { clip?: ComposerMedia | null };
             media = state.segments?.[0]?.media ?? state.clip ?? null;
           } catch {}
           return media ? (

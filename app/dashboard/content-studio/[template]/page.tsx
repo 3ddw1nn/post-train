@@ -8,7 +8,7 @@ import { aiUsageThisMonth, STUDIO_TEMPLATES, type StudioTemplate } from "@/lib/s
 import { PROVIDERS, providerConfigured, workspaceKeyConfigured } from "@/lib/image-gen-keys";
 import { getExploreItem, listExploreSlides } from "@/lib/explore";
 import { PaywallCard } from "@/components/paywall-card";
-import { FadeInStudio } from "@/components/studio";
+import { VideoEditorStudio } from "@/components/studio";
 import { SlideshowStudio } from "@/components/slideshow-studio";
 import { GridStudio } from "@/components/grid-studio";
 import { AiUgcStudio } from "@/components/ai-ugc-studio";
@@ -56,7 +56,7 @@ export default async function StudioTemplatePage({
 
   if (template === "fade-in" || template === "video-editor") {
     const accounts = await accountsForWorkspace(ws.id);
-    return <FadeInStudio accounts={accounts.map((a) => ({ id: a.id, platform: a.platform, username: a.username, avatar_url: a.avatar_url }))} />;
+    return <VideoEditorStudio accounts={accounts.map((a) => ({ id: a.id, platform: a.platform, username: a.username, avatar_url: a.avatar_url }))} />;
   }
 
   if (template === "ai-ugc") {
