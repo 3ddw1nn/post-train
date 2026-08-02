@@ -6,6 +6,7 @@ const PATHS: Record<string, React.ReactNode> = {
   sparkles: (
     <path d="M12 4l1.7 4.3L18 10l-4.3 1.7L12 16l-1.7-4.3L6 10l4.3-1.7L12 4ZM19 15l.9 2.1L22 18l-2.1.9L19 21l-.9-2.1L16 18l2.1-.9L19 15ZM5 14l.7 1.8L7.5 16.5l-1.8.7L5 19l-.7-1.8L2.5 16.5l1.8-.7L5 14Z" />
   ),
+  wand: <path d="m15 4 5 5M2 22l12-12M6 8l.8 2.2L9 11l-2.2.8L6 14l-.8-2.2L3 11l2.2-.8L6 8ZM18 13l.6 1.4L20 15l-1.4.6L18 17l-.6-1.4L16 15l1.4-.6L18 13Z" />,
   stack: <path d="M12 3 3 8l9 5 9-5-9-5ZM3 12l9 5 9-5M3 16l9 5 9-5" />,
   calendar: (
     <path d="M7 3v4M17 3v4M4 7h16M6 5h12a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2Z" />
