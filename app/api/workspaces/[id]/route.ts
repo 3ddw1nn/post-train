@@ -1,5 +1,6 @@
 import { requireUser } from "@/lib/auth";
 import { deleteRecord, deleteRecords, findRecord, listRecords, patchRecord } from "@/lib/db";
+import { clearCurrentWorkspace, setCurrentWorkspace, workspacesForUser } from "@/lib/workspaces";
 
 async function ownedWorkspace(id: string, userId: string) {
   return await findRecord<{ id: string; name: string }>("workspaces", { id, owner_id: userId });
@@ -42,6 +43,10 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
     );
   }
 
+  // Pick the destination before removing this workspace's membership. Persisting it
+  // here means every tab lands on a valid workspace after the deletion completes.
+  const nextWorkspace = (await workspacesForUser(user.id)).find((workspace) => workspace.id !== id) ?? null;
+
   const posts = await listRecords<{ id: string }>("posts", { workspace_id: id });
   for (const post of posts) {
     await deleteRecords("post_destinations", { post_id: post.id });
@@ -65,5 +70,15 @@ export async function DELETE(req: Request, ctx: { params: Promise<{ id: string }
   await deleteRecords("api_keys", { workspace_id: id });
   await deleteRecords("workspace_members", { workspace_id: id });
   await deleteRecord("workspaces", id);
-  return Response.json({ ok: true });
+
+  if (nextWorkspace) {
+    await setCurrentWorkspace(nextWorkspace.id);
+  } else {
+    await clearCurrentWorkspace();
+  }
+
+  return Response.json({
+    ok: true,
+    redirect_to: nextWorkspace ? "/dashboard" : "/workspaces/new",
+  });
 }

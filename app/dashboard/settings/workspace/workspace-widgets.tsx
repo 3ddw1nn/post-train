@@ -309,7 +309,7 @@ export function DeleteWorkspace({ workspaceId, workspaceName }: { workspaceId: s
         setError(data?.error?.message ?? "Could not delete workspace.");
         return;
       }
-      router.push("/dashboard");
+      router.replace(data?.redirect_to ?? "/dashboard");
       router.refresh();
     } finally {
       setBusy(false);

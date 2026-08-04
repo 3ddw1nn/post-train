@@ -1,4 +1,5 @@
 import { requireOnboardedUser } from "@/lib/auth";
+import { redirect } from "next/navigation";
 import { getSubscription } from "@/lib/billing";
 import { planLabel, planOf, entitled } from "@/lib/entitlements";
 import { currentWorkspace, workspacesForUser } from "@/lib/workspaces";
@@ -16,6 +17,9 @@ export default async function DashboardLayout({
   const user = await requireOnboardedUser();
   const sub = await getSubscription(user.id);
   const workspaces = await workspacesForUser(user.id);
+  if (workspaces.length === 0) {
+    redirect("/workspaces/new");
+  }
   const ws = await currentWorkspace(user);
 
   const upsellUntil = user.first_subscribed_at

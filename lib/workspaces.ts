@@ -32,6 +32,10 @@ export async function setCurrentWorkspace(id: string) {
   (await cookies()).set(WS_COOKIE, id, { path: "/", sameSite: "lax", maxAge: 365 * 86400 });
 }
 
+export async function clearCurrentWorkspace() {
+  (await cookies()).delete(WS_COOKIE);
+}
+
 export async function createWorkspace(ownerId: string, name: string): Promise<Workspace> {
   const id = uid();
   return await convexMutation<Workspace>(api.workspaces.createWorkspace, {

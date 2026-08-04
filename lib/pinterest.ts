@@ -4,13 +4,15 @@
 import { randomBytes } from "node:crypto";
 import { requireEnv, packOAuthState as packState, unpackOAuthState as unpackState } from "./oauth-state";
 
-const AUTHORIZE_URL = "https://api.pinterest.com/oauth/";
-const TOKEN_URL = "https://api.pinterest.com/v1/oauth/token";
-const SCOPES = "pins:read,pins:write,user_accounts:read";
+const AUTHORIZE_URL = "https://www.pinterest.com/oauth/";
+const TOKEN_URL = "https://api.pinterest.com/v5/oauth/token";
+const SCOPES = "boards:read,boards:write,pins:read,pins:write,user_accounts:read";
 
 export type PinterestCredentials = {
   access_token: string;
   expires_at: number;
+  refresh_token: string;
+  refresh_token_expires_at: number | null;
 };
 
 class PinterestError extends Error {
@@ -47,13 +49,16 @@ export async function exchangeCodeForToken(
 ): Promise<PinterestCredentials> {
   const res = await fetch(TOKEN_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: {
+      Authorization: `Basic ${Buffer.from(
+        `${requireEnv("PINTEREST_CLIENT_ID")}:${requireEnv("PINTEREST_CLIENT_SECRET")}`
+      ).toString("base64")}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
     body: new URLSearchParams({
       grant_type: "authorization_code",
       code,
       redirect_uri: pinterestRedirectUri(origin),
-      client_id: requireEnv("PINTEREST_CLIENT_ID"),
-      client_secret: requireEnv("PINTEREST_CLIENT_SECRET"),
     }),
   });
 
@@ -67,11 +72,57 @@ export async function exchangeCodeForToken(
   const json = (await res.json()) as {
     access_token: string;
     expires_in: number;
+    refresh_token?: string;
+    refresh_token_expires_at?: number;
   };
+
+  if (!json.refresh_token) {
+    throw new PinterestError("Pinterest did not return a refresh token.", "platform_error");
+  }
 
   return {
     access_token: json.access_token,
     expires_at: Date.now() + json.expires_in * 1000,
+    refresh_token: json.refresh_token,
+    refresh_token_expires_at: json.refresh_token_expires_at ?? null,
+  };
+}
+
+export async function refreshPinterestToken(
+  credentials: PinterestCredentials
+): Promise<PinterestCredentials> {
+  const res = await fetch(TOKEN_URL, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${Buffer.from(
+        `${requireEnv("PINTEREST_CLIENT_ID")}:${requireEnv("PINTEREST_CLIENT_SECRET")}`
+      ).toString("base64")}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: credentials.refresh_token,
+    }),
+  });
+
+  if (!res.ok) {
+    throw new PinterestError(
+      `Pinterest token refresh failed: ${await res.text()}`,
+      res.status === 401 ? "auth_expired" : "platform_error"
+    );
+  }
+
+  const json = (await res.json()) as {
+    access_token: string;
+    expires_in: number;
+    refresh_token?: string;
+    refresh_token_expires_at?: number;
+  };
+  return {
+    access_token: json.access_token,
+    expires_at: Date.now() + json.expires_in * 1000,
+    refresh_token: json.refresh_token ?? credentials.refresh_token,
+    refresh_token_expires_at: json.refresh_token_expires_at ?? credentials.refresh_token_expires_at,
   };
 }
 
@@ -83,7 +134,7 @@ export async function fetchPinterestProfile(
   image: string | null;
 }> {
   const res = await fetch(
-    "https://api.pinterest.com/v1/user/me?fields=id,username,image",
+    "https://api.pinterest.com/v5/user_account",
     {
       headers: { Authorization: `Bearer ${accessToken}` },
     }
@@ -97,21 +148,19 @@ export async function fetchPinterestProfile(
   }
 
   const json = (await res.json()) as {
-    data?: {
-      id: string;
-      username: string;
-      image?: string;
-    };
+    id?: string;
+    username?: string;
+    profile_image?: string;
   };
 
-  if (!json.data) {
+  if (!json.id || !json.username) {
     throw new PinterestError("No Pinterest profile data returned", "platform_error");
   }
 
   return {
-    id: json.data.id,
-    username: json.data.username,
-    image: json.data.image ?? null,
+    id: json.id,
+    username: json.username,
+    image: json.profile_image ?? null,
   };
 }
 

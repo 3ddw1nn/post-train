@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { createWorkspace } from "@/lib/workspaces";
+import { createWorkspace, setCurrentWorkspace } from "@/lib/workspaces";
 import { getSubscription } from "@/lib/billing";
 import { ownedWorkspaceCap } from "@/lib/entitlements";
 import { listRecords } from "@/lib/db";
@@ -27,5 +27,6 @@ export async function POST(req: Request) {
   }
 
   const ws = await createWorkspace(user.id, name.slice(0, 60));
+  await setCurrentWorkspace(ws.id);
   return Response.json({ ok: true, id: ws.id });
 }

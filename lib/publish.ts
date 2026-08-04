@@ -16,7 +16,8 @@ import { isTwitterError, publishToTwitter, type TwitterCredentials } from "./twi
 import { isMastodonError, publishToMastodon, type MastodonCredentials } from "./mastodon";
 import { isLinkedInError, publishToLinkedIn, type LinkedInCredentials } from "./linkedin";
 import { isYouTubeError, publishToYouTube, type YouTubeCredentials } from "./youtube-publish";
-import { isPinterestError, publishToPinterest, type PinterestCredentials } from "./pinterest-publish";
+import { isPinterestError, publishToPinterest } from "./pinterest-publish";
+import { refreshPinterestToken, type PinterestCredentials as PinterestOAuthCredentials } from "./pinterest";
 import { isTikTokError, publishToTikTok, type TikTokCredentials } from "./tiktok-publish";
 import { encryptJson } from "./secretbox";
 import { readMediaBytes } from "./media";
@@ -277,7 +278,16 @@ async function publishToPlatform(
     }
 
     try {
-      const creds = decryptJson<PinterestCredentials>(account.credentials);
+      let creds = decryptJson<PinterestOAuthCredentials>(account.credentials);
+      // Pinterest access tokens last 30 days. Refresh before a publish when the
+      // token is near expiry, then persist the rotated credentials immediately.
+      if (creds.expires_at <= Date.now() + 60_000) {
+        creds = await refreshPinterestToken(creds);
+        await convexMutation(api.accounts.patchAccount, {
+          id: account.id,
+          patch: { credentials: encryptJson(creds) },
+        });
+      }
       // Use the first image in the media array
       const imageMedia = media.find((m) => m.kind === "image");
       if (!imageMedia) {
