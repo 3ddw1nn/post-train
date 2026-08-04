@@ -23,7 +23,6 @@ const ALL_PLATFORM_IDS = [
   "bluesky",
   "threads",
   "pinterest",
-  "google_business",
 ];
 
 export function PlanPicker({

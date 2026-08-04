@@ -112,7 +112,6 @@ const PHOTO_PRESETS: PhotoPreset[] = [
       { platformId: "twitter", label: "X" },
       { platformId: "bluesky", label: "Bluesky" },
       { platformId: "mastodon", label: "Mastodon" },
-      { platformId: "google_business", label: "Google Business Profile" },
     ],
   },
   {
@@ -149,7 +148,6 @@ const PLATFORM_ASPECT: Record<string, (typeof ASPECTS)[number]["id"]> = {
   bluesky: "1:1",
   mastodon: "1:1",
   facebook: "4:5",
-  google_business: "1:1",
 };
 function platformAspect(platformId: string): (typeof ASPECTS)[number]["id"] {
   return PLATFORM_ASPECT[platformId] ?? "9:16";

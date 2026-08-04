@@ -80,7 +80,6 @@ export const VIDEO_PRESETS: VideoPreset[] = [
       { platformId: "threads", label: "Threads" },
       { platformId: "facebook", label: "Facebook" },
       { platformId: "instagram", label: "Instagram Feed" },
-      { platformId: "google_business", label: "Google Business Profile" },
     ],
   },
   {

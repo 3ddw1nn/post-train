@@ -19,6 +19,8 @@ import { isYouTubeError, publishToYouTube, type YouTubeCredentials } from "./you
 import { isPinterestError, publishToPinterest } from "./pinterest-publish";
 import { refreshPinterestToken, type PinterestCredentials as PinterestOAuthCredentials } from "./pinterest";
 import { isTikTokError, publishToTikTok, type TikTokCredentials } from "./tiktok-publish";
+import { isTumblrError, type TumblrCredentials } from "./tumblr";
+import { publishToTumblr } from "./tumblr-publish";
 import { encryptJson } from "./secretbox";
 import { readMediaBytes } from "./media";
 import { api } from "@/convex/_generated/api";
@@ -372,6 +374,24 @@ async function publishToPlatform(
         error_code: code,
         error_message: e instanceof Error ? e.message : "TikTok publish failed.",
       };
+    }
+  }
+
+  if (account.platform === "tumblr") {
+    if (!account.credentials) {
+      await convexMutation(api.accounts.patchAccount, { id: account.id, patch: { status: "needs_reauth" } });
+      return { success: false, error_code: "auth_expired", error_message: "Tumblr credentials missing — reconnect this account." };
+    }
+    try {
+      const creds = decryptJson<TumblrCredentials>(account.credentials);
+      const text = typeof configurations.tumblr?.caption === "string" ? configurations.tumblr.caption : post.caption;
+      const { result, refreshedCreds } = await publishToTumblr(creds, account.username, text);
+      if (refreshedCreds) await convexMutation(api.accounts.patchAccount, { id: account.id, patch: { credentials: encryptJson(refreshedCreds) } });
+      return { success: true, ...result };
+    } catch (error) {
+      const code = isTumblrError(error) ? error.code : "platform_error";
+      if (code === "auth_expired") await convexMutation(api.accounts.patchAccount, { id: account.id, patch: { status: "needs_reauth" } });
+      return { success: false, error_code: code, error_message: error instanceof Error ? error.message : "Tumblr publish failed." };
     }
   }
 

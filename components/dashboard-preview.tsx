@@ -45,14 +45,6 @@ const DEMO_POSTS = [
     detail: "Thread copied across text-first channels",
   },
   {
-    caption: "Local promo update for weekend traffic",
-    accounts: ["google_business", "facebook", "instagram"],
-    status: "scheduled",
-    when: "Fri, 8:45 AM",
-    icon: "image",
-    detail: "Scheduled for local discovery",
-  },
-  {
     caption: "Carousel: 5 ways to repurpose one long-form clip",
     accounts: ["instagram", "linkedin", "threads"],
     status: "draft",
@@ -62,7 +54,7 @@ const DEMO_POSTS = [
   },
   {
     caption: "Behind-the-scenes photo set",
-    accounts: ["instagram", "facebook", "pinterest", "google_business"],
+    accounts: ["instagram", "facebook", "pinterest", "tumblr"],
     status: "draft",
     when: "Waiting for media",
     icon: "image",
@@ -141,7 +133,7 @@ const DEMO_PLATFORM_ROWS = [
   { platform: "threads", label: "Threads", posts: 19, views: "12.8K" },
   { platform: "bluesky", label: "Bluesky", posts: 11, views: "5.7K" },
   { platform: "pinterest", label: "Pinterest", posts: 8, views: "4.9K" },
-  { platform: "google_business", label: "Google Business", posts: 6, views: "820" },
+  { platform: "tumblr", label: "Tumblr", posts: 6, views: "820" },
   { platform: "mastodon", label: "Mastodon", posts: 7, views: "690" },
 ] as const;
 
@@ -161,7 +153,7 @@ const DEMO_CALENDAR_POSTS = [
   { slot: 4, icon: "image", label: "11:30 Carousel", accounts: ["instagram", "linkedin", "threads"] },
   { slot: 5, icon: "type", label: "2:00 Proof thread", accounts: ["twitter", "bluesky", "mastodon"] },
   { slot: 8, icon: "video", label: "10:00 Walkthrough", accounts: ["tiktok", "youtube"] },
-  { slot: 9, icon: "image", label: "1:15 Local promo", accounts: ["google_business", "facebook"] },
+  { slot: 9, icon: "type", label: "1:15 Community note", accounts: ["threads", "facebook"] },
   { slot: 11, icon: "send", label: "4:00 Partner post", accounts: ["linkedin", "twitter"] },
   { slot: 12, icon: "image", label: "8:45 Pin set", accounts: ["pinterest", "instagram"] },
   { slot: 15, icon: "video", label: "12:00 Weekly recap", accounts: ["youtube", "tiktok", "instagram"] },
@@ -170,7 +162,7 @@ const DEMO_CALENDAR_POSTS = [
   { slot: 19, icon: "video", label: "2:45 Customer reel", accounts: ["instagram", "facebook", "threads"] },
   { slot: 22, icon: "video", label: "11:00 Batch drop", accounts: ["tiktok", "youtube"] },
   { slot: 23, icon: "type", label: "1:30 Founder note", accounts: ["linkedin", "mastodon"] },
-  { slot: 25, icon: "image", label: "5:00 Promo graphic", accounts: ["google_business", "facebook", "instagram"] },
+  { slot: 25, icon: "type", label: "5:00 Founder note", accounts: ["tumblr", "facebook", "instagram"] },
   { slot: 29, icon: "send", label: "10:30 Roundup", accounts: ["twitter", "linkedin", "bluesky"] },
 ] as const;
 
@@ -194,7 +186,7 @@ const DEMO_CONNECTIONS: {
   { id: 1080, platform: "threads", username: "posttrain", status: "active", avatar_url: mockAvatar("TH", "171717") },
   { id: 1090, platform: "bluesky", username: "posttrain.bsky.social", status: "active", avatar_url: mockAvatar("BS", "0284c7") },
   { id: 1100, platform: "pinterest", username: "posttrainideas", status: "active", avatar_url: mockAvatar("PI", "be123c") },
-  { id: 1110, platform: "google_business", username: "Post Train Studio", status: "needs_reauth", avatar_url: mockAvatar("GB", "16a34a") },
+  { id: 1110, platform: "tumblr", username: "posttrainstudio", status: "needs_reauth", avatar_url: mockAvatar("TU", "001935") },
   { id: 1120, platform: "mastodon", username: "posttrain@mastodon.social", status: "active", avatar_url: mockAvatar("MA", "6366f1") },
 ] as const;
 

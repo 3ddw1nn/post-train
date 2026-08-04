@@ -14,7 +14,6 @@ The production domain removes the main callback-URL blocker. Build the remaining
 | Instagram | Not connected | Build Business/Creator OAuth after the Meta app is in place |
 | Threads | Not connected | Add Meta-backed OAuth after Facebook/Instagram foundation |
 | Pinterest | Awaiting credentials/approval | Add Pins API OAuth once approved |
-| Google Business Profile | Not connected | Requires a verified business profile and API access |
 | TikTok | Sandbox connection exists | Configure production credentials, callback, and review submission |
 
 Already implemented: Twitter/X, LinkedIn, Mastodon, Bluesky, Google/YouTube, and TikTok sandbox draft-to-inbox. Twitter/X still needs production API credits to publish.
@@ -49,12 +48,6 @@ The custom domain is now available, so this is no longer blocked on domain acqui
 - [ ] Obtain/confirm Pinterest trial approval and app secret
 - [ ] Add production credentials to Vercel and Render
 - [ ] Implement and test Pins API v5 OAuth and publishing
-
-### Google Business Profile
-
-- [ ] Create and verify a real Google Business Profile
-- [ ] Wait for the required verification age, then request API access
-- [ ] Implement OAuth, location selection, credential storage, and publishing after approval
 
 ## Next: controlled-production validation
 

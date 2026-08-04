@@ -124,8 +124,8 @@ export const THUMBNAIL_PRESETS: ThumbnailPreset[] = [
     platformId: "tiktok",
   },
   {
-    // X/Twitter, Bluesky, Threads, and Google Business are deliberately absent
-    // above: all four auto-generate a video thumbnail with no override, not
+    // X/Twitter, Bluesky, and Threads are deliberately absent above: all three
+    // auto-generate a video thumbnail with no override, not
     // even by hand in their own app — there's nowhere for a custom cover to
     // go. This generic square is the fallback for those and anything else.
     id: "square",
@@ -135,7 +135,7 @@ export const THUMBNAIL_PRESETS: ThumbnailPreset[] = [
     aspect: "1:1",
     hint: "1080×1080",
     coverSupport: "manual",
-    note: "Not a platform cover slot — export and upload this one yourself. (X/Twitter, Bluesky, Threads, and Google Business don't support a custom video thumbnail at all, even manually — they always show an auto-generated frame.)",
+    note: "Not a platform cover slot — export and upload this one yourself. (X/Twitter, Bluesky, and Threads don't support a custom video thumbnail at all, even manually — they always show an auto-generated frame.)",
   },
 ];
 

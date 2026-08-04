@@ -251,6 +251,13 @@ Monthly cap: **30 AI generations/month** per workspace (flat rate). Grid/fade-in
 | `GOOGLE_CLIENT_ID` / `SECRET` | Google sign-in |
 | `LINKEDIN_CLIENT_ID` / `SECRET` | LinkedIn OAuth |
 | `TWITTER_CLIENT_ID` / `SECRET` | Twitter/X OAuth |
+| `PINTEREST_CLIENT_ID` / `SECRET` | Pinterest OAuth |
+| `TIKTOK_CLIENT_ID` / `SECRET` | TikTok OAuth |
+| `TUMBLR_CLIENT_ID` / `SECRET` | Tumblr OAuth + text posts |
+
+Register these callback URLs exactly in the corresponding developer portals:
+
+- `https://posttrain.app/api/oauth/tumblr/callback`
 
 **Stripe:**
 | Variable | Purpose |

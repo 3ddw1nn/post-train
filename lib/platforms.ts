@@ -8,8 +8,8 @@ import {
   siBluesky,
   siThreads,
   siPinterest,
-  siGoogle,
   siMastodon,
+  siTumblr,
 } from "simple-icons";
 
 export type PlatformId =
@@ -22,8 +22,8 @@ export type PlatformId =
   | "bluesky"
   | "threads"
   | "pinterest"
-  | "google_business"
-  | "mastodon";
+  | "mastodon"
+  | "tumblr";
 
 export type PostType = "text" | "image" | "video" | "story";
 
@@ -35,7 +35,7 @@ export type Platform = {
   path: string; // svg path (24x24 viewBox)
   supports: PostType[];
   analytics: boolean;
-  onboardingGrid: boolean; // Google Business is absent from the onboarding picker
+  onboardingGrid: boolean;
   shareUrl: (username: string, postId: string) => string;
 };
 
@@ -153,22 +153,22 @@ export const PLATFORMS: Platform[] = [
     shareUrl: (_u, id) => `https://www.pinterest.com/pin/${id}/`,
   },
   {
-    id: "google_business",
-    name: "Google Business",
-    slug: "google-business",
-    hex: `#${siGoogle.hex}`,
-    path: siGoogle.path,
-    supports: ["text", "image", "video"],
+    id: "tumblr",
+    name: "Tumblr",
+    slug: "tumblr",
+    hex: `#${siTumblr.hex}`,
+    path: siTumblr.path,
+    supports: ["text"],
     analytics: false,
-    onboardingGrid: false,
-    shareUrl: (_u, id) => `https://business.google.com/posts/l/${id}`,
+    onboardingGrid: true,
+    shareUrl: (u, id) => `https://${u}.tumblr.com/post/${id}/`,
   },
 ];
 
 export const platform = (id: string): Platform | undefined =>
   PLATFORMS.find((p) => p.id === id);
 
-/** Twitter/LinkedIn/Mastodon/YouTube/Pinterest/TikTok use a real OAuth 2.0 redirect flow; everything else still uses the mock consent screen. */
+/** Platforms with a real OAuth connection flow. */
 export function connectHref(id: PlatformId, opts: { returnTo: string; reconnect?: number }): string {
   const params = new URLSearchParams({ return: opts.returnTo });
   if (opts.reconnect) params.set("reconnect", String(opts.reconnect));
@@ -178,6 +178,7 @@ export function connectHref(id: PlatformId, opts: { returnTo: string; reconnect?
   if (id === "youtube") return `/api/connections/youtube/start?${params}`;
   if (id === "pinterest") return `/api/connections/pinterest/start?${params}`;
   if (id === "tiktok") return `/api/connections/tiktok/start?${params}`;
+  if (id === "tumblr") return `/api/connections/tumblr/start?${params}`;
   return `/oauth/mock/${id}?${params}`;
 }
 
@@ -196,8 +197,7 @@ export const FOUR_IMAGE_PLATFORMS: PlatformId[] = ["twitter", "bluesky", "thread
  * default for Mastodon), Pinterest carousels at 5 (2-5 per Pinterest's ad
  * specs), Instagram/Threads/LinkedIn at 20, TikTok photo mode at 35 (min 4).
  * Facebook has no officially documented hard cap for Graph API multi-photo
- * posts, and Google Business Profile posts aren't a carousel format at all
- * (single image/video only) — both intentionally omitted here.
+ * posts — both intentionally omitted here.
  */
 export const CAROUSEL_MAX: Partial<Record<PlatformId, number>> = {
   twitter: 4,
@@ -217,8 +217,7 @@ export const CAPTION_MAX = 2200;
 /**
  * Each platform's own hard cap on a single post's text (checked 2026):
  * X 280, Bluesky 300, Mastodon/Threads 500, Pinterest pin description 800,
- * Instagram/TikTok 2,200, LinkedIn 3,000, Facebook 63,206. Google Business
- * isn't included — not relevant to the carousel-style posts this powers.
+ * Instagram/TikTok 2,200, LinkedIn 3,000, Facebook 63,206.
  */
 export const CAPTION_MAX_BY_PLATFORM: Partial<Record<PlatformId, number>> = {
   twitter: 280,
@@ -260,6 +259,9 @@ export const CONNECT_ERRORS: Record<string, string> = {
   pinterest_auth_failed: "Pinterest authorization failed or was cancelled.",
   pinterest_auth_expired: "That Pinterest session expired — try connecting again.",
   pinterest_platform_error: "Pinterest couldn't complete the connection — try again in a moment.",
+  tumblr_auth_failed: "Tumblr authorization failed or was cancelled.",
+  tumblr_auth_expired: "That Tumblr session expired — try connecting again.",
+  tumblr_platform_error: "Tumblr couldn't complete the connection — try again in a moment.",
   tiktok_auth_failed: "TikTok authorization failed or was cancelled.",
   tiktok_auth_expired: "That TikTok session expired — try connecting again.",
   tiktok_platform_error: "TikTok couldn't complete the connection — try again in a moment.",

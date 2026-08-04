@@ -20,7 +20,7 @@ const FAQ: [string, string][] = [
   ],
   [
     "Which platforms are supported?",
-    "Twitter/X, Instagram, LinkedIn, Facebook, TikTok, YouTube, Bluesky, Threads, Pinterest and Google Business — with more on the way.",
+    "Twitter/X, Instagram, LinkedIn, Facebook, TikTok, YouTube, Bluesky, Threads, Pinterest, and Tumblr — with more on the way.",
   ],
   [
     "How many accounts can I connect?",
