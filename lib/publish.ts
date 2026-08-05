@@ -21,6 +21,11 @@ import { refreshPinterestToken, type PinterestCredentials as PinterestOAuthCrede
 import { isTikTokError, publishToTikTok, type TikTokCredentials } from "./tiktok-publish";
 import { isTumblrError, type TumblrCredentials } from "./tumblr";
 import { publishToTumblr } from "./tumblr-publish";
+import { isInstagramError, type InstagramCredentials } from "./instagram";
+import { publishToInstagram } from "./instagram-publish";
+import { isThreadsError, type ThreadsCredentials } from "./threads";
+import { publishToThreads } from "./threads-publish";
+import { requireEnv } from "./oauth-state";
 import { encryptJson } from "./secretbox";
 import { readMediaBytes } from "./media";
 import { api } from "@/convex/_generated/api";
@@ -395,6 +400,56 @@ async function publishToPlatform(
     }
   }
 
+  if (account.platform === "instagram") {
+    if (!account.credentials) {
+      await convexMutation(api.accounts.patchAccount, { id: account.id, patch: { status: "needs_reauth" } });
+      return { success: false, error_code: "auth_expired", error_message: "Instagram credentials missing — reconnect this account." };
+    }
+
+    const item = media.find((m) => m.kind === "image") ?? media.find((m) => m.kind === "video");
+    if (!item) {
+      return { success: false, error_code: "platform_error", error_message: "Instagram requires an image or video to post." };
+    }
+
+    try {
+      const appUrl = requireEnv("NEXT_PUBLIC_APP_URL");
+      const creds = decryptJson<InstagramCredentials>(account.credentials);
+      const result = await publishToInstagram(creds, post.caption, {
+        url: `${appUrl}/api/media-file/${item.id}`,
+        kind: item.kind === "video" ? "video" : "image",
+      });
+      return { success: true, ...result };
+    } catch (e) {
+      const code = isInstagramError(e) ? e.code : "platform_error";
+      if (code === "auth_expired") await convexMutation(api.accounts.patchAccount, { id: account.id, patch: { status: "needs_reauth" } });
+      return { success: false, error_code: code, error_message: e instanceof Error ? e.message : "Instagram publish failed." };
+    }
+  }
+
+  if (account.platform === "threads") {
+    if (!account.credentials) {
+      await convexMutation(api.accounts.patchAccount, { id: account.id, patch: { status: "needs_reauth" } });
+      return { success: false, error_code: "auth_expired", error_message: "Threads credentials missing — reconnect this account." };
+    }
+
+    try {
+      const appUrl = requireEnv("NEXT_PUBLIC_APP_URL");
+      const creds = decryptJson<ThreadsCredentials>(account.credentials);
+      const item = media.find((m) => m.kind === "image") ?? media.find((m) => m.kind === "video");
+      const result = await publishToThreads(
+        creds,
+        account.username,
+        post.caption,
+        item ? { url: `${appUrl}/api/media-file/${item.id}`, kind: item.kind === "video" ? "video" : "image" } : undefined
+      );
+      return { success: true, ...result };
+    } catch (e) {
+      const code = isThreadsError(e) ? e.code : "platform_error";
+      if (code === "auth_expired") await convexMutation(api.accounts.patchAccount, { id: account.id, patch: { status: "needs_reauth" } });
+      return { success: false, error_code: code, error_message: e instanceof Error ? e.message : "Threads publish failed." };
+    }
+  }
+
   // Simulated for platforms without a real adapter yet.
   const platformPostId = randomBytes(9).toString("hex");
   const p = platformOf(account.platform);
@@ -416,7 +471,7 @@ export async function publishPost(post: PostRow): Promise<void> {
     { post_id: post.id }
   );
   const needsMedia = destinations.some(
-    (d) => d.platform === "bluesky" || d.platform === "youtube" || d.platform === "pinterest" || d.platform === "tiktok"
+    (d) => d.platform === "bluesky" || d.platform === "youtube" || d.platform === "pinterest" || d.platform === "tiktok" || d.platform === "instagram" || d.platform === "threads"
   );
   const media = needsMedia ? await loadPostMedia(post.id) : [];
 

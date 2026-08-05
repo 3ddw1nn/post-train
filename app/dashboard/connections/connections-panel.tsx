@@ -4,7 +4,7 @@ import { useState } from "react";
 import { PLATFORMS, platform as platformOf, connectHref, CONNECT_ERRORS, type PlatformId } from "@/lib/platforms";
 import { PlatformIcon, AccountAvatar } from "@/components/platform-icon";
 import { Icon } from "@/components/icons";
-import { ActionButton, Select } from "@/components/interactive";
+import { ActionButton, Dropdown, Select } from "@/components/interactive";
 
 type Account = { id: number; platform: string; username: string; status: string; avatar_url: string | null };
 
@@ -74,6 +74,37 @@ export function ConnectionsPanel({
               {a.username})
             </a>
           ))}
+        </div>
+      )}
+
+      {PLATFORMS.filter((p) => p.note).length > 0 && (
+        <div className="mt-3 rounded-xl border border-line bg-page/50 px-4 py-3">
+          <p className="text-xs font-bold text-muted">Before you connect</p>
+          <ul className="mt-1.5 flex flex-col gap-1">
+            {PLATFORMS.filter((p) => p.note)
+              .sort((a, b) => (a.id === "facebook" ? -1 : b.id === "facebook" ? 1 : 0))
+              .map((p) => (
+              <li key={p.id} className="flex items-start gap-2 text-xs text-muted">
+                <PlatformIcon id={p.id} size={14} />
+                <span>
+                  <span className="font-semibold">{p.name}:</span> {p.note}
+                  {p.noteLink && (
+                    <>
+                      {" "}
+                      <a
+                        href={p.noteLink.href}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="font-semibold text-primary-deep hover:underline"
+                      >
+                        {p.noteLink.label}
+                      </a>
+                    </>
+                  )}
+                </span>
+              </li>
+            ))}
+          </ul>
         </div>
       )}
 
@@ -149,13 +180,44 @@ export function ConnectionsPanel({
                     </span>
                   ))}
                 </div>
-                <a
-                  href={connectHref(p.id, { returnTo: "/dashboard/connections" })}
-                  aria-label={`Connect ${p.name}`}
-                  className="btn-dark order-2 ml-auto shrink-0 !py-1.5 text-xs sm:order-none"
-                >
-                  <Icon name="plus" size={13} strokeWidth={2.5} /> Connect
-                </a>
+                {p.id === "instagram" ? (
+                  <Dropdown
+                    align="right"
+                    width={240}
+                    trigger={
+                      <button
+                        type="button"
+                        aria-label="Connect Instagram"
+                        className="btn-dark order-2 ml-auto shrink-0 !py-1.5 text-xs sm:order-none"
+                      >
+                        <Icon name="plus" size={13} strokeWidth={2.5} /> Connect
+                      </button>
+                    }
+                  >
+                    <a
+                      href={connectHref("instagram", { returnTo: "/dashboard/connections", via: "facebook" })}
+                      className="flex w-full flex-col px-3 py-2 text-sm font-medium hover:bg-page"
+                    >
+                      Via Facebook Page
+                      <span className="text-xs font-normal text-muted">Your Instagram must be linked to a Page</span>
+                    </a>
+                    <a
+                      href={connectHref("instagram", { returnTo: "/dashboard/connections", via: "direct" })}
+                      className="flex w-full flex-col px-3 py-2 text-sm font-medium hover:bg-page"
+                    >
+                      Via Instagram login
+                      <span className="text-xs font-normal text-muted">No Facebook Page needed</span>
+                    </a>
+                  </Dropdown>
+                ) : (
+                  <a
+                    href={connectHref(p.id, { returnTo: "/dashboard/connections" })}
+                    aria-label={`Connect ${p.name}`}
+                    className="btn-dark order-2 ml-auto shrink-0 !py-1.5 text-xs sm:order-none"
+                  >
+                    <Icon name="plus" size={13} strokeWidth={2.5} /> Connect
+                  </a>
+                )}
               </div>
             );
           })}

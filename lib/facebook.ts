@@ -36,15 +36,9 @@ export async function exchangeCodeForToken(code: string, origin: string): Promis
   const longJson = await longLived.json() as { access_token?: string; expires_in?: number };
   if (!longJson.access_token) throw new FacebookError("Facebook did not return a long-lived access token.", "platform_error");
 
-  // ponytail: temporary debug — remove once Page permission grant issue is diagnosed
-  const permsRes = await fetch(`${GRAPH_URL}/me/permissions?${new URLSearchParams({ access_token: longJson.access_token })}`);
-  console.error("[facebook oauth debug] granted permissions:", await permsRes.text());
-
   const pagesRes = await fetch(`${GRAPH_URL}/me/accounts?${new URLSearchParams({ access_token: longJson.access_token })}`);
-  const pagesBody = await pagesRes.text();
-  console.error("[facebook oauth debug] /me/accounts:", pagesRes.status, pagesBody);
-  if (!pagesRes.ok) throw new FacebookError(`Could not list Facebook Pages: ${pagesBody}`, "platform_error");
-  const pagesJson = JSON.parse(pagesBody) as { data?: { id?: string; access_token?: string }[] };
+  if (!pagesRes.ok) throw new FacebookError(`Could not list Facebook Pages: ${await pagesRes.text()}`, "platform_error");
+  const pagesJson = await pagesRes.json() as { data?: { id?: string; access_token?: string }[] };
   const page = pagesJson.data?.[0];
   if (!page?.id || !page.access_token) throw new FacebookError("No Facebook Page is available to connect — this account must be an admin of at least one Page.", "platform_error");
 
@@ -52,9 +46,10 @@ export async function exchangeCodeForToken(code: string, origin: string): Promis
 }
 
 export async function fetchFacebookProfile(creds: FacebookCredentials): Promise<{ id: string; username: string; displayName: string; avatarUrl: string | null }> {
-  const res = await fetch(`${GRAPH_URL}/${creds.page_id}?${new URLSearchParams({ fields: "id,name,picture", access_token: creds.access_token })}`);
+  const res = await fetch(`${GRAPH_URL}/${creds.page_id}?${new URLSearchParams({ fields: "id,name,username,picture", access_token: creds.access_token })}`);
   if (!res.ok) throw new FacebookError(`Could not fetch Facebook Page profile: ${await res.text()}`, "platform_error");
-  const json = await res.json() as { id?: string; name?: string; picture?: { data?: { url?: string } } };
+  const json = await res.json() as { id?: string; name?: string; username?: string; picture?: { data?: { url?: string } } };
   if (!json.id || !json.name) throw new FacebookError("Facebook did not return Page details.", "platform_error");
-  return { id: json.id, username: json.id, displayName: json.name, avatarUrl: json.picture?.data?.url ?? null };
+  // Pages only have a @handle once a vanity URL is set; fall back to the name.
+  return { id: json.id, username: json.username ?? json.name, displayName: json.name, avatarUrl: json.picture?.data?.url ?? null };
 }

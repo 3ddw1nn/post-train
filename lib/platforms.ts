@@ -37,6 +37,8 @@ export type Platform = {
   analytics: boolean;
   onboardingGrid: boolean;
   shareUrl: (username: string, postId: string) => string;
+  note?: string; // platform caveat shown on the connections page
+  noteLink?: { href: string; label: string };
 };
 
 export const PLATFORMS: Platform[] = [
@@ -61,6 +63,7 @@ export const PLATFORMS: Platform[] = [
     analytics: true,
     onboardingGrid: true,
     shareUrl: (_u, id) => `https://www.instagram.com/p/${id}/`,
+    note: "Requires a Professional (Business or Creator) account — personal accounts can't authorize posting. Switch in the Instagram app: Settings → Account type and tools → Switch to professional account.",
   },
   {
     id: "linkedin",
@@ -83,6 +86,8 @@ export const PLATFORMS: Platform[] = [
     analytics: false,
     onboardingGrid: true,
     shareUrl: (u, id) => `https://www.facebook.com/${u}/posts/${id}`,
+    note: "Posts go to a Facebook Page, not your personal profile — Facebook removed personal timeline posting for all apps in April 2018. Any Facebook account can create a Page for free; a business account isn't required.",
+    noteLink: { href: "https://www.facebook.com/pages/create", label: "Create a Facebook Page" },
   },
   {
     id: "tiktok",
@@ -140,6 +145,7 @@ export const PLATFORMS: Platform[] = [
     analytics: false,
     onboardingGrid: true,
     shareUrl: (u, id) => `https://www.threads.net/@${u}/post/${id}`,
+    note: "Requires a Threads profile linked to a Professional (Business or Creator) Instagram account — personal accounts can't authorize posting.",
   },
   {
     id: "pinterest",
@@ -169,7 +175,7 @@ export const platform = (id: string): Platform | undefined =>
   PLATFORMS.find((p) => p.id === id);
 
 /** Platforms with a real OAuth connection flow. */
-export function connectHref(id: PlatformId, opts: { returnTo: string; reconnect?: number }): string {
+export function connectHref(id: PlatformId, opts: { returnTo: string; reconnect?: number; via?: "facebook" | "direct" }): string {
   const params = new URLSearchParams({ return: opts.returnTo });
   if (opts.reconnect) params.set("reconnect", String(opts.reconnect));
   if (id === "twitter") return `/api/connections/twitter/start?${params}`;
@@ -180,6 +186,10 @@ export function connectHref(id: PlatformId, opts: { returnTo: string; reconnect?
   if (id === "tiktok") return `/api/connections/tiktok/start?${params}`;
   if (id === "tumblr") return `/api/connections/tumblr/start?${params}`;
   if (id === "facebook") return `/api/connections/facebook/start?${params}`;
+  // Instagram has two connect paths: via a linked Facebook Page (default),
+  // or direct Instagram Login for accounts with no Page at all.
+  if (id === "instagram") return `/api/connections/instagram${opts.via === "direct" ? "-direct" : ""}/start?${params}`;
+  if (id === "threads") return `/api/connections/threads/start?${params}`;
   return `/oauth/mock/${id}?${params}`;
 }
 
@@ -266,6 +276,12 @@ export const CONNECT_ERRORS: Record<string, string> = {
   facebook_auth_failed: "Facebook authorization failed or was cancelled.",
   facebook_auth_expired: "That Facebook session expired — try connecting again.",
   facebook_platform_error: "Facebook couldn't complete the connection — try again in a moment.",
+  instagram_auth_failed: "Instagram authorization failed or was cancelled.",
+  instagram_auth_expired: "That Instagram session expired — try connecting again.",
+  instagram_platform_error: "Instagram couldn't complete the connection — try again in a moment.",
+  threads_auth_failed: "Threads authorization failed or was cancelled.",
+  threads_auth_expired: "That Threads session expired — try connecting again.",
+  threads_platform_error: "Threads couldn't complete the connection — try again in a moment.",
   tiktok_auth_failed: "TikTok authorization failed or was cancelled.",
   tiktok_auth_expired: "That TikTok session expired — try connecting again.",
   tiktok_platform_error: "TikTok couldn't complete the connection — try again in a moment.",
