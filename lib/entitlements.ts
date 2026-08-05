@@ -47,7 +47,24 @@ export function joinableWorkspaceCap(sub: Subscription | null): number {
   return { free: 1, creator: 1, growth: 1, pro: 2 }[plan];
 }
 
-export const apiAccess = (sub: Subscription | null) => entitled(sub) && !!sub!.api_addon;
+/**
+ * API v1 + the MCP server. Included with every paid plan — the separate
+ * `api_addon` purchase no longer gates access (billing still records it, and
+ * lib/billing.ts still sells it, so stop offering the add-on in checkout
+ * before anyone buys something that grants nothing).
+ */
+export const apiAccess = (sub: Subscription | null) => entitled(sub);
+
+/**
+ * Requests per minute per credential against API v1 + the MCP server. Tiered so
+ * automating hard is a reason to move up a plan rather than a wall every paid
+ * customer hits at the same place. `free` never applies in practice (apiAccess
+ * gates first) but is present so the lookup is total.
+ */
+export function apiRateLimit(sub: Subscription | null): number {
+  const plan = planOf(sub);
+  return { free: 0, creator: 60, growth: 300, pro: 1000 }[plan];
+}
 
 export const studioAccess = (sub: Subscription | null) => entitled(sub);
 

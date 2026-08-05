@@ -16,7 +16,7 @@
 ### 💰 Billing & Entitlements
 - Stripe integration (4 tiers: Starter, Creator, Growth, Pro)
 - Monthly/yearly subscriptions with proration
-- API add-ons for heavy users
+- API + MCP access included with every paid plan, rate-limited per tier
 - Founder staff override for testing
 
 ### 🎥 Content Studio (AI Video Generation)
@@ -188,6 +188,9 @@ Base: `https://posttrain.app/api/v1`
 
 **Authentication:** `Authorization: Bearer <api_key>` (hashed, workspace-scoped)
 
+**Access:** included with every paid plan. Rate limits are per credential per
+minute, tiered by plan — Creator 60, Growth 300, Pro 1,000 (`lib/entitlements.ts`).
+
 **Endpoints:**
 - `POST /posts` — create a post
 - `GET /posts` — list posts (paginated)
@@ -199,7 +202,26 @@ See [docs/api/page.tsx](app/%28marketing%29/docs/api/page.tsx) for schema.
 
 ### MCP Integration
 
-Post Train exposes an MCP server for use with Claude and other AI agents. See `convex/_generated/ai/` for available functions.
+Streamable-HTTP MCP server at `https://posttrain.app/api/mcp`, exposing the same
+11 tools as the API.
+
+**Two ways to authenticate:**
+
+1. **OAuth 2.1** — what Claude uses. Add the URL as a custom connector; Claude
+   registers itself (RFC 7591), the user signs in and approves on
+   `/oauth/authorize`, and the client receives scoped tokens. Implements the MCP
+   authorization spec: RFC 9728 protected-resource metadata, RFC 8414 AS
+   metadata, PKCE (S256 only), and RFC 8707 resource indicators with audience
+   validation. Implementation in [lib/mcp-oauth.ts](lib/mcp-oauth.ts).
+2. **API key** — `Authorization: Bearer pt_live_…` against the same endpoint,
+   for scripts and CI that shouldn't run a browser flow.
+
+**Scopes:** `read` (six read-only tools) and `publish` (create/update/delete/sync).
+A client only sees the tools its grant covers. Users revoke access from
+Dashboard → API Keys → Connected apps.
+
+Access tokens are stateless HMAC envelopes, so a tool call costs no extra
+database read; refresh tokens are stored and rotated on use.
 
 ---
 

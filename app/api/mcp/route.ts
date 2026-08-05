@@ -1,8 +1,14 @@
-// Minimal MCP server (streamable-HTTP, JSON-RPC over POST) exposing the same
-// 11 tools as the public API (spec 09 §MCP). Auth: Bearer API key.
+// MCP server (streamable-HTTP, JSON-RPC over POST) exposing the same 11 tools
+// as the public API.
+//
+// Auth accepts either a workspace API key (pt_live_…) or an OAuth access token
+// the user granted to an MCP client (pt_mcp_…). Unauthenticated requests get a
+// 401 carrying a WWW-Authenticate challenge, which is how Claude discovers the
+// authorization server and starts the connect flow — see lib/mcp-oauth.ts.
+//
 // ponytail: single request/response JSON-RPC only — no SSE streaming or session
 // resumption; sufficient for tools/list + tools/call clients.
-import { authenticateApiKey, type ApiContext } from "@/lib/api-auth";
+import { authenticateMcp, type ApiContext } from "@/lib/api-auth";
 import { accountsForWorkspace } from "@/lib/accounts";
 import {
   createPost,
@@ -18,8 +24,34 @@ import { listAnalytics, syncAnalytics } from "@/lib/analytics";
 import { getSubscription } from "@/lib/billing";
 import { analyticsAccess } from "@/lib/entitlements";
 import { listRecords } from "@/lib/db";
+import { insufficientScope, mcpResourceUri, unauthorizedChallenge, type Scope } from "@/lib/mcp-oauth";
 
 type Json = Record<string, unknown>;
+
+/** Which consented scope each tool needs. Read-only tools stay usable on a read-only grant. */
+const TOOL_SCOPES: Record<string, Scope> = {
+  list_social_accounts: "read",
+  list_posts: "read",
+  get_post: "read",
+  list_analytics: "read",
+  list_post_results: "read",
+  list_media: "read",
+  create_post: "publish",
+  update_post: "publish",
+  delete_post: "publish",
+  sync_analytics: "publish",
+  delete_media: "publish",
+};
+
+const POST_FIELDS: Json = {
+  caption: { type: "string" },
+  social_accounts: { type: "array", items: { type: "number" }, description: "Social account ids from list_social_accounts." },
+  media_urls: { type: "array", items: { type: "string" }, description: "Public URLs; downloaded server-side." },
+  scheduled_at: { type: "string", description: "ISO 8601 datetime. Must be in the future." },
+  use_queue: { type: "boolean" },
+  is_draft: { type: "boolean" },
+  platform_configurations: { type: "object", description: "Per-platform overrides keyed by platform id." },
+};
 
 const TOOLS: { name: string; description: string; inputSchema: Json }[] = [
   {
@@ -31,19 +63,7 @@ const TOOLS: { name: string; description: string; inputSchema: Json }[] = [
     name: "create_post",
     description:
       "Create a post. Provide caption, social_accounts (ids), and optionally media_urls (public URLs downloaded server-side), scheduled_at (ISO), use_queue, is_draft, platform_configurations.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        caption: { type: "string" },
-        social_accounts: { type: "array", items: { type: "number" } },
-        media_urls: { type: "array", items: { type: "string" } },
-        scheduled_at: { type: "string" },
-        use_queue: { type: "boolean" },
-        is_draft: { type: "boolean" },
-        platform_configurations: { type: "object" },
-      },
-      required: ["social_accounts"],
-    },
+    inputSchema: { type: "object", properties: POST_FIELDS, required: ["social_accounts"] },
   },
   {
     name: "list_posts",
@@ -65,8 +85,13 @@ const TOOLS: { name: string; description: string; inputSchema: Json }[] = [
   },
   {
     name: "update_post",
-    description: "Update a scheduled/draft post (caption, scheduled_at, social_accounts, media, configs).",
-    inputSchema: { type: "object", properties: { post_id: { type: "string" } }, required: ["post_id"] },
+    description:
+      "Update a scheduled or draft post. Only the fields you pass are changed; published posts cannot be updated.",
+    inputSchema: {
+      type: "object",
+      properties: { post_id: { type: "string" }, ...POST_FIELDS },
+      required: ["post_id"],
+    },
   },
   {
     name: "delete_post",
@@ -170,6 +195,7 @@ function rpcError(id: unknown, code: number, message: string) {
 }
 
 export async function POST(req: Request) {
+  const origin = new URL(req.url).origin;
   let body: { id?: unknown; method?: string; params?: Json } | null = null;
   try {
     body = await req.json();
@@ -180,7 +206,7 @@ export async function POST(req: Request) {
 
   if (method === "initialize") {
     return rpcResult(id, {
-      protocolVersion: (params?.protocolVersion as string) ?? "2025-03-26",
+      protocolVersion: (params?.protocolVersion as string) ?? "2025-06-18",
       serverInfo: { name: "post-train", version: "1.0.0" },
       capabilities: { tools: {} },
     });
@@ -189,12 +215,14 @@ export async function POST(req: Request) {
     return new Response(null, { status: 202 });
   }
 
-  // Everything else requires a valid API key
+  // Everything else needs credentials. A bare 401 would leave an MCP client
+  // stuck; the WWW-Authenticate challenge is what points it at our OAuth
+  // metadata so it can walk the user through connecting.
   let ctx: ApiContext;
   try {
-    ctx = await authenticateApiKey(req);
+    ctx = await authenticateMcp(req, mcpResourceUri(origin));
   } catch (e) {
-    return rpcError(id, -32001, e instanceof Error ? e.message : "Unauthorized");
+    return unauthorizedChallenge(origin, e instanceof Error ? e.message : "Authorization required.");
   }
 
   try {
@@ -202,9 +230,14 @@ export async function POST(req: Request) {
       case "ping":
         return rpcResult(id, {});
       case "tools/list":
-        return rpcResult(id, { tools: TOOLS });
+        // Hide tools this grant can't call rather than advertising them and
+        // failing at call time — a read-only client shouldn't see publish tools.
+        return rpcResult(id, { tools: TOOLS.filter((t) => ctx.scopes.includes(TOOL_SCOPES[t.name])) });
       case "tools/call": {
         const name = String(params?.name ?? "");
+        const needed = TOOL_SCOPES[name];
+        if (!needed) return rpcError(id, -32602, `Unknown tool: ${name}`);
+        if (!ctx.scopes.includes(needed)) return insufficientScope(origin, needed);
         const args = (params?.arguments as Json) ?? {};
         const result = await callTool(ctx, name, args);
         return rpcResult(id, {
@@ -221,13 +254,14 @@ export async function POST(req: Request) {
         isError: true,
       });
     }
+    console.error("[mcp] unexpected error", e);
     return rpcError(id, -32603, "Internal error");
   }
 }
 
-export async function GET() {
-  return new Response(
-    "Post Train MCP server — connect with a streamable-HTTP MCP client via POST, Authorization: Bearer pt_live_…",
-    { status: 405 }
-  );
+/** No SSE stream; the 401 still carries the challenge so discovery works from a GET. */
+export async function GET(req: Request) {
+  const origin = new URL(req.url).origin;
+  if (!req.headers.get("authorization")) return unauthorizedChallenge(origin);
+  return new Response("Post Train MCP server — send JSON-RPC via POST.", { status: 405 });
 }

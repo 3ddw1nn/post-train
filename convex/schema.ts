@@ -339,6 +339,56 @@ export default defineSchema({
     .index("by_hash", ["key_hash"])
     .index("by_workspace", ["workspace_id"]),
 
+  // OAuth clients for the MCP server (lib/mcp-oauth.ts). Claude registers
+  // itself here via RFC 7591 dynamic client registration the first time a user
+  // adds the connector; one row per client, shared across all users who connect
+  // through it. `client_secret_hash` is null for public (PKCE-only) clients.
+  oauth_clients: defineTable({
+    id: v.string(),
+    client_id: v.string(),
+    client_secret_hash: nullableString,
+    client_name: v.string(),
+    redirect_uris: v.array(v.string()),
+    created_at: v.string(),
+  })
+    .index("by_legacy_id", ["id"])
+    .index("by_client_id", ["client_id"]),
+
+  // Both halves of the OAuth grant lifecycle in one table, discriminated by
+  // `kind`: short-lived single-use authorization codes and long-lived refresh
+  // tokens. Access tokens are deliberately absent — they're stateless HMAC
+  // envelopes (lib/mcp-oauth.ts) so an MCP tool call costs no database read.
+  // ponytail: that means revoking a grant leaves its access token usable until
+  // it expires (1h ceiling). Upgrade path if that window ever matters: store
+  // access-token hashes here too and check them on each request.
+  oauth_grants: defineTable({
+    id: v.string(),
+    kind: v.string(), // "code" | "refresh"
+    token_hash: v.string(),
+    client_id: v.string(),
+    user_id: v.string(),
+    workspace_id: v.string(),
+    scope: v.string(),
+    resource: v.string(),
+    redirect_uri: nullableString, // codes only
+    code_challenge: nullableString, // codes only (PKCE S256)
+    expires_at: v.string(),
+    consumed_at: nullableString,
+    created_at: v.string(),
+  })
+    .index("by_legacy_id", ["id"])
+    .index("by_hash", ["token_hash"])
+    .index("by_user", ["user_id"]),
+
+  // Fixed-window request counters for the public API + MCP server. Durable
+  // because the previous in-process Map gave every serverless instance its own
+  // counter, so the documented per-key limit was never actually enforced.
+  api_rate_windows: defineTable({
+    bucket_key: v.string(), // "<key or grant id>:<epoch minute>"
+    count: v.number(),
+    expires_at: v.number(),
+  }).index("by_bucket_key", ["bucket_key"]),
+
   // Workspace-supplied ("bring your own key") credentials for third-party AI
   // image providers, one row per workspace+provider. Mirrors the
   // social_accounts.credentials pattern: AES-256-GCM-encrypted JSON via

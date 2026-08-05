@@ -22,7 +22,8 @@ export default function McpPage() {
         </h1>
         <p className="mx-auto mt-3 max-w-xl text-lg text-muted">
           Post Train ships a Model Context Protocol server. Connect Claude, Cursor or any
-          MCP client and post everywhere by asking nicely.
+          MCP client and post everywhere by asking nicely. Included with every paid plan —
+          sign in to approve, no API key to copy around.
         </p>
         <div className="mt-5 flex flex-wrap justify-center gap-2.5">
           {PLATFORMS.map((p) => (
@@ -54,8 +55,8 @@ export default function McpPage() {
         <h2 className="text-center text-2xl font-extrabold">Three-step setup</h2>
         <ol className="mt-6 flex flex-col gap-3">
           {[
-            "Enable the API add-on and create a key under Dashboard → API Keys.",
-            "Add the MCP server to your client: URL {your-host}/api/mcp/mcp, header Authorization: Bearer pt_live_….",
+            "In Claude, add a custom connector with the URL https://posttrain.app/api/mcp — nothing to paste, no key to copy.",
+            "Sign in to Post Train and approve the connection. Grant read-only, or read plus publish.",
             "Ask your AI to list your accounts — then start posting.",
           ].map((s, i) => (
             <li key={i} className="card flex items-start gap-3 p-4 text-sm">

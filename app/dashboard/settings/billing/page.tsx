@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { requireOnboardedUser } from "@/lib/auth";
 import { getSubscription } from "@/lib/billing";
-import { PLANS, API_ADDON, type PaidPlan } from "@/lib/billing-data";
-import { entitled, apiAccess } from "@/lib/entitlements";
+import { PLANS, type PaidPlan } from "@/lib/billing-data";
+import { entitled, apiAccess, apiRateLimit } from "@/lib/entitlements";
 import { Pill } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { ActionButton } from "@/components/interactive";
@@ -167,43 +167,30 @@ export default async function BillingPage() {
           </div>
         )}
 
+        {/* The API used to be a paid add-on. It now ships with every paid plan,
+            so this is a status panel — selling it again would charge for
+            something the subscription already grants. */}
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line p-5">
           <div>
-            <h3 className="font-bold">API Addon</h3>
+            <h3 className="font-bold">API &amp; MCP</h3>
             <p className="mt-0.5 text-sm text-muted">
-              Programmatic posting via the REST API, MCP server and agent skills.
+              Programmatic posting via the REST API, signed webhooks, and the MCP server for
+              Claude and other AI agents.
             </p>
             <p className="mt-1 text-xs font-semibold text-muted">
-              ${API_ADDON.yearly}/year (or ${API_ADDON.monthly}/mo) · Requires an active
-              subscription
+              {apiAccess(sub)
+                ? `Included with your plan · ${apiRateLimit(sub).toLocaleString()} requests/min`
+                : "Included with every paid plan"}
             </p>
           </div>
-          {sub && apiAccess(sub) ? (
-            <div className="flex items-center gap-2">
-              <Pill tone="success">Active</Pill>
-              <ActionButton
-                endpoint="/api/billing/addon"
-                body={{ on: false }}
-                className="btn-subtle"
-                confirmText="Disable the API add-on? Your API keys will stop working."
-              >
-                Disable
-              </ActionButton>
-            </div>
-          ) : (
-            <div className="flex items-center gap-2">
-              <Pill tone="neutral">Inactive</Pill>
-              <ActionButton
-                endpoint="/api/billing/addon"
-                body={{ on: true, interval: "year" }}
-                className="btn-primary"
-                disabled={!live}
-                title={live ? undefined : "Requires an active subscription"}
-              >
-                Enable Addon
-              </ActionButton>
-            </div>
-          )}
+          <div className="flex items-center gap-2">
+            <Pill tone={apiAccess(sub) ? "success" : "neutral"}>
+              {apiAccess(sub) ? "Included" : "Upgrade to unlock"}
+            </Pill>
+            <Link href="/dashboard/api-keys" className="btn-subtle">
+              Manage
+            </Link>
+          </div>
         </div>
       </section>
 

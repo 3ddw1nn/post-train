@@ -1,6 +1,5 @@
 import Link from "next/link";
 import { PLATFORMS } from "@/lib/platforms";
-import { API_ADDON } from "@/lib/billing-data";
 import { PlatformIcon, PlatformIconRow } from "@/components/platform-icon";
 import { PlanPicker } from "@/components/plan-picker";
 import { Icon } from "@/components/icons";
@@ -263,7 +262,7 @@ export default function LandingPage() {
             "“Swapped a $200/mo suite for this and lost nothing I actually used.”",
             "“Connected 9 accounts in one sitting. The OAuth flow just works.”",
             "“Per-account captions saved my agency's client setup.”",
-            "“The API add-on turned our content pipeline into a cron job.”",
+            "“The API turned our content pipeline into a cron job.”",
           ].map((quote, i) => (
             <figure key={i} className="card mb-4 break-inside-avoid p-5">
               <blockquote className="text-sm">{quote}</blockquote>
@@ -322,8 +321,8 @@ export default function LandingPage() {
               Your content pipeline, programmable
             </h2>
             <p className="mt-3 text-sm text-muted">
-              REST API, signed webhooks and an MCP server for AI agents. ${API_ADDON.monthly}
-              /mo or ${API_ADDON.yearly}/yr as an add-on — requires an active subscription.
+              REST API, signed webhooks and an MCP server for AI agents. Included with every
+              paid plan — connect Claude with one URL, no key to copy.
             </p>
             <div className="mt-5 flex gap-3">
               <Link href="/docs/api" className="btn-dark">

@@ -8,8 +8,8 @@ These features and infrastructure pieces are shipped. Production-only validation
 - Password reset, change password, sign-out-all
 - Google OAuth sign-in (live, tested)
 - Convex database (cloud deployment active)
-- Public API v1 with hashed keys and rate limiting
-- MCP server integration
+- Public API v1 with hashed keys and durable per-plan rate limiting
+- MCP server at /api/mcp with OAuth 2.1 (DCR, PKCE, scoped consent) + API-key auth
 - Signed webhooks (HMAC-SHA256)
 - Workspace roles + member management
 - Team invitations and workspace switching
@@ -56,7 +56,7 @@ These features and infrastructure pieces are shipped. Production-only validation
 - Checkout flow (Stripe-hosted)
 - Plan switching with proration
 - Cancel/resume/pause subscriptions
-- API add-on purchasing
+- API add-on purchasing (superseded — access now included with every paid plan)
 - Webhook sync (checkout, subscription lifecycle)
 - Refund code path (untested charge)
 - Staff override for founder testing

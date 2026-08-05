@@ -161,9 +161,25 @@ X-Signature: hex(hmac_sha256(secret, raw_body))
       <div className="card mt-6 p-5">
         <h2 className="font-bold">MCP server</h2>
         <p className="mt-1 text-sm text-muted">
-          Streamable-HTTP MCP endpoint at <code>/api/mcp/mcp</code> exposing 11 tools that
+          Streamable-HTTP MCP endpoint at <code>/api/mcp</code> exposing 11 tools that
           mirror this API — <code>create_post</code> accepts <code>media_urls</code> so
-          agents skip the upload step. Authenticate with the same Bearer key.
+          agents skip the upload step.
+        </p>
+        <p className="mt-3 text-sm font-semibold">Connecting Claude</p>
+        <p className="mt-1 text-sm text-muted">
+          Add <code>https://posttrain.app/api/mcp</code> as a custom connector in Claude. It
+          registers itself and sends you here to sign in and approve — no key to paste.
+          Manage or revoke connected apps from{" "}
+          <span className="font-semibold">Settings → API Keys</span>.
+        </p>
+        <p className="mt-3 text-sm font-semibold">Scopes</p>
+        <p className="mt-1 text-sm text-muted">
+          <code>read</code> covers the six read-only tools; <code>publish</code> is required
+          to create, update, delete, or sync. A client only sees the tools its grant allows.
+        </p>
+        <p className="mt-3 text-sm text-muted">
+          Scripts and CI can skip OAuth entirely and send a{" "}
+          <code>Bearer pt_live_…</code> API key to the same endpoint.
         </p>
       </div>
     </section>

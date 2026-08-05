@@ -27,6 +27,7 @@ export const PLANS: Record<
       "Content studio templates",
       "5 GB workspace storage",
       "Analytics (beta)",
+      "API + MCP access (60 req/min)",
       "Human support",
     ],
   },
@@ -41,6 +42,7 @@ export const PLANS: Record<
       "Everything in Creator",
       "Invite team members",
       "25 GB workspace storage",
+      "API + MCP access (300 req/min)",
       "Viral growth consulting",
       "Priority human support",
     ],
@@ -57,11 +59,17 @@ export const PLANS: Record<
       "Everything in Growth",
       "Create & manage teams",
       "100 GB workspace storage",
+      "API + MCP access (1,000 req/min)",
       "Priority human support",
-      "API add-on eligible",
     ],
   },
 };
 
+/**
+ * Legacy: the API used to be a paid add-on gating API v1 + MCP. Access now
+ * ships with every paid plan (lib/entitlements.ts → apiAccess), so this price
+ * is only still referenced by existing-subscriber billing UI. Don't offer it
+ * to new customers — it grants nothing.
+ */
 export const API_ADDON = { monthly: 5, yearly: 50 };
 export const TRIAL_DAYS = 7;

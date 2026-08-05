@@ -51,7 +51,7 @@ export function ApiKeysPanel({ hasAccess, keys }: { hasAccess: boolean; keys: Ke
           className="btn-primary"
           disabled={!hasAccess}
           onClick={() => setCreating(true)}
-          title={hasAccess ? undefined : "Enable the API add-on first"}
+          title={hasAccess ? undefined : "Included with any paid plan"}
         >
           <Icon name="plus" size={15} /> Create API Key
         </button>
@@ -60,10 +60,10 @@ export function ApiKeysPanel({ hasAccess, keys }: { hasAccess: boolean; keys: Ke
       {!hasAccess && (
         <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-amber-200 bg-warning-bg p-4">
           <div>
-            <p className="font-bold text-warning-ink">API Access Required</p>
+            <p className="font-bold text-warning-ink">Paid plan required</p>
             <p className="text-sm text-warning-ink/90">
-              The REST API is a paid add-on ($5/mo or $50/yr) on top of an active
-              subscription. Enable it from Billing to create keys.
+              The REST API and MCP server are included with every paid plan — Creator,
+              Growth, and Pro. Upgrade to create keys and connect Claude.
             </p>
           </div>
           <Link href="/dashboard/settings/billing" className="btn-warning">

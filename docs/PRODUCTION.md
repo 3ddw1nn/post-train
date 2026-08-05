@@ -46,7 +46,9 @@ Use this document for launch readiness. `TODO.md` holds product and platform wor
 
 - [ ] Create or activate the live Stripe account
 - [ ] Recreate Creator, Growth, and Pro products/prices in live mode
-- [ ] Recreate the API add-on prices if that add-on will ship at launch
+- [ ] Do NOT recreate the API add-on prices — API + MCP access now ships with every
+      paid plan (`lib/entitlements.ts` → `apiAccess`), so the add-on would grant nothing.
+      Remove `STRIPE_PRICE_ADDON_*` from the live env once no subscriber holds it.
 - [ ] Set live Stripe keys in Vercel production
 - [ ] Register `https://posttrain.app/api/webhooks/stripe` as the live Stripe webhook
 - [ ] Send a real-card checkout through each critical path: start trial, change plan, cancel, resume, and webhook sync

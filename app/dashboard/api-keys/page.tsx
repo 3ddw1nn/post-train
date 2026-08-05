@@ -7,6 +7,8 @@ import { convexQuery } from "@/lib/db";
 import { api } from "@/convex/_generated/api";
 import { Icon } from "@/components/icons";
 import { ApiKeysPanel, WebhookForm } from "./api-keys-panel";
+import { ConnectedApps, type ConnectedApp } from "./connected-apps";
+import { findClient, grantsForUser } from "@/lib/mcp-oauth";
 
 export const metadata = { title: "API Keys" };
 
@@ -27,9 +29,26 @@ export default async function ApiKeysPage() {
     .filter((key) => !key.revoked_at)
     .sort((a, b) => b.created_at.localeCompare(a.created_at));
 
+  // One row per client, newest grant wins — a client that reconnected several
+  // times should read as one connected app, not a stack of duplicates.
+  const grants = await grantsForUser(user.id);
+  const byClient = new Map<string, ConnectedApp>();
+  for (const grant of grants.sort((a, b) => a.created_at.localeCompare(b.created_at))) {
+    const client = await findClient(grant.client_id);
+    byClient.set(grant.client_id, {
+      client_id: grant.client_id,
+      client_name: client?.client_name ?? "Unknown app",
+      scope: grant.scope,
+      created_at: grant.created_at,
+    });
+  }
+  const connectedApps = [...byClient.values()].reverse();
+
   return (
     <div className="fade-up mx-auto max-w-3xl">
       <ApiKeysPanel hasAccess={hasAccess} keys={keys} />
+
+      <ConnectedApps apps={connectedApps} />
 
       <section className="card mt-4 divide-y divide-line">
         <div className="p-5">
