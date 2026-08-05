@@ -1,5 +1,5 @@
 import { Fragment, type ReactNode } from "react";
-import type { DocBlock, Method } from "@/lib/docs/api-reference";
+import type { DocBlock, Method } from "@/lib/docs/types";
 import { CodeBlock } from "./code-block";
 
 /**
@@ -153,6 +153,51 @@ export function Block({ block }: { block: DocBlock }) {
             </tbody>
           </table>
         </div>
+      );
+
+    case "action":
+      return (
+        <a
+          href={block.href}
+          className="group mt-4 flex items-center justify-between gap-3 rounded-lg border border-primary/25 bg-primary-soft/50 px-4 py-3 transition-colors hover:border-primary/50 hover:bg-primary-soft"
+        >
+          <span className="min-w-0">
+            <span className="block text-[14px] font-semibold text-primary-dark">
+              {block.label}
+            </span>
+            {block.desc && (
+              <span className="block text-[12.5px] text-primary-deep/80">{block.desc}</span>
+            )}
+          </span>
+          <span
+            aria-hidden
+            className="shrink-0 text-primary-deep transition-transform group-hover:translate-x-0.5"
+          >
+            →
+          </span>
+        </a>
+      );
+
+    case "steps":
+      return (
+        <ol className="mt-5 flex flex-col gap-4">
+          {block.items.map((step, i) => (
+            <li key={step.title} className="flex gap-3.5">
+              <span
+                aria-hidden
+                className="mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary text-[12px] font-bold text-primary-contrast"
+              >
+                {i + 1}
+              </span>
+              <span className="min-w-0">
+                <span className="block text-[14.5px] font-semibold text-ink">{step.title}</span>
+                <span className="mt-0.5 block text-[14px] leading-relaxed text-ink/75">
+                  {inline(step.body)}
+                </span>
+              </span>
+            </li>
+          ))}
+        </ol>
       );
 
     case "endpoint":

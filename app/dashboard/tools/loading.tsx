@@ -8,7 +8,7 @@ export default function ToolsLoading() {
     <div className="fade-up">
       <SkeletonBlock className="h-8 w-20" />
       <div className="mt-5 grid gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {/* 12 registry tools + the Growth Guide card. */}
+        {/* 12 registry tools + the Growth Playbook card. */}
         {Array.from({ length: 13 }).map((_, i) => (
           <div key={i} className="overflow-hidden rounded-2xl border border-line bg-white">
             <SkeletonBlock className="h-44 w-full rounded-none" />

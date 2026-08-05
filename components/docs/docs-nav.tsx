@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { DocGroup } from "@/lib/docs/api-reference";
+import type { DocGroup } from "@/lib/docs/types";
 
 /** Distance below the viewport top that counts as "what you're reading". */
 const READING_LINE = 120;

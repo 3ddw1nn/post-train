@@ -25,6 +25,13 @@ const nextConfig: NextConfig = {
         destination: "/api/tools/trends",
         permanent: true,
       },
+      // Renamed from "growth guide". Permanent so existing links and any
+      // accumulated search ranking follow the content to the new URL.
+      {
+        source: "/growth-guide",
+        destination: "/growth-playbook",
+        permanent: true,
+      },
     ];
   },
 };

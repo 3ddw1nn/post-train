@@ -74,8 +74,8 @@ export function MarketingNav({ user }: { user: NavUser | null }) {
               <Link href="/tools" className="block px-3 py-2 text-sm font-medium hover:bg-page">
                 Free Tools
               </Link>
-              <Link href="/growth-guide" className="block px-3 py-2 text-sm font-medium hover:bg-page">
-                Growth Guide
+              <Link href="/growth-playbook" className="block px-3 py-2 text-sm font-medium hover:bg-page">
+                Growth Playbook
               </Link>
             </Dropdown>
             <Link href="/docs/api" className="text-ink/80 hover:text-ink">
@@ -134,7 +134,7 @@ export function MarketingNav({ user }: { user: NavUser | null }) {
               </Link>
             ))}
             <Link href="/tools" onClick={() => setOpen(false)}>Free Tools</Link>
-            <Link href="/growth-guide" onClick={() => setOpen(false)}>Growth Guide</Link>
+            <Link href="/growth-playbook" onClick={() => setOpen(false)}>Growth Playbook</Link>
             <Link href="/docs/api" onClick={() => setOpen(false)}>Docs</Link>
             {user ? (
               <>

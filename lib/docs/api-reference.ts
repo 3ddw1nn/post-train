@@ -1,45 +1,9 @@
-// Single source of truth for the developer docs.
-//
-// The page, the /docs/api.md export, and the "copy page as Markdown" button all
-// render from this one structure. Authoring the docs as data instead of JSX is
-// what keeps those three honest: a hand-maintained Markdown twin drifts from
-// the rendered page within a release or two, and an LLM reading the stale twin
-// is worse than one reading nothing.
-//
-// Prose supports a deliberately tiny inline subset — `code`, **bold**, and
-// [links](url) — because anything more means shipping a Markdown parser to the
-// client for content we control at author time.
+// Content for the API & MCP reference. The document model, and the Markdown
+// serializer that /docs/api.md and the "copy page" button run on, live in
+// lib/docs/types.ts and are shared with the growth playbook.
+import { toMarkdown, type DocGroup } from "./types";
 
-export type Method = "GET" | "POST" | "PATCH" | "DELETE";
-
-export type DocBlock =
-  | { kind: "prose"; text: string }
-  | { kind: "code"; lang: string; label?: string; code: string }
-  | { kind: "note"; tone: "info" | "warn"; text: string }
-  | { kind: "table"; headers: string[]; rows: string[][] }
-  | {
-      kind: "endpoint";
-      method: Method;
-      path: string;
-      summary: string;
-      scope?: string;
-      params?: { name: string; type: string; required?: boolean; desc: string }[];
-      request?: string;
-      response?: string;
-    };
-
-export type DocSection = {
-  id: string;
-  title: string;
-  /** Rendered as a nested nav entry under its parent group. */
-  blocks: DocBlock[];
-};
-
-export type DocGroup = {
-  id: string;
-  title: string;
-  sections: DocSection[];
-};
+export type { Method, DocBlock, DocSection, DocGroup } from "./types";
 
 export const API_BASE = "https://posttrain.app/api/v1";
 export const MCP_URL = "https://posttrain.app/api/mcp";
@@ -494,59 +458,10 @@ X-Signature: hex(hmac_sha256(workspace_secret, raw_request_body))
   },
 ];
 
-// ── Markdown rendering ──────────────────────────────────────────────────────
-// Consumed by /docs/api.md and the "copy page" button. Kept plain — no HTML,
-// no front matter — because the audience is a model pasting it into context.
-
-function endpointMarkdown(b: Extract<DocBlock, { kind: "endpoint" }>): string {
-  const out = [`#### \`${b.method} ${b.path}\``, "", b.summary];
-  if (b.params?.length) {
-    out.push("", "| Parameter | Type | Required | Description |", "| --- | --- | --- | --- |");
-    for (const p of b.params) {
-      out.push(`| \`${p.name}\` | ${p.type} | ${p.required ? "yes" : "no"} | ${p.desc} |`);
-    }
-  }
-  if (b.request) out.push("", "Request:", "", "```json", b.request, "```");
-  if (b.response) out.push("", "Response:", "", "```json", b.response, "```");
-  return out.join("\n");
-}
-
-function blockMarkdown(b: DocBlock): string {
-  switch (b.kind) {
-    case "prose":
-      return b.text;
-    case "code":
-      return [b.label ? `${b.label}:` : null, "", "```" + b.lang, b.code, "```"]
-        .filter((l) => l !== null)
-        .join("\n");
-    case "note":
-      return `> **${b.tone === "warn" ? "Important" : "Note"}:** ${b.text}`;
-    case "table":
-      return [
-        `| ${b.headers.join(" | ")} |`,
-        `| ${b.headers.map(() => "---").join(" | ")} |`,
-        ...b.rows.map((r) => `| ${r.join(" | ")} |`),
-      ].join("\n");
-    case "endpoint":
-      return endpointMarkdown(b);
-  }
-}
-
-export function docsToMarkdown(): string {
-  const out = [
-    "# Post Train API & MCP reference",
-    "",
+export const docsToMarkdown = () =>
+  toMarkdown(DOCS, "Post Train API & MCP reference", [
     `REST API base: ${API_BASE}`,
     `MCP server: ${MCP_URL}`,
     "",
     "Included with every paid Post Train plan.",
-  ];
-  for (const group of DOCS) {
-    out.push("", `## ${group.title}`);
-    for (const section of group.sections) {
-      out.push("", `### ${section.title}`, "");
-      out.push(section.blocks.map(blockMarkdown).join("\n\n"));
-    }
-  }
-  return out.join("\n") + "\n";
-}
+  ]);

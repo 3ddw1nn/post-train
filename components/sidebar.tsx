@@ -471,7 +471,7 @@ export function Sidebar({
           <Link href="/affiliates" className="nav-item" target="_blank">
             <Icon name="gift" size={18} /> Referral discounts
           </Link>
-          <Link href="/growth-guide" className="nav-item" target="_blank">
+          <Link href="/growth-playbook" className="nav-item" target="_blank">
             <Icon name="book" size={18} /> Playbook
           </Link>
           <Link href="/contact" className="nav-item" target="_blank">

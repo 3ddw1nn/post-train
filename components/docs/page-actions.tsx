@@ -5,8 +5,6 @@ import { Dropdown } from "@/components/interactive";
 import { Icon } from "@/components/icons";
 import { MCP_URL } from "@/lib/docs/api-reference";
 
-const MD_URL = "https://posttrain.app/docs/api.md";
-const AI_PROMPT = `Read ${MD_URL} — it documents the Post Train API and MCP server. Help me use it.`;
 const CLAUDE_CODE_CMD = `claude mcp add --transport http posttrain ${MCP_URL}`;
 
 /**
@@ -67,12 +65,20 @@ function MenuItem({
  */
 export function PageActions({
   markdown,
+  markdownHref,
   cursorConfig,
 }: {
   markdown: string;
-  /** base64 of the Cursor MCP config, encoded server-side. */
-  cursorConfig: string;
+  /** Path to this page's Markdown twin, e.g. /docs/api.md */
+  markdownHref: string;
+  /**
+   * base64 of the Cursor MCP config, encoded server-side. Omitted on pages
+   * where wiring up an MCP client isn't the point — a growth playbook offering
+   * "Connect to Cursor" is menu noise, not a feature.
+   */
+  cursorConfig?: string;
 }) {
+  const aiPrompt = `Read https://posttrain.app${markdownHref} — Post Train documentation. Help me use it.`;
   const [flash, setFlash] = useState<string | null>(null);
 
   async function copy(text: string, confirmation: string) {
@@ -113,7 +119,7 @@ export function PageActions({
         icon="file"
         title="View as Markdown"
         desc="Open this page as plain text"
-        href="/docs/api.md"
+        href={markdownHref}
       />
 
       <div className="my-1 h-px bg-line" />
@@ -122,15 +128,17 @@ export function PageActions({
         icon="chat"
         title="Open in ChatGPT"
         desc="Ask ChatGPT about this page"
-        href={`https://chatgpt.com/?hints=search&q=${encodeURIComponent(AI_PROMPT)}`}
+        href={`https://chatgpt.com/?hints=search&q=${encodeURIComponent(aiPrompt)}`}
       />
       <MenuItem
         icon="sparkles"
         title="Open in Claude"
         desc="Ask Claude about this page"
-        href={`https://claude.ai/new?q=${encodeURIComponent(AI_PROMPT)}`}
+        href={`https://claude.ai/new?q=${encodeURIComponent(aiPrompt)}`}
       />
 
+      {cursorConfig && (
+        <>
       <div className="my-1 h-px bg-line" />
 
       <MenuItem
@@ -157,6 +165,8 @@ export function PageActions({
         desc="Install this MCP in Cursor"
         href={`cursor://anysphere.cursor-deeplink/mcp/install?name=posttrain&config=${cursorConfig}`}
       />
+        </>
+      )}
     </Dropdown>
   );
 }
