@@ -36,9 +36,15 @@ export async function exchangeCodeForToken(code: string, origin: string): Promis
   const longJson = await longLived.json() as { access_token?: string; expires_in?: number };
   if (!longJson.access_token) throw new FacebookError("Facebook did not return a long-lived access token.", "platform_error");
 
+  // ponytail: temporary debug — remove once Page permission grant issue is diagnosed
+  const permsRes = await fetch(`${GRAPH_URL}/me/permissions?${new URLSearchParams({ access_token: longJson.access_token })}`);
+  console.error("[facebook oauth debug] granted permissions:", await permsRes.text());
+
   const pagesRes = await fetch(`${GRAPH_URL}/me/accounts?${new URLSearchParams({ access_token: longJson.access_token })}`);
-  if (!pagesRes.ok) throw new FacebookError(`Could not list Facebook Pages: ${await pagesRes.text()}`, "platform_error");
-  const pagesJson = await pagesRes.json() as { data?: { id?: string; access_token?: string }[] };
+  const pagesBody = await pagesRes.text();
+  console.error("[facebook oauth debug] /me/accounts:", pagesRes.status, pagesBody);
+  if (!pagesRes.ok) throw new FacebookError(`Could not list Facebook Pages: ${pagesBody}`, "platform_error");
+  const pagesJson = JSON.parse(pagesBody) as { data?: { id?: string; access_token?: string }[] };
   const page = pagesJson.data?.[0];
   if (!page?.id || !page.access_token) throw new FacebookError("No Facebook Page is available to connect — this account must be an admin of at least one Page.", "platform_error");
 

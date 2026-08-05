@@ -31,6 +31,7 @@ export async function GET(req: Request) {
     await convexMutation(api.accounts.upsertMockAccount, { workspace_id: ws.id, platform: "facebook", username: profile.username, display_name: profile.displayName, avatar_url: profile.avatarUrl, platform_account_id: profile.id, credentials: encryptJson(creds) });
     return Response.redirect(`${url.origin}${returnTo}`);
   } catch (error) {
+    console.error("[facebook oauth callback]", error);
     return Response.redirect(`${url.origin}${returnTo}?error=facebook_${isFacebookError(error) ? error.code : "platform_error"}`);
   }
 }
