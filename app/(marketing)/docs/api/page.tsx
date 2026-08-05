@@ -1,187 +1,117 @@
-export const metadata = { title: "API Reference" };
+import Link from "next/link";
+import { DOCS, MCP_URL, API_BASE, docsToMarkdown } from "@/lib/docs/api-reference";
+import { Block } from "./blocks";
+import { DocsNav } from "./docs-nav";
+import { PageActions } from "./page-actions";
 
-function Endpoint({
-  method,
-  path,
-  desc,
-  body,
-  response,
-}: {
-  method: string;
-  path: string;
-  desc: string;
-  body?: string;
-  response?: string;
-}) {
-  const tone =
-    method === "GET"
-      ? "bg-blue-50 text-blue-700"
-      : method === "POST"
-        ? "bg-primary-soft text-primary-deep"
-        : method === "PATCH"
-          ? "bg-amber-50 text-amber-700"
-          : "bg-red-50 text-red-700";
-  return (
-    <div className="card p-5">
-      <p className="flex flex-wrap items-center gap-2">
-        <span className={`pill font-mono ${tone}`}>{method}</span>
-        <code className="text-sm font-bold">{path}</code>
-      </p>
-      <p className="mt-1.5 text-sm text-muted">{desc}</p>
-      {body && (
-        <pre className="mt-3 overflow-x-auto rounded-xl bg-ink p-4 text-xs leading-relaxed text-primary">
-          {body}
-        </pre>
-      )}
-      {response && (
-        <pre className="mt-2 overflow-x-auto rounded-xl bg-page p-4 text-xs leading-relaxed text-ink/80">
-          {response}
-        </pre>
-      )}
-    </div>
-  );
-}
+export const metadata = {
+  title: "API & MCP Reference",
+  description:
+    "REST API and Model Context Protocol server for Post Train — schedule and publish across every connected social account programmatically.",
+};
 
 export default function ApiDocsPage() {
+  const markdown = docsToMarkdown();
+  // Base64 on the server: `btoa` doesn't exist during SSR, and encoding this
+  // in the client component would desync the server and client renders.
+  const cursorConfig = Buffer.from(JSON.stringify({ url: MCP_URL })).toString("base64");
+
   return (
-    <section className="mx-auto max-w-3xl px-6 py-16">
-      <h1 className="text-3xl font-extrabold">API Reference (v1)</h1>
-      <p className="mt-2 text-muted">
-        Bearer-authenticated JSON API. Requires the API add-on on an active subscription.
-      </p>
+    <div className="mx-auto max-w-6xl px-6">
+      <div className="lg:grid lg:grid-cols-[15rem_minmax(0,1fr)] lg:gap-12">
+        <aside className="lg:pt-12">
+          <DocsNav groups={DOCS} />
+        </aside>
 
-      <div className="card mt-6 p-5">
-        <h2 className="font-bold">Authentication</h2>
-        <pre className="mt-2 overflow-x-auto rounded-xl bg-ink p-4 text-xs text-primary">
-{`Authorization: Bearer pt_live_your_key_here
-Base URL: {your-host}/api/v1`}
-        </pre>
-        <p className="mt-2 text-xs text-muted">
-          401 = invalid key · 403 = add-on/subscription inactive · 400 = validation ·
-          429 = rate limit (60 req/min). Lists paginate with <code>limit</code> (default
-          50) + <code>offset</code> and return <code>count</code>.
-        </p>
+        {/* One measure for everything. Capping prose but letting tables and code
+            run the full column width leaves a ragged right edge and makes the
+            page feel unset; a single ~70ch column keeps every element aligned. */}
+        <div className="min-w-0 max-w-[46rem] pb-24 pt-10 lg:pt-12">
+          <header className="border-b border-line pb-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="min-w-0">
+                <h1 className="text-[28px] font-extrabold tracking-tight text-ink">
+                  API &amp; MCP reference
+                </h1>
+                <p className="mt-1.5 max-w-[62ch] text-[15px] leading-relaxed text-ink/70">
+                  Two ways to drive Post Train programmatically. Included with every paid
+                  plan — no separate API purchase.
+                </p>
+              </div>
+              <PageActions markdown={markdown} cursorConfig={cursorConfig} />
+            </div>
+
+            <dl className="mt-5 flex flex-wrap gap-x-8 gap-y-3">
+              <div>
+                <dt className="text-[11px] font-bold uppercase tracking-wider text-muted">
+                  REST base URL
+                </dt>
+                <dd className="mt-0.5 font-mono text-[13px] text-ink">{API_BASE}</dd>
+              </div>
+              <div>
+                <dt className="text-[11px] font-bold uppercase tracking-wider text-muted">
+                  MCP server
+                </dt>
+                <dd className="mt-0.5 font-mono text-[13px] text-ink">{MCP_URL}</dd>
+              </div>
+            </dl>
+          </header>
+
+          {DOCS.map((group, gi) => (
+            <section key={group.id} aria-labelledby={`${group.id}-heading`}>
+              <h2
+                id={`${group.id}-heading`}
+                // The first group sits right under the header's rule, so a full
+                // mt-14 there strands two horizontal lines around a dead band.
+                className={`${gi === 0 ? "mt-8" : "mt-16"} border-b border-line pb-2 text-[13px] font-bold uppercase tracking-wider text-primary-deep`}
+              >
+                {group.title}
+              </h2>
+
+              {group.sections.map((section) => (
+                <section
+                  key={section.id}
+                  id={section.id}
+                  // Anchored jumps must clear the sticky site nav, and
+                  // scroll-margin does that without padding the layout.
+                  className="scroll-mt-24 pt-8"
+                >
+                  <h3 className="group flex items-center gap-2 text-[19px] font-bold tracking-tight text-ink">
+                    {section.title}
+                    <a
+                      href={`#${section.id}`}
+                      aria-label={`Link to ${section.title}`}
+                      className="text-muted opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100"
+                    >
+                      #
+                    </a>
+                  </h3>
+                  {section.blocks.map((block, i) => (
+                    <Block key={i} block={block} />
+                  ))}
+                </section>
+              ))}
+            </section>
+          ))}
+
+          <footer className="mt-16 rounded-xl border border-line bg-page/60 p-5">
+            <h2 className="text-[15px] font-bold">Something missing?</h2>
+            <p className="mt-1 max-w-[60ch] text-sm text-ink/70">
+              These docs cover every endpoint and tool we ship. If you need something that
+              isn&apos;t here, tell us what you&apos;re building — endpoint requests from
+              people actually integrating carry the most weight in what we build next.
+            </p>
+            <div className="mt-4 flex flex-wrap gap-2">
+              <a href="mailto:ehleedev@gmail.com?subject=API%20feedback" className="btn-dark">
+                Email the team
+              </a>
+              <Link href="/dashboard/api-keys" className="btn-subtle">
+                Get an API key
+              </Link>
+            </div>
+          </footer>
+        </div>
       </div>
-
-      <div className="mt-6 flex flex-col gap-4">
-        <Endpoint
-          method="GET"
-          path="/v1/social-accounts"
-          desc="Connected accounts — ids are required for post creation."
-          response={`{ "data": [ { "id": 1, "platform": "twitter", "username": "yourhandle" } ], "count": 1 }`}
-        />
-        <Endpoint
-          method="POST"
-          path="/v1/media/create-upload-url"
-          desc="Three-step upload: request a signed URL, PUT the raw bytes to it, then POST the completion URL."
-          body={`{ "mime_type": "video/mp4", "size_bytes": 1048576, "name": "video.mp4" }`}
-          response={`201 → { "media_id": "mid_abc123", "upload_url": "https://…signed…", "complete_url": "https://…" }
-Then: PUT {upload_url}   (Content-Type: video/mp4, raw bytes)
-Then: POST {complete_url}`}
-        />
-        <Endpoint
-          method="GET"
-          path="/v1/media?limit=50&offset=0"
-          desc="List uploaded media."
-        />
-        <Endpoint method="DELETE" path="/v1/media/{media_id}" desc="Delete a media item." />
-        <Endpoint
-          method="POST"
-          path="/v1/posts"
-          desc="Create a post. use_queue and scheduled_at are mutually exclusive; omit both for an instant post. media_urls are downloaded server-side. Timezone priority: explicit > profile > UTC."
-          body={`{
-  "caption": "your caption here #hashtags",
-  "media": ["mid_abc123"],
-  "media_urls": ["https://public/file.mp4"],
-  "social_accounts": [1, 2, 3],
-  "scheduled_at": "2026-08-01T14:00:00Z",
-  "is_draft": false,
-  "use_queue": true,
-  "platform_configurations": {
-    "tiktok":    { "draft": true, "video_cover_timestamp_ms": 3000, "is_aigc": true },
-    "instagram": { "is_trial_reel": true, "trial_graduation": "SS_PERFORMANCE" },
-    "youtube":   { "title": "My Short Title" },
-    "twitter":   { "caption": "platform-specific caption" },
-    "pinterest": { "title": "Pin Title", "link": "https://…", "board_ids": ["b1"] }
-  },
-  "account_configurations": [ { "account_id": 1, "caption": "override" } ]
-}`}
-          response={`201 → { "id": "uuid", "status": "scheduled", … }`}
-        />
-        <Endpoint
-          method="GET"
-          path="/v1/posts?status=scheduled|published|failed|draft&platform=instagram"
-          desc="List posts with filters."
-        />
-        <Endpoint method="GET" path="/v1/posts/{post_id}" desc="Full post details." />
-        <Endpoint
-          method="PATCH"
-          path="/v1/posts/{post_id}"
-          desc="Update caption, scheduled_at, social_accounts, media or configs — scheduled/draft posts only."
-        />
-        <Endpoint
-          method="DELETE"
-          path="/v1/posts/{post_id}"
-          desc="Delete a scheduled/draft post. Published posts cannot be deleted."
-        />
-        <Endpoint
-          method="GET"
-          path="/v1/post-results?post_id={id}"
-          desc="Per-platform publish outcomes with share URLs or error detail."
-        />
-        <Endpoint
-          method="GET"
-          path="/v1/analytics?platform=tiktok&timeframe=7d|30d|90d|all"
-          desc="Analytics records (TikTok/YouTube/Instagram) with views, likes, comments, shares and match_confidence."
-        />
-        <Endpoint
-          method="POST"
-          path="/v1/analytics/sync?platform=tiktok"
-          desc="Trigger a background metrics sync. Omit platform to sync all three."
-          response={`202 → { "triggered": [ { "platform": "tiktok", "runId": "run_…" } ] }`}
-        />
-      </div>
-
-      <div className="card mt-6 p-5">
-        <h2 className="font-bold">Webhook</h2>
-        <p className="mt-1 text-sm text-muted">
-          Configure one URL per workspace (Dashboard → API Keys). On every post
-          completion we POST the results, signed with your workspace secret.
-        </p>
-        <pre className="mt-3 overflow-x-auto rounded-xl bg-ink p-4 text-xs text-primary">
-{`POST {your_url}
-X-Signature: hex(hmac_sha256(secret, raw_body))
-
-{ "event": "post.completed", "post_id": "uuid",
-  "results": [ { "platform": "tiktok", "success": true, "share_url": "…" },
-               { "platform": "youtube", "success": false, "error": "…" } ] }`}
-        </pre>
-      </div>
-
-      <div className="card mt-6 p-5">
-        <h2 className="font-bold">MCP server</h2>
-        <p className="mt-1 text-sm text-muted">
-          Streamable-HTTP MCP endpoint at <code>/api/mcp</code> exposing 11 tools that
-          mirror this API — <code>create_post</code> accepts <code>media_urls</code> so
-          agents skip the upload step.
-        </p>
-        <p className="mt-3 text-sm font-semibold">Connecting Claude</p>
-        <p className="mt-1 text-sm text-muted">
-          Add <code>https://posttrain.app/api/mcp</code> as a custom connector in Claude. It
-          registers itself and sends you here to sign in and approve — no key to paste.
-          Manage or revoke connected apps from{" "}
-          <span className="font-semibold">Settings → API Keys</span>.
-        </p>
-        <p className="mt-3 text-sm font-semibold">Scopes</p>
-        <p className="mt-1 text-sm text-muted">
-          <code>read</code> covers the six read-only tools; <code>publish</code> is required
-          to create, update, delete, or sync. A client only sees the tools its grant allows.
-        </p>
-        <p className="mt-3 text-sm text-muted">
-          Scripts and CI can skip OAuth entirely and send a{" "}
-          <code>Bearer pt_live_…</code> API key to the same endpoint.
-        </p>
-      </div>
-    </section>
+    </div>
   );
 }

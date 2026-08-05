@@ -79,7 +79,7 @@ export function MarketingNav({ user }: { user: NavUser | null }) {
               </Link>
             </Dropdown>
             <Link href="/docs/api" className="text-ink/80 hover:text-ink">
-              API
+              Docs
             </Link>
             <Link href="/dashboard/settings/billing" className="text-ink/80 hover:text-ink">
               Billing
@@ -135,7 +135,7 @@ export function MarketingNav({ user }: { user: NavUser | null }) {
             ))}
             <Link href="/tools" onClick={() => setOpen(false)}>Free Tools</Link>
             <Link href="/growth-guide" onClick={() => setOpen(false)}>Growth Guide</Link>
-            <Link href="/docs/api" onClick={() => setOpen(false)}>API</Link>
+            <Link href="/docs/api" onClick={() => setOpen(false)}>Docs</Link>
             {user ? (
               <>
                 <Link href="/dashboard/settings/billing" onClick={() => setOpen(false)}>Billing</Link>

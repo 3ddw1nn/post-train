@@ -52,12 +52,14 @@ export default function McpPage() {
       </section>
 
       <section className="mx-auto max-w-3xl px-6 py-16">
+        {/* Setup instructions live in /docs/api only. Two copies of a connect
+            flow drift the moment one changes; this page sells, the docs teach. */}
         <h2 className="text-center text-2xl font-extrabold">Three-step setup</h2>
         <ol className="mt-6 flex flex-col gap-3">
           {[
-            "In Claude, add a custom connector with the URL https://posttrain.app/api/mcp — nothing to paste, no key to copy.",
-            "Sign in to Post Train and approve the connection. Grant read-only, or read plus publish.",
-            "Ask your AI to list your accounts — then start posting.",
+            "In Claude, add a custom connector pointing at your Post Train MCP URL.",
+            "Sign in and approve — choose read-only, or read plus publish.",
+            "Ask your AI to list your accounts, then start posting.",
           ].map((s, i) => (
             <li key={i} className="card flex items-start gap-3 p-4 text-sm">
               <span className="flex h-6 w-6 shrink-0 items-center justify-center rounded-full bg-primary font-bold text-primary-contrast">
@@ -67,6 +69,16 @@ export default function McpPage() {
             </li>
           ))}
         </ol>
+        <p className="mt-4 text-center text-sm text-muted">
+          Exact URL, scopes, and the full tool reference are in the{" "}
+          <Link
+            href="/docs/api#mcp-overview"
+            className="font-semibold text-primary-deep underline decoration-primary/30 underline-offset-2 hover:decoration-primary"
+          >
+            MCP documentation
+          </Link>
+          .
+        </p>
         <h2 className="mt-14 text-center text-2xl font-extrabold">11 tools, full control</h2>
         <div className="mt-6 grid gap-3 sm:grid-cols-2">
           {TOOLS.map(([name, desc]) => (
