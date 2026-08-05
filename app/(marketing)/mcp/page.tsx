@@ -69,16 +69,14 @@ export default function McpPage() {
             </li>
           ))}
         </ol>
-        <p className="mt-4 text-center text-sm text-muted">
-          Exact URL, scopes, and the full tool reference are in the{" "}
-          <Link
-            href="/docs/api#mcp-overview"
-            className="font-semibold text-primary-deep underline decoration-primary/30 underline-offset-2 hover:decoration-primary"
-          >
-            MCP documentation
+        <div className="mt-6 text-center">
+          <Link href="/docs/api/mcp-overview" className="btn-dark">
+            Read the MCP docs
           </Link>
-          .
-        </p>
+          <p className="mt-2 text-sm text-muted">
+            Exact URL, scopes, and the full tool reference.
+          </p>
+        </div>
         <h2 className="mt-14 text-center text-2xl font-extrabold">11 tools, full control</h2>
         <div className="mt-6 grid gap-3 sm:grid-cols-2">
           {TOOLS.map(([name, desc]) => (
