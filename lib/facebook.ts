@@ -5,7 +5,6 @@ const GRAPH_VERSION = "v21.0";
 const AUTHORIZE_URL = `https://www.facebook.com/${GRAPH_VERSION}/dialog/oauth`;
 const TOKEN_URL = `https://graph.facebook.com/${GRAPH_VERSION}/oauth/access_token`;
 const GRAPH_URL = `https://graph.facebook.com/${GRAPH_VERSION}`;
-const SCOPES = "pages_show_list,pages_read_engagement,pages_manage_posts";
 
 // Page access token, not the user token — publishing happens as the Page.
 // ponytail: connects the user's first Page only (mirrors lib/tumblr.ts's
@@ -21,7 +20,7 @@ export const packOAuthState = (data: Omit<OAuthFlowState, "exp">) => packState<O
 export const unpackOAuthState = (token: string | undefined) => unpackState<OAuthFlowState>(token);
 
 export function authorizeUrl(origin: string, state: string) {
-  return `${AUTHORIZE_URL}?${new URLSearchParams({ response_type: "code", client_id: requireEnv("FACEBOOK_CLIENT_ID"), redirect_uri: facebookRedirectUri(origin), scope: SCOPES, state })}`;
+  return `${AUTHORIZE_URL}?${new URLSearchParams({ response_type: "code", client_id: requireEnv("FACEBOOK_CLIENT_ID"), redirect_uri: facebookRedirectUri(origin), config_id: requireEnv("FACEBOOK_CONFIG_ID"), state })}`;
 }
 
 export async function exchangeCodeForToken(code: string, origin: string): Promise<FacebookCredentials> {
