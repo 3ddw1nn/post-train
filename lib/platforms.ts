@@ -179,6 +179,7 @@ export function connectHref(id: PlatformId, opts: { returnTo: string; reconnect?
   if (id === "pinterest") return `/api/connections/pinterest/start?${params}`;
   if (id === "tiktok") return `/api/connections/tiktok/start?${params}`;
   if (id === "tumblr") return `/api/connections/tumblr/start?${params}`;
+  if (id === "facebook") return `/api/connections/facebook/start?${params}`;
   return `/oauth/mock/${id}?${params}`;
 }
 
@@ -262,6 +263,9 @@ export const CONNECT_ERRORS: Record<string, string> = {
   tumblr_auth_failed: "Tumblr authorization failed or was cancelled.",
   tumblr_auth_expired: "That Tumblr session expired — try connecting again.",
   tumblr_platform_error: "Tumblr couldn't complete the connection — try again in a moment.",
+  facebook_auth_failed: "Facebook authorization failed or was cancelled.",
+  facebook_auth_expired: "That Facebook session expired — try connecting again.",
+  facebook_platform_error: "Facebook couldn't complete the connection — try again in a moment.",
   tiktok_auth_failed: "TikTok authorization failed or was cancelled.",
   tiktok_auth_expired: "That TikTok session expired — try connecting again.",
   tiktok_platform_error: "TikTok couldn't complete the connection — try again in a moment.",

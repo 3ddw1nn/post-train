@@ -264,6 +264,8 @@ type TextLayer = {
   /** Preferred visual row in the text overlay stack, same idea as
    *  AudioClip.row — rendering and export ignore this. */
   row?: number;
+  /** A neutral user-created row can hold any timeline item type. */
+  genericRow?: number;
   /** The overlay PNG last uploaded for this layer, reused across re-renders
    *  as long as captionRenderSignature hasn't changed since. */
   renderedMediaId?: string;
@@ -398,6 +400,8 @@ type AudioClip = {
   /** Preferred visual row in the independent audio stack. Rendering and
    * export ignore this; it only preserves the editor layout across drafts. */
   row?: number;
+  /** A neutral user-created row can hold any timeline item type. */
+  genericRow?: number;
   /** The segment this was detached from — used only to hide that segment's
    *  box from the Original clip audio row. The clip is otherwise fully
    *  independent: if that segment is later edited or deleted, this stays. */
@@ -421,6 +425,8 @@ type VisualLayer = {
   end: number;
   /** Row index within this layer's own kind's lane (see VISUAL_KINDS). */
   row: number;
+  /** A neutral user-created row can hold any timeline item type. */
+  genericRow?: number;
   /** Center position and width, all as percentages of the output frame. */
   x: number;
   y: number;
@@ -442,6 +448,15 @@ function probeAudioDuration(file: File): Promise<number> {
     audio.onloadedmetadata = () => { resolve(audio.duration || 0); URL.revokeObjectURL(audio.src); };
     audio.onerror = () => { resolve(0); URL.revokeObjectURL(audio.src); };
     audio.src = URL.createObjectURL(file);
+  });
+}
+function probeVideoDuration(file: File): Promise<number> {
+  return new Promise((resolve) => {
+    const video = document.createElement("video");
+    video.preload = "metadata";
+    video.onloadedmetadata = () => { resolve(video.duration || 0); URL.revokeObjectURL(video.src); };
+    video.onerror = () => { resolve(0); URL.revokeObjectURL(video.src); };
+    video.src = URL.createObjectURL(file);
   });
 }
 
@@ -895,6 +910,9 @@ type TimelineSegment = {
   /** Blank black/silent timeline space before this clip. A non-zero gap and
    * an incoming transition are mutually exclusive. */
   gapBefore?: number;
+  /** Optional neutral timeline row used only for editor layout. Playback and
+   * export still follow this segment's real timeline offset. */
+  genericRow?: number;
   audioRemoved?: boolean;
   effect?: string;
   crops: Record<string, { x: number; y: number }>;
@@ -938,6 +956,7 @@ type DraftSnapshot = Partial<{
   visualLayers: VisualLayer[];
   visualRowCounts: VisualRowCounts;
   visualRowLocks: VisualRowLocks;
+  genericRowCount: number;
   platformCaptions: Record<string, string>;
   captionLength: "short" | "medium" | "long";
 }>;
@@ -1137,17 +1156,22 @@ function packRows<T extends { start: number; end: number; row?: number }>(items:
   return rows;
 }
 function packCaptionRows(layers: TextLayer[]): TextLayer[][] {
-  return packRows(layers);
+  return packRows(layers.filter((layer) => layer.genericRow === undefined));
 }
 
-const AUDIO_ROW_HEIGHT = 40;
+// Added media gets the same full visual footprint as the primary video
+// track. The attached source-audio strip below it is intentionally compact.
+const AUDIO_ROW_HEIGHT = 74;
 const CAPTION_ROW_HEIGHT = 40;
-const VISUAL_ROW_HEIGHT = 44;
+const VISUAL_ROW_HEIGHT = 74;
+const ATTACHED_AUDIO_ROW_HEIGHT = 28;
+const GENERIC_ROW_HEIGHT = 74;
+const visualTrackHeight = (kind: VisualLayerKind) => VISUAL_ROW_HEIGHT + (kind === "video" ? ATTACHED_AUDIO_ROW_HEIGHT : 0);
 
 function packVisualRows(layers: VisualLayer[], kind: VisualLayerKind, minimumRows: number): VisualLayer[][] {
   const rows: VisualLayer[][] = Array.from({ length: minimumRows }, () => []);
   for (const layer of layers) {
-    if (layer.kind !== kind) continue;
+    if (layer.kind !== kind || layer.genericRow !== undefined) continue;
     while (rows.length <= layer.row) rows.push([]);
     rows[layer.row].push(layer);
   }
@@ -1155,7 +1179,7 @@ function packVisualRows(layers: VisualLayer[], kind: VisualLayerKind, minimumRow
 }
 
 function packAudioRows(clips: AudioClip[]): AudioClip[][] {
-  return packRows(clips);
+  return packRows(clips.filter((clip) => clip.genericRow === undefined));
 }
 
 function firstAvailableAudioRow(
@@ -1977,16 +2001,19 @@ function CaptionLayerView({ layer, selected, frameRef, onSelect, onChange, onDel
 
 /** Direct-manipulation visual overlay: drag the asset itself to position it,
  *  then use the lower-right handle to resize while preserving its aspect. */
-function VisualLayerView({ layer, selected, rowLocked, frameRef, onSelect, onBeginEdit, onChange }: {
+function VisualLayerView({ layer, selected, rowLocked, frameRef, previewTime, timelinePlaying, onSelect, onBeginEdit, onChange }: {
   layer: VisualLayer;
   selected: boolean;
   rowLocked: boolean;
   frameRef: RefObject<HTMLDivElement | null>;
+  previewTime: number;
+  timelinePlaying: boolean;
   onSelect: () => void;
   onBeginEdit: () => void;
   onChange: (patch: Partial<VisualLayer>) => void;
 }) {
   const gesture = useRef<{ mode: "move" | "resize"; clientX: number; clientY: number; x: number; y: number; width: number } | null>(null);
+  const videoRef = useRef<HTMLVideoElement>(null);
   const locked = rowLocked;
   function begin(event: React.PointerEvent, mode: "move" | "resize") {
     event.stopPropagation();
@@ -2016,6 +2043,17 @@ function VisualLayerView({ layer, selected, rowLocked, frameRef, onSelect, onBeg
   }
   const effectCss = effectById(layer.effect)?.cssFilter;
   const filterStyle: React.CSSProperties = effectCss && effectCss !== "none" ? { filter: effectCss } : {};
+  useEffect(() => {
+    const video = videoRef.current;
+    if (!video || layer.kind !== "video") return;
+    // Overlay footage uses the same local clock as its timeline block: it
+    // begins at 0 when its block begins, seeks with the playhead, and pauses
+    // whenever the main timeline pauses. It must not be an independent loop.
+    const targetTime = Math.max(0, previewTime - layer.start);
+    if (Math.abs(video.currentTime - targetTime) > 0.12) video.currentTime = targetTime;
+    if (timelinePlaying) void video.play().catch(() => undefined);
+    else video.pause();
+  }, [layer.kind, layer.start, previewTime, timelinePlaying]);
   return <div
     data-keep-selection
     role="button"
@@ -2030,7 +2068,7 @@ function VisualLayerView({ layer, selected, rowLocked, frameRef, onSelect, onBeg
     style={{ left: `${layer.x}%`, top: `${layer.y}%`, width: `${layer.width}%`, transform: "translate(-50%, -50%)" }}
   >
     {layer.kind === "video"
-      ? <video src={`/api/media-file/${layer.media.id}`} autoPlay loop muted playsInline draggable={false} style={filterStyle} className={`block h-auto w-full object-contain ${selected ? "outline outline-2 outline-primary outline-offset-2" : ""}`} />
+      ? <video ref={videoRef} src={`/api/media-file/${layer.media.id}`} playsInline draggable={false} style={filterStyle} className={`block h-auto w-full object-contain ${selected ? "outline outline-2 outline-primary outline-offset-2" : ""}`} />
       : <>{/* The source file keeps GIFs animated in the live preview. */}{/* eslint-disable-next-line @next/next/no-img-element */}<img src={`/api/media-file/${layer.media.id}`} alt="" draggable={false} style={filterStyle} className={`block h-auto w-full object-contain ${selected ? "outline outline-2 outline-primary outline-offset-2" : ""}`} /></>}
     {selected && <>
       <span className="pointer-events-none absolute -left-1 -top-6 rounded bg-primary px-1.5 py-0.5 text-[9px] font-bold uppercase tracking-wide text-white shadow">{locked ? "Locked" : layer.kind}</span>
@@ -2407,7 +2445,14 @@ function StudioWorkflow({
       setImproveBusy((c) => ({ ...c, [platformId]: false }));
     }
   }
-  const [editorTool, setEditorTool] = useState<"clip" | "trim" | "transition" | "effects" | "volume" | "audio" | "captions" | "visual">("clip");
+  const [editorTool, setEditorTool] = useState<"none" | "clip" | "trim" | "transition" | "effects" | "volume" | "audio" | "captions" | "visual">("clip");
+  function clearEditorSelectionFromPreview(event: React.PointerEvent<HTMLDivElement>) {
+    if ((event.target as HTMLElement).closest("[data-keep-selection]")) return;
+    setSelectedCaptionId(null);
+    setSelectedAudioClipId(null);
+    setSelectedVisualLayerId(null);
+    setEditorTool("none");
+  }
   const previousVisualLayerCount = useRef(visualLayers.length);
   useEffect(() => {
     if (visualLayers.length > previousVisualLayerCount.current && selectedVisualLayerId) setEditorTool("visual");
@@ -2433,6 +2478,7 @@ function StudioWorkflow({
   const timelineViewportRef = useRef<HTMLDivElement>(null);
   const audioLaneRef = useRef<HTMLDivElement>(null);
   const captionLaneRef = useRef<HTMLDivElement>(null);
+  const genericLaneRef = useRef<HTMLDivElement>(null);
   const visualLaneRef = useRef<Record<VisualLayerKind, HTMLDivElement | null>>({ video: null, image: null, gif: null, sticker: null });
   const toggleTimelinePlaybackRef = useRef<() => void>(() => undefined);
   const advancePreviewLayerRef = useRef<() => void>(() => undefined);
@@ -2449,23 +2495,16 @@ function StudioWorkflow({
   const visualDrag = useRef<{ id: string; kind: VisualLayerKind; side: "move" | "start" | "end"; startX: number; originalStart: number; originalEnd: number; secondsPerPixel: number } | null>(null);
   const [audioRowDropTarget, setAudioRowDropTarget] = useState<number | null>(null);
   const [captionRowDropTarget, setCaptionRowDropTarget] = useState<number | null>(null);
+  const [genericRowDropTarget, setGenericRowDropTarget] = useState<number | null>(null);
+  const genericRowDropTargetRef = useRef<number | null>(null);
   // Manually reserved empty rows, from the "Add Row" button — on top of
   // whatever packRows needs for the clips that actually overlap in time.
   const [audioExtraRows, setAudioExtraRows] = useState(0);
   const [captionExtraRows, setCaptionExtraRows] = useState(0);
+  const [genericRowCount, setGenericRowCount] = useState(() => initialDraft?.genericRowCount ?? 0);
+  const [genericRowLocks, setGenericRowLocks] = useState<Record<number, boolean>>({});
   const [audioRowLocks, setAudioRowLocks] = useState<Record<number, boolean>>({});
   const [captionRowLocks, setCaptionRowLocks] = useState<Record<number, boolean>>({});
-  const [timelineViewportWidth, setTimelineViewportWidth] = useState<number>(0);
-
-  useEffect(() => {
-    const el = timelineViewportRef.current;
-    if (!el) return;
-    const updateWidth = () => setTimelineViewportWidth(el.clientWidth);
-    updateWidth();
-    const ro = new ResizeObserver(updateWidth);
-    ro.observe(el);
-    return () => ro.disconnect();
-  }, []);
   const [snappingEnabled, setSnappingEnabled] = useState(true);
   // Timeline position currently being snapped to, mid-drag — drives the
   // white snap-indicator line. Null when not dragging or nothing's close enough.
@@ -2550,9 +2589,12 @@ function StudioWorkflow({
   // With every clip deleted the ruler still has to lay out whatever audio and
   // text rows are left over, so it needs a real span — computeTimelineDuration's
   // 0.1s empty floor would stretch those rows to thousands of percent wide.
-  const timelineDuration = segments.length > 0
-    ? computeTimelineDuration(segments)
-    : Math.max(10, ...audioClips.map((clip) => clip.end), ...captionLayers.map((layer) => layer.end), ...visualLayers.map((layer) => layer.end));
+  const timelineDuration = Math.max(
+    segments.length > 0 ? computeTimelineDuration(segments) : 10,
+    ...audioClips.map((clip) => clip.end),
+    ...captionLayers.map((layer) => layer.end),
+    ...visualLayers.map((layer) => layer.end),
+  );
   const previewLocation = locateTimelinePosition(segments, previewTime);
   const previewInGap = segments.length > 0 && previewLocation === null;
   const activeIndex = activeSegment ? segments.findIndex((segment) => segment.id === activeSegment.id) : -1;
@@ -2564,8 +2606,15 @@ function StudioWorkflow({
   const transitionProgress = activeTransitionOverlap > 0 && nextOffset !== undefined
     ? Math.min(1, Math.max(0, (previewTime - nextOffset) / activeTransitionOverlap))
     : 0;
-  const { waveforms: waveformPeaks, durations: waveformDurations } = useWaveforms([...segments.map((segment) => segment.media.id), ...audioClips.map((clip) => clip.mediaId)]);
-  const filmstrips = useFilmstrips(segments.map((segment) => segment.media.id));
+  const { waveforms: waveformPeaks, durations: waveformDurations } = useWaveforms([
+    ...segments.map((segment) => segment.media.id),
+    ...audioClips.map((clip) => clip.mediaId),
+    ...visualLayers.filter((layer) => layer.kind === "video").map((layer) => layer.media.id),
+  ]);
+  const filmstrips = useFilmstrips([
+    ...segments.map((segment) => segment.media.id),
+    ...visualLayers.filter((layer) => layer.kind === "video").map((layer) => layer.media.id),
+  ]);
   // Seam index 0 is the opening (fade in from black); segments.length is the
   // closing (fade out to black), which has no segment to live on, hence the
   // special case here rather than in segmentSeam itself.
@@ -2900,7 +2949,7 @@ function StudioWorkflow({
             mode: "custom",
             title: campaignName || UNTITLED_DRAFT_TITLE,
             cover_image_url: null,
-            state: { step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds: [...selectedAccountIds], activePlatform, platformFormatIds, platformOutputMediaIds, renderSignatures, captionLayers, audioClips, visualLayers, visualRowCounts, visualRowLocks, platformCaptions, captionLength },
+            state: { step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds: [...selectedAccountIds], activePlatform, platformFormatIds, platformOutputMediaIds, renderSignatures, captionLayers, audioClips, visualLayers, visualRowCounts, visualRowLocks, genericRowCount, platformCaptions, captionLength },
           }),
         });
         if (!response.ok) throw new Error("Draft save failed.");
@@ -2910,7 +2959,7 @@ function StudioWorkflow({
       } catch { setDraftStatus("idle"); }
     }, 750);
     return () => window.clearTimeout(timer);
-  }, [step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds, activePlatform, platformFormatIds, platformOutputMediaIds, renderSignatures, captionLayers, audioClips, visualLayers, visualRowCounts, visualRowLocks, platformCaptions, captionLength]);
+  }, [step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds, activePlatform, platformFormatIds, platformOutputMediaIds, renderSignatures, captionLayers, audioClips, visualLayers, visualRowCounts, visualRowLocks, genericRowCount, platformCaptions, captionLength]);
 
   if (step === 0) {
     const selectedCaptionLayer = captionLayers.find((layer) => layer.id === selectedCaptionId) ?? null;
@@ -2922,6 +2971,32 @@ function StudioWorkflow({
     const audioRowCount = audioRows.length + audioExtraRows + (audioRowDropTarget !== null ? 1 : 0);
     const captionRows = packCaptionRows(captionLayers);
     const captionRowCount = captionRows.length + captionExtraRows + (captionRowDropTarget !== null ? 1 : 0);
+    const assignedGenericRows = [
+      ...segments.map((segment) => segment.genericRow),
+      ...visualLayers.map((layer) => layer.genericRow),
+      ...audioClips.map((clip) => clip.genericRow),
+      ...captionLayers.map((layer) => layer.genericRow),
+    ].filter((row): row is number => Number.isInteger(row) && (row ?? -1) >= 0);
+    const effectiveGenericRowCount = Math.max(genericRowCount, assignedGenericRows.length > 0 ? Math.max(...assignedGenericRows) + 1 : 0);
+    const genericRows = Array.from({ length: effectiveGenericRowCount }, (_, rowIndex) => ({
+      segments: segments.filter((segment) => segment.genericRow === rowIndex),
+      visuals: visualLayers.filter((layer) => layer.genericRow === rowIndex),
+      audio: audioClips.filter((clip) => clip.genericRow === rowIndex),
+      captions: captionLayers.filter((layer) => layer.genericRow === rowIndex),
+    }));
+    const genericRowHeights = genericRows.map((row) => row.segments.length > 0 || row.visuals.some((layer) => layer.kind === "video") ? GENERIC_ROW_HEIGHT + ATTACHED_AUDIO_ROW_HEIGHT : GENERIC_ROW_HEIGHT);
+    const genericRowOffsets = genericRowHeights.reduce<number[]>((offsets, height, index) => {
+      offsets[index] = index === 0 ? 0 : offsets[index - 1] + genericRowHeights[index - 1];
+      return offsets;
+    }, []);
+    const genericRowsHeight = genericRowHeights.reduce((total, height) => total + height, 0);
+    const genericRowAtClientY = (clientY: number) => {
+      const rect = genericLaneRef.current?.getBoundingClientRect();
+      if (!rect || clientY < rect.top || clientY > rect.bottom) return null;
+      const y = clientY - rect.top;
+      const rowIndex = genericRowOffsets.findIndex((offset, index) => y >= offset && y < offset + genericRowHeights[index]);
+      return rowIndex >= 0 && !genericRowLocks[rowIndex] ? rowIndex : null;
+    };
     const compactTimelineRuler = timelineZoom <= 0.5;
     const patchCaption = (patch: Partial<TextLayer>) => {
       if (!selectedCaptionLayer) return;
@@ -3118,7 +3193,8 @@ function StudioWorkflow({
       event: React.PointerEvent<HTMLElement>,
       segment: TimelineSegment,
     ) => {
-      if (event.button !== 0 || (event.target as HTMLElement).closest("[data-trim-handle], [data-clip-reorder]")) return;
+      if (event.button !== 0 || (event.target as HTMLElement).closest("[data-trim-handle]")) return;
+      if (segment.genericRow !== undefined && genericRowLocks[segment.genericRow]) return;
       const rect = timelineCanvasRef.current?.getBoundingClientRect();
       if (!rect || rect.width <= 0) return;
       beginEditorEdit();
@@ -3129,6 +3205,8 @@ function StudioWorkflow({
         originalGap: Math.max(0, segment.gapBefore ?? 0),
         secondsPerPixel: timelineDuration / rect.width,
       };
+      genericRowDropTargetRef.current = null;
+      setGenericRowDropTarget(null);
       // seekFromTimelinePointer below also resolves (and sets) an active
       // segment from the raw click position — but the segment the user
       // actually clicked is the one true answer, so it's set again after,
@@ -3143,6 +3221,9 @@ function StudioWorkflow({
       const drag = clipPositionDrag.current;
       if (!drag || !event.currentTarget.hasPointerCapture(event.pointerId)) return;
       const rawGap = drag.originalGap + (event.clientX - drag.startX) * drag.secondsPerPixel;
+      const genericTarget = genericRowAtClientY(event.clientY);
+      genericRowDropTargetRef.current = genericTarget;
+      setGenericRowDropTarget(genericTarget);
       let gapBefore = Math.round(clamp(rawGap, 0, 60) * 20) / 20;
       if (snappingEnabled) {
         const index = segments.findIndex((segment) => segment.id === drag.id);
@@ -3161,8 +3242,15 @@ function StudioWorkflow({
     };
     const endClipPositionDrag = (event: React.PointerEvent<HTMLElement>) => {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      const drag = clipPositionDrag.current;
+      const genericTarget = genericRowDropTargetRef.current;
+      if (drag) setSegments((current) => current.map((segment) => segment.id === drag.id
+        ? genericTarget !== null ? { ...segment, genericRow: genericTarget } : { ...segment, genericRow: undefined }
+        : segment));
       clipPositionDrag.current = null;
       setSnapIndicator(null);
+      genericRowDropTargetRef.current = null;
+      setGenericRowDropTarget(null);
     };
     const beginTimelineTrim = (event: React.PointerEvent<HTMLElement>, segment: TimelineSegment, side: "start" | "end", segmentOffset: number) => {
       event.preventDefault();
@@ -3238,7 +3326,7 @@ function StudioWorkflow({
       timelineTrimDrag.current = null;
     };
     const beginCaptionDrag = (event: React.PointerEvent<HTMLElement>, layer: TextLayer, side: "move" | "start" | "end", rowIndex: number) => {
-      if (captionRowLocks[rowIndex]) return;
+      if (layer.genericRow !== undefined ? genericRowLocks[layer.genericRow] : captionRowLocks[rowIndex]) return;
       event.preventDefault();
       event.stopPropagation();
       const rect = timelineCanvasRef.current?.getBoundingClientRect();
@@ -3246,6 +3334,8 @@ function StudioWorkflow({
       beginEditorEdit();
       event.currentTarget.setPointerCapture(event.pointerId);
       captionDrag.current = { id: layer.id, side, pointerId: event.pointerId, startX: event.clientX, originalStart: layer.start, originalEnd: layer.end, secondsPerPixel: timelineDuration / rect.width };
+      genericRowDropTargetRef.current = null;
+      setGenericRowDropTarget(null);
       if (side === "move") {
         setCaptionLayers((current) => current.map((item) => item.id === layer.id ? { ...item, row: rowIndex } : item));
         setCaptionRowDropTarget(rowIndex);
@@ -3265,8 +3355,11 @@ function StudioWorkflow({
       const minDuration = 0.5;
       const lane = captionLaneRef.current;
       const laneRect = lane?.getBoundingClientRect();
+      const genericTarget = drag.side === "move" ? genericRowAtClientY(event.clientY) : null;
+      genericRowDropTargetRef.current = genericTarget;
+      setGenericRowDropTarget(genericTarget);
       const targetRow =
-        drag.side === "move" && lane && laneRect
+        drag.side === "move" && genericTarget === null && lane && laneRect
           ? Math.round(clamp(
               Math.floor((event.clientY - laneRect.top + lane.scrollTop) / CAPTION_ROW_HEIGHT),
               0,
@@ -3294,7 +3387,7 @@ function StudioWorkflow({
         setPreviewTime(nextEnd);
       } else {
         const span = drag.originalEnd - drag.originalStart;
-        const rawStart = clamp(drag.originalStart + delta, 0, timelineDuration - span);
+        const rawStart = Math.max(0, drag.originalStart + delta);
         nextStart = snap(rawStart);
         if (nextStart !== rawStart) snappedTime = nextStart;
         nextEnd = nextStart + span;
@@ -3309,14 +3402,25 @@ function StudioWorkflow({
     };
     const endCaptionDrag = (event: React.PointerEvent<HTMLElement>) => {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      const drag = captionDrag.current;
+      const genericTarget = genericRowDropTargetRef.current;
       captionDrag.current = null;
       setSnapIndicator(null);
-      setCaptionLayers((current) =>
-        packCaptionRows(current)
+      setCaptionLayers((current) => {
+        const placed = current.map((layer) => layer.id === drag?.id && drag.side === "move"
+          ? genericTarget !== null ? { ...layer, genericRow: genericTarget } : { ...layer, genericRow: undefined }
+          : layer);
+        const generic = placed.filter((layer) => layer.genericRow !== undefined);
+        return [
+          ...packCaptionRows(placed)
           .filter((row) => row.length > 0)
           .flatMap((row, rowIndex) => row.map((layer) => ({ ...layer, row: rowIndex }))),
-      );
+          ...generic,
+        ];
+      });
       setCaptionRowDropTarget(null);
+      genericRowDropTargetRef.current = null;
+      setGenericRowDropTarget(null);
     };
     // Only ever called on a row with no layers in it (see the `rowEmpty`
     // check at the call site) — shifts every layer below it up one row to
@@ -3352,12 +3456,14 @@ function StudioWorkflow({
       setSelectedCaptionId(null);
       setSelectedAudioClipId(null);
       setEditorTool("visual");
-      if (visualRowLocks[layer.kind][layer.row]) return;
+      if (layer.genericRow !== undefined ? genericRowLocks[layer.genericRow] : visualRowLocks[layer.kind][layer.row]) return;
       const rect = timelineCanvasRef.current?.getBoundingClientRect();
       if (!rect || rect.width <= 0) return;
       beginEditorEdit();
       event.currentTarget.setPointerCapture(event.pointerId);
       visualDrag.current = { id: layer.id, kind: layer.kind, side, startX: event.clientX, originalStart: layer.start, originalEnd: layer.end, secondsPerPixel: timelineDuration / rect.width };
+      genericRowDropTargetRef.current = null;
+      setGenericRowDropTarget(null);
       if (side !== "move") setPreviewTime(side === "start" ? layer.start : layer.end);
     };
     const moveVisualDrag = (event: React.PointerEvent<HTMLElement>) => {
@@ -3367,14 +3473,17 @@ function StudioWorkflow({
       const kindRows = visualRowsByKind[drag.kind];
       const kindLocks = visualRowLocks[drag.kind];
       const laneRect = visualLaneRef.current[drag.kind]?.getBoundingClientRect();
-      const targetRow = drag.side === "move" && laneRect
-        ? Math.round(clamp(Math.floor((event.clientY - laneRect.top) / VISUAL_ROW_HEIGHT), 0, Math.max(0, kindRows.length - 1)))
+      const genericTarget = drag.side === "move" ? genericRowAtClientY(event.clientY) : null;
+      genericRowDropTargetRef.current = genericTarget;
+      setGenericRowDropTarget(genericTarget);
+      const targetRow = drag.side === "move" && genericTarget === null && laneRect
+        ? Math.round(clamp(Math.floor((event.clientY - laneRect.top) / visualTrackHeight(drag.kind)), 0, Math.max(0, kindRows.length - 1)))
         : null;
       setVisualLayers((current) => current.map((layer) => {
         if (layer.id !== drag.id) return layer;
         if (drag.side === "move") {
           const span = drag.originalEnd - drag.originalStart;
-          const start = clamp(drag.originalStart + delta, 0, timelineDuration - span);
+          const start = Math.max(0, drag.originalStart + delta);
           const row = targetRow !== null && !kindLocks[targetRow] ? targetRow : layer.row;
           return { ...layer, start, end: start + span, row };
         }
@@ -3384,7 +3493,14 @@ function StudioWorkflow({
     };
     const endVisualDrag = (event: React.PointerEvent<HTMLElement>) => {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      const drag = visualDrag.current;
+      const genericTarget = genericRowDropTargetRef.current;
+      if (drag?.side === "move") setVisualLayers((current) => current.map((layer) => layer.id === drag.id
+        ? genericTarget !== null ? { ...layer, genericRow: genericTarget } : { ...layer, genericRow: undefined }
+        : layer));
       visualDrag.current = null;
+      genericRowDropTargetRef.current = null;
+      setGenericRowDropTarget(null);
     };
     const deleteVisualRow = (kind: VisualLayerKind, rowIndex: number) => {
       if (visualRowLocks[kind][rowIndex]) return;
@@ -3400,6 +3516,20 @@ function StudioWorkflow({
       }));
       setVisualRowCounts((current) => ({ ...current, [kind]: Math.max(0, current[kind] - 1) }));
     };
+    const deleteGenericRow = (rowIndex: number) => {
+      if (genericRowLocks[rowIndex]) return;
+      beginEditorEdit();
+      setSegments((current) => current.map((segment) => segment.genericRow === rowIndex ? { ...segment, genericRow: undefined } : segment.genericRow !== undefined && segment.genericRow > rowIndex ? { ...segment, genericRow: segment.genericRow - 1 } : segment));
+      setVisualLayers((current) => current.filter((layer) => layer.genericRow !== rowIndex).map((layer) => layer.genericRow !== undefined && layer.genericRow > rowIndex ? { ...layer, genericRow: layer.genericRow - 1 } : layer));
+      setAudioClips((current) => current.filter((clip) => clip.genericRow !== rowIndex).map((clip) => clip.genericRow !== undefined && clip.genericRow > rowIndex ? { ...clip, genericRow: clip.genericRow - 1 } : clip));
+      setCaptionLayers((current) => current.filter((layer) => layer.genericRow !== rowIndex).map((layer) => layer.genericRow !== undefined && layer.genericRow > rowIndex ? { ...layer, genericRow: layer.genericRow - 1 } : layer));
+      setGenericRowLocks((current) => Object.fromEntries(Object.entries(current).flatMap(([key, value]) => {
+        const row = Number(key);
+        if (row === rowIndex) return [];
+        return [[String(row > rowIndex ? row - 1 : row), value]];
+      })));
+      setGenericRowCount((current) => Math.max(0, current - 1));
+    };
     // Whole-block drag moves start/end together (source window unchanged);
     // the "start"/"end" trim handles move the source AND output window
     // together in lockstep (same idea as clip trims), unlike captions'
@@ -3411,13 +3541,15 @@ function StudioWorkflow({
       side: "move" | "start" | "end",
       rowIndex: number,
     ) => {
-      if (audioRowLocks[rowIndex]) return;
+      if (clip.genericRow !== undefined ? genericRowLocks[clip.genericRow] : audioRowLocks[rowIndex]) return;
       event.stopPropagation();
       const rect = timelineCanvasRef.current?.getBoundingClientRect();
       if (!rect || rect.width <= 0) return;
       beginEditorEdit();
       event.currentTarget.setPointerCapture(event.pointerId);
       audioDrag.current = { id: clip.id, side, startX: event.clientX, originalStart: clip.start, originalEnd: clip.end, originalSourceStart: clip.sourceStart, originalSourceEnd: clip.sourceEnd, secondsPerPixel: timelineDuration / rect.width };
+      genericRowDropTargetRef.current = null;
+      setGenericRowDropTarget(null);
       if (side === "move") {
         setAudioClips((current) => current.map((item) => item.id === clip.id ? { ...item, row: rowIndex } : item));
         setAudioRowDropTarget(rowIndex);
@@ -3434,8 +3566,11 @@ function StudioWorkflow({
       const minDuration = 0.2;
       const lane = audioLaneRef.current;
       const laneRect = lane?.getBoundingClientRect();
+      const genericTarget = drag.side === "move" ? genericRowAtClientY(event.clientY) : null;
+      genericRowDropTargetRef.current = genericTarget;
+      setGenericRowDropTarget(genericTarget);
       const targetRow =
-        drag.side === "move" && lane && laneRect
+        drag.side === "move" && genericTarget === null && lane && laneRect
           ? Math.round(clamp(
               Math.floor((event.clientY - laneRect.top + lane.scrollTop) / AUDIO_ROW_HEIGHT),
               0,
@@ -3455,7 +3590,7 @@ function StudioWorkflow({
         if (clip.id !== drag.id) return clip;
         if (drag.side === "move") {
           const span = drag.originalEnd - drag.originalStart;
-          const clampedDelta = clamp(delta, -drag.originalStart, timelineDuration - drag.originalEnd);
+          const clampedDelta = Math.max(-drag.originalStart, delta);
           const rawStart = drag.originalStart + clampedDelta;
           const start = snap(rawStart);
           if (start !== rawStart) snappedTime = start;
@@ -3480,14 +3615,25 @@ function StudioWorkflow({
     };
     const endAudioDrag = (event: React.PointerEvent<HTMLElement>) => {
       if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      const drag = audioDrag.current;
+      const genericTarget = genericRowDropTargetRef.current;
       audioDrag.current = null;
       setSnapIndicator(null);
-      setAudioClips((current) =>
-        packAudioRows(current)
+      setAudioClips((current) => {
+        const placed = current.map((clip) => clip.id === drag?.id && drag.side === "move"
+          ? genericTarget !== null ? { ...clip, genericRow: genericTarget } : { ...clip, genericRow: undefined }
+          : clip);
+        const generic = placed.filter((clip) => clip.genericRow !== undefined);
+        return [
+          ...packAudioRows(placed)
           .filter((row) => row.length > 0)
           .flatMap((row, rowIndex) => row.map((clip) => ({ ...clip, row: rowIndex }))),
-      );
+          ...generic,
+        ];
+      });
       setAudioRowDropTarget(null);
+      genericRowDropTargetRef.current = null;
+      setGenericRowDropTarget(null);
     };
     // Only ever called on a row with no clips in it (see the `rowEmpty`
     // check at the call site) — shifts every clip below it up one row to
@@ -3585,6 +3731,11 @@ function StudioWorkflow({
       !!selectedAudioClip &&
       previewTime >= selectedAudioClip.start + 0.1 &&
       previewTime <= selectedAudioClip.end - 0.1;
+    const canSplitVisual =
+      editorTool === "visual" &&
+      !!selectedVisualLayer &&
+      previewTime >= selectedVisualLayer.start + 0.2 &&
+      previewTime <= selectedVisualLayer.end - 0.2;
     const canSplitAttachedAudio =
       editorTool === "volume" &&
       !!activeSegment &&
@@ -3601,16 +3752,29 @@ function StudioWorkflow({
     const canSplitSelectedItem =
       canSplitCaption ||
       canSplitAudio ||
+      canSplitVisual ||
       canSplitAttachedAudio ||
-      (!["captions", "audio", "volume"].includes(editorTool) && canSplitVideo);
+      (editorTool !== "none" && !["captions", "audio", "volume"].includes(editorTool) && canSplitVideo);
     const splitTarget =
-      editorTool === "captions"
+      editorTool === "visual"
+        ? "visual layer"
+        : editorTool === "captions"
         ? "text overlay"
         : editorTool === "audio" || editorTool === "volume"
           ? "audio clip"
           : "video clip";
 
     function splitSelectedItem() {
+      if (canSplitVisual && selectedVisualLayer) {
+        beginEditorEdit();
+        const first = { ...selectedVisualLayer, id: crypto.randomUUID(), end: previewTime };
+        const second = { ...selectedVisualLayer, id: crypto.randomUUID(), start: previewTime };
+        setVisualLayers((current) => current.flatMap((layer) => layer.id === selectedVisualLayer.id ? [first, second] : [layer]));
+        setSelectedVisualLayerId(second.id);
+        setSelectedCaptionId(null);
+        setSelectedAudioClipId(null);
+        return;
+      }
       if (canSplitCaption && selectedCaptionLayer) {
         beginEditorEdit();
         const first = {
@@ -3663,6 +3827,38 @@ function StudioWorkflow({
       if (canSplitVideo) splitActive();
     }
 
+    function duplicateSelectedItem() {
+      if (editorTool === "none") return;
+      if (editorTool === "visual" && selectedVisualLayer) {
+        beginEditorEdit();
+        const span = selectedVisualLayer.end - selectedVisualLayer.start;
+        const start = Math.min(timelineDuration - span, selectedVisualLayer.end);
+        const duplicate = { ...selectedVisualLayer, id: crypto.randomUUID(), start, end: start + span };
+        setVisualLayers((current) => [...current, duplicate]);
+        setSelectedVisualLayerId(duplicate.id);
+        return;
+      }
+      if (editorTool === "audio" && selectedAudioClip) {
+        beginEditorEdit();
+        const span = selectedAudioClip.end - selectedAudioClip.start;
+        const start = Math.min(timelineDuration - span, selectedAudioClip.end);
+        const duplicate = { ...selectedAudioClip, id: crypto.randomUUID(), start, end: start + span };
+        setAudioClips((current) => [...current, duplicate]);
+        setSelectedAudioClipId(duplicate.id);
+        return;
+      }
+      if (editorTool === "captions" && selectedCaptionLayer) {
+        beginEditorEdit();
+        const span = selectedCaptionLayer.end - selectedCaptionLayer.start;
+        const start = Math.min(timelineDuration - span, selectedCaptionLayer.end);
+        const duplicate = { ...selectedCaptionLayer, id: crypto.randomUUID(), start, end: start + span };
+        setCaptionLayers((current) => [...current, duplicate]);
+        setSelectedCaptionId(duplicate.id);
+        return;
+      }
+      duplicateActive();
+    }
+
     /** One audio clip block, shared by the detached and added-audio rows —
      *  they need identical drag/trim/select mechanics, just different rows. */
     // Audio detached from a clip keeps that clip's color (still "part of" it
@@ -3680,9 +3876,9 @@ function StudioWorkflow({
       const selected = editorTool === "audio" && selectedAudioClipId === clip.id;
       const sourceDuration = waveformDurations[clip.mediaId] || clip.sourceEnd || 1;
       const color = audioClipColor(clip);
-      const locked = !!audioRowLocks[rowIndex];
-      return <div key={clip.id} role="button" tabIndex={0}
-        aria-label={`${clip.kind === "soundtrack" ? "Audio clip" : "Detached audio"} "${clip.name}", row ${rowIndex + 1}, ${formatTime(clip.end - clip.start, true)}`}
+      const locked = clip.genericRow !== undefined ? !!genericRowLocks[clip.genericRow] : !!audioRowLocks[rowIndex];
+      return <div key={clip.id} role="button" tabIndex={0} data-keep-selection
+        aria-label={`${clip.kind === "soundtrack" ? "Audio clip" : "Detached audio"} "${clip.name}", ${clip.genericRow !== undefined ? `flexible row ${clip.genericRow + 1}` : `audio row ${rowIndex + 1}`}, ${formatTime(clip.end - clip.start, true)}`}
         onPointerDown={(event) => { if (!locked) beginAudioDrag(event, clip, "move", rowIndex); }}
         onPointerMove={moveAudioDrag}
         onPointerUp={endAudioDrag}
@@ -3708,12 +3904,80 @@ function StudioWorkflow({
         className={`absolute touch-none overflow-hidden rounded-md border text-left transition-colors ${locked ? "cursor-default opacity-70" : "active:cursor-grabbing cursor-grab"} ${selected ? "border-primary bg-primary/25 ring-1 ring-primary" : `${color.chipBorder} ${color.chipBg} hover:brightness-125`}`}
         style={{ left: `${left}%`, width: `${width}%`, top, height }}
       >
-        <span className="absolute left-2 top-1 z-10 max-w-[80%] truncate rounded bg-black/60 px-1 text-[9px] font-semibold text-neutral-400">{clip.name}</span>
+        <span className="absolute left-2 top-1 z-10 flex max-w-[88%] items-center gap-1 truncate rounded bg-black/60 px-1 text-[9px] font-semibold text-neutral-300"><span className="min-w-0 truncate">{clip.name}</span><span className="shrink-0 font-mono text-neutral-400">{formatTime(clip.end - clip.start, true)}</span></span>
         <Waveform peaks={waveformPeaks[clip.mediaId]} startRatio={clip.sourceStart / sourceDuration} endRatio={clip.sourceEnd / sourceDuration} className="absolute inset-x-1 top-1/2 h-[calc(100%_-_16px)] w-[calc(100%_-_8px)] -translate-y-1/2 text-[#555]" />
         {selected && !locked && <>
           <span data-audio-trim-handle role="slider" tabIndex={0} aria-label="Trim start" onPointerDown={(event) => beginAudioDrag(event, clip, "start", rowIndex)} onPointerMove={moveAudioDrag} onPointerUp={endAudioDrag} onPointerCancel={endAudioDrag} className="absolute inset-y-0 left-0 z-10 w-2.5 cursor-ew-resize touch-none bg-primary" />
           <span data-audio-trim-handle role="slider" tabIndex={0} aria-label="Trim end" onPointerDown={(event) => beginAudioDrag(event, clip, "end", rowIndex)} onPointerMove={moveAudioDrag} onPointerUp={endAudioDrag} onPointerCancel={endAudioDrag} className="absolute inset-y-0 right-0 z-10 w-2.5 cursor-ew-resize touch-none bg-primary" />
         </>}
+      </div>;
+    }
+    function renderGenericSegment(segment: TimelineSegment, rowIndex: number, rowTop: number) {
+      const index = segments.findIndex((item) => item.id === segment.id);
+      const segmentDuration = computeSegmentDuration(segment);
+      const segmentOffset = segmentOffsets[index] ?? 0;
+      const selected = activeSegment?.id === segment.id && ["clip", "trim"].includes(editorTool);
+      const locked = !!genericRowLocks[rowIndex];
+      const sourceDuration = Math.max(0.1, segment.duration ?? segment.end ?? 0.1);
+      const stripFrames = filmstrips[segment.media.id] ?? 0;
+      const clipPixels = (segmentDuration / timelineDuration) * timelineCanvasWidth;
+      const tileCount = Math.max(1, Math.min(80, Math.ceil(clipPixels / FILMSTRIP_TILE_PX)));
+      const segmentEnd = segment.end ?? sourceDuration;
+      const clipColor = accentColor(index);
+      return <Fragment key={`generic-segment-${segment.id}`}>
+        <div role="button" tabIndex={0} data-keep-selection
+          aria-label={`Clip ${index + 1}, flexible row ${rowIndex + 1}, ${formatTime(segmentDuration, true)}`}
+          onPointerDown={(event) => { if (!locked) beginClipPositionDrag(event, segment); }}
+          onPointerMove={moveClipPositionDrag} onPointerUp={endClipPositionDrag} onPointerCancel={endClipPositionDrag}
+          className={`absolute touch-none overflow-hidden rounded-md border text-left ${locked ? "cursor-default opacity-70" : "cursor-grab active:cursor-grabbing"} ${selected ? "border-primary ring-1 ring-primary" : clipColor.border}`}
+          style={{ left: `${(segmentOffset / timelineDuration) * 100}%`, width: `${(segmentDuration / timelineDuration) * 100}%`, top: rowTop + 5, height: VISUAL_ROW_HEIGHT - 10, background: index % 2 === 0 ? "linear-gradient(135deg,#262626,#171717)" : "linear-gradient(135deg,#202020,#111)" }}>
+          {stripFrames > 0 && <span aria-hidden="true" className="absolute inset-0 flex overflow-hidden">{Array.from({ length: tileCount }, (_, tile) => {
+            const sourceTime = segment.start + ((tile + 0.5) / tileCount) * (segmentEnd - segment.start);
+            const frame = Math.min(stripFrames - 1, Math.max(0, Math.floor((sourceTime / sourceDuration) * stripFrames)));
+            return <span key={tile} className="h-full shrink-0 border-r border-black/30 last:border-r-0" style={{ width: FILMSTRIP_TILE_PX, ...filmstripTileStyle(segment.media.id, frame, stripFrames) }} />;
+          })}</span>}
+          <span className={`absolute inset-x-0 bottom-0 flex items-center gap-1 px-2 py-1 ${clipColor.labelBg}`}><Icon name="dots" size={11} className="shrink-0 text-neutral-500" /><span className="min-w-0"><span className="block truncate text-[11px] font-bold text-white">Clip {index + 1} · {formatTime(segmentDuration, true)}</span><span className="block truncate text-[9px] text-neutral-400">{segment.media.name}</span></span></span>
+          {selected && !locked && <><span data-trim-handle role="slider" tabIndex={0} aria-label={`Trim start of clip ${index + 1}`} onPointerDown={(event) => beginTimelineTrim(event, segment, "start", segmentOffset)} onPointerMove={moveTimelineTrim} onPointerUp={endTimelineTrim} onPointerCancel={endTimelineTrim} className="absolute inset-y-0 left-0 z-30 w-2 cursor-ew-resize bg-primary" /><span data-trim-handle role="slider" tabIndex={0} aria-label={`Trim end of clip ${index + 1}`} onPointerDown={(event) => beginTimelineTrim(event, segment, "end", segmentOffset)} onPointerMove={moveTimelineTrim} onPointerUp={endTimelineTrim} onPointerCancel={endTimelineTrim} className="absolute inset-y-0 right-0 z-30 w-2 cursor-ew-resize bg-primary" /></>}
+        </div>
+        {!segment.audioRemoved && <div role="button" tabIndex={0} data-keep-selection onPointerDown={(event) => { event.stopPropagation(); setActiveSegmentId(segment.id); setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("volume"); }} className="absolute overflow-hidden border-y border-cyan-400/35 bg-[#091319]" style={{ left: `${(segmentOffset / timelineDuration) * 100}%`, width: `${(segmentDuration / timelineDuration) * 100}%`, top: rowTop + VISUAL_ROW_HEIGHT, height: ATTACHED_AUDIO_ROW_HEIGHT }} title="Attached audio"><Waveform peaks={waveformPeaks[segment.media.id]} startRatio={segment.start / sourceDuration} endRatio={(segment.end ?? sourceDuration) / sourceDuration} className="absolute inset-x-1 top-1/2 h-[calc(100%_-_8px)] w-[calc(100%_-_8px)] -translate-y-1/2 text-[#6b7375]" /></div>}
+      </Fragment>;
+    }
+    function renderGenericVisual(layer: VisualLayer, rowIndex: number, rowTop: number) {
+      const selected = editorTool === "visual" && selectedVisualLayerId === layer.id;
+      const locked = !!genericRowLocks[rowIndex];
+      const left = (layer.start / timelineDuration) * 100;
+      const width = ((layer.end - layer.start) / timelineDuration) * 100;
+      const stripFrames = layer.kind === "video" ? (filmstrips[layer.media.id] ?? 0) : 0;
+      const tileCount = Math.max(1, Math.min(80, Math.ceil(((layer.end - layer.start) / timelineDuration) * timelineCanvasWidth / FILMSTRIP_TILE_PX)));
+      const kindMark = layer.kind === "gif" ? <span className="text-[9px] font-black">GIF</span> : <Icon name={layer.kind === "sticker" ? "star" : layer.kind === "video" ? "video" : "image"} size={11} />;
+      return <Fragment key={layer.id}>
+        <div role="button" tabIndex={0} data-keep-selection
+          onPointerDown={(event) => { if (locked || (event.target as HTMLElement).closest("[data-visual-trim-handle]")) return; beginVisualDrag(event, layer, "move"); }}
+          onPointerMove={moveVisualDrag} onPointerUp={endVisualDrag} onPointerCancel={endVisualDrag}
+          onKeyDown={(event) => { if (!locked && (event.key === "Enter" || event.key === " ")) { event.preventDefault(); setSelectedVisualLayerId(layer.id); setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("visual"); } }}
+          className={`absolute touch-none overflow-hidden rounded-md border text-left ${locked ? "cursor-default opacity-70" : "cursor-grab"} ${selected ? "border-primary bg-primary/25 ring-1 ring-primary" : "border-cyan-400/50 bg-cyan-500/15 hover:brightness-125"}`}
+          style={{ left: `${left}%`, width: `${width}%`, top: rowTop + 5, height: VISUAL_ROW_HEIGHT - 10 }}>
+          {stripFrames > 0 ? <span aria-hidden="true" className="absolute inset-0 flex opacity-60">{Array.from({ length: tileCount }, (_, tile) => <span key={tile} className="h-full shrink-0 border-r border-black/25 last:border-r-0" style={{ width: FILMSTRIP_TILE_PX, ...filmstripTileStyle(layer.media.id, Math.min(stripFrames - 1, Math.floor(((tile + 0.5) / tileCount) * stripFrames)), stripFrames) }} />)}</span> : <span aria-hidden="true" className="absolute inset-0 bg-cover bg-center opacity-55" style={{ backgroundImage: `url(/api/media-file/${layer.media.id})` }} />}
+          <span aria-hidden="true" className="absolute inset-0 bg-gradient-to-r from-black/65 via-black/20 to-black/55" />
+          <span className={`relative flex min-w-0 items-center gap-1.5 truncate py-2 text-[10px] font-bold text-white ${selected ? "px-5" : "px-2"}`}><span className="shrink-0 text-cyan-200">{kindMark}</span><span className="min-w-0 truncate">{layer.media.name}</span><span className="ml-auto shrink-0 font-mono text-[9px] text-cyan-100/80">{formatTime(layer.end - layer.start, true)}</span></span>
+          {selected && !locked && <><span data-visual-trim-handle role="slider" tabIndex={0} aria-label="Trim visual start" onPointerDown={(event) => beginVisualDrag(event, layer, "start")} onPointerMove={moveVisualDrag} onPointerUp={endVisualDrag} className="absolute inset-y-0 left-0 z-20 w-4 cursor-ew-resize bg-primary/90" /><span data-visual-trim-handle role="slider" tabIndex={0} aria-label="Trim visual end" onPointerDown={(event) => beginVisualDrag(event, layer, "end")} onPointerMove={moveVisualDrag} onPointerUp={endVisualDrag} className="absolute inset-y-0 right-0 z-20 w-4 cursor-ew-resize bg-primary/90" /></>}
+        </div>
+        {layer.kind === "video" && <div className="absolute overflow-hidden border-y border-cyan-400/35 bg-[#091319]" style={{ left: `${left}%`, width: `${width}%`, top: rowTop + VISUAL_ROW_HEIGHT, height: ATTACHED_AUDIO_ROW_HEIGHT }} title="Attached audio"><Waveform peaks={waveformPeaks[layer.media.id]} startRatio={0} endRatio={1} className="absolute inset-x-1 top-1/2 h-[calc(100%_-_8px)] w-[calc(100%_-_8px)] -translate-y-1/2 text-[#6b7375]" /></div>}
+      </Fragment>;
+    }
+    function renderGenericCaption(layer: TextLayer, rowIndex: number, rowTop: number) {
+      const left = (layer.start / timelineDuration) * 100;
+      const width = ((layer.end - layer.start) / timelineDuration) * 100;
+      const selected = editorTool === "captions" && selectedCaptionId === layer.id;
+      const locked = !!genericRowLocks[rowIndex];
+      const color = accentColor(captionLayers.findIndex((item) => item.id === layer.id));
+      return <div key={layer.id} role="button" tabIndex={0} data-keep-selection
+        onPointerDown={(event) => { if (locked || (event.target as HTMLElement).closest("[data-caption-trim-handle]")) return; beginCaptionDrag(event, layer, "move", rowIndex); }}
+        onPointerMove={moveCaptionDrag} onPointerUp={endCaptionDrag} onPointerCancel={endCaptionDrag}
+        className={`absolute touch-none overflow-hidden rounded-md border text-left ${locked ? "cursor-default opacity-70" : "cursor-grab"} ${selected ? "border-primary bg-primary/25 ring-1 ring-primary" : `${color.chipBorder} ${color.chipBg}`}`}
+        style={{ left: `${left}%`, width: `${width}%`, top: rowTop + 17, height: CAPTION_ROW_HEIGHT }}>
+        <span className={`block truncate py-2.5 text-[10px] font-bold text-white ${selected ? "px-5" : "px-2"}`}>{layer.text.trim() || "Text overlay"}</span>
+        {selected && !locked && <><span data-caption-trim-handle role="slider" tabIndex={0} aria-label="Trim text start" onPointerDown={(event) => beginCaptionDrag(event, layer, "start", rowIndex)} className="absolute inset-y-0 left-0 z-20 w-4 cursor-ew-resize bg-primary/90" /><span data-caption-trim-handle role="slider" tabIndex={0} aria-label="Trim text end" onPointerDown={(event) => beginCaptionDrag(event, layer, "end", rowIndex)} className="absolute inset-y-0 right-0 z-20 w-4 cursor-ew-resize bg-primary/90" /></>}
       </div>;
     }
     toggleTimelinePlaybackRef.current = playTimeline;
@@ -3728,8 +3992,8 @@ function StudioWorkflow({
         <div className="flex flex-wrap items-center gap-3 border-b border-line px-5 py-3"><span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Post to</span>{accounts.map((account) => <button key={account.id} type="button" aria-pressed={selectedAccountIds.has(account.id)} onClick={() => setSelectedAccountIds((current) => { const next = new Set(current); next.has(account.id) ? next.delete(account.id) : next.add(account.id); return next; })} className={`flex items-center gap-2 rounded-lg border px-2 py-1.5 text-xs font-bold transition-colors ${selectedAccountIds.has(account.id) ? "border-primary bg-primary-soft text-primary-deep" : "border-line text-muted hover:border-primary/50"}`}><AccountAvatar username={account.username} platformId={account.platform} avatarUrl={account.avatar_url} selected={selectedAccountIds.has(account.id)} size={25} /><span className="max-w-24 truncate">{account.username}</span></button>)}</div>
         {segments.length === 0 && !hasAddedClip.current ? <div className="flex min-h-80 flex-col items-center justify-center p-8 text-center"><span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-primary-soft text-primary-deep"><Icon name="video" size={27} /></span><h2 className="mt-4 text-xl font-bold">Start your edit</h2><p className="mt-1 max-w-md text-sm text-muted">Add a video, then use the timeline to split clips and control transitions.</p><div className="mt-5 flex gap-2"><button type="button" onClick={onUpload} className="btn-primary"><Icon name="upload" size={15} /> Upload video</button><button type="button" onClick={onLibrary} className="btn-subtle">Library</button></div>{uploading && <p className="mt-4 inline-flex items-center gap-2 text-sm font-semibold text-primary-deep"><span className="h-4 w-4 animate-spin rounded-full border-2 border-primary/25 border-t-primary" />{uploadStage}</p>}</div> : <div className="bg-[#080808] text-white">
           {selectedPlatforms.length > 0 && <div className="flex flex-wrap items-center gap-2 border-b border-white/10 bg-[#101010] px-4 py-3"><span className="mr-1 text-[11px] font-bold uppercase tracking-[0.12em] text-neutral-500">Preview format</span><VideoFormatGuide />{selectedPlatforms.map((platformId) => { const format = formatFor(platformId, platformFormatIds); return <div key={platformId} className={`flex items-center rounded-lg border text-xs font-semibold ${currentPlatform === platformId ? "border-primary bg-primary/15 text-white" : "border-white/10 bg-white/5 text-neutral-400"}`}><button type="button" onClick={() => setActivePlatform(platformId)} className="flex items-center gap-1.5 self-stretch px-3 py-2"><PlatformIcon id={platformId} size={14} darkSurface />{platformOf(platformId)?.name ?? platformId}</button><Select value={format.id} ariaLabel={`${platformOf(platformId)?.name ?? platformId} aspect ratio`} onChange={(value) => { setPlatformFormatIds((current) => ({ ...current, [platformId]: value })); setActivePlatform(platformId); }} options={formatOptions(platformId).map((option) => ({ value: option.id, label: option.aspect.name }))} tone="dark" width={148} align="right" className="min-h-9 w-[76px] rounded-l-none border-y-0 border-r-0 border-l border-white/10 bg-transparent px-2 py-1.5 text-xs hover:bg-white/10" /></div>; })}</div>}
-          <div className="relative flex min-h-[410px] items-center justify-center border-b border-white/10 bg-black px-4 py-5 sm:min-h-[500px]">
-            <button type="button" onClick={onCrop} className="absolute right-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-2 text-xs font-semibold text-white backdrop-blur hover:bg-white/15"><Icon name="expand" size={14} /> Recrop</button>
+          <div className="relative flex min-h-[410px] items-center justify-center border-b border-white/10 bg-black px-4 py-5 sm:min-h-[500px]" onPointerDown={clearEditorSelectionFromPreview}>
+            <button type="button" data-keep-selection onClick={onCrop} className="absolute right-4 top-4 z-10 inline-flex items-center gap-1.5 rounded-full bg-white/10 px-3 py-2 text-xs font-semibold text-white backdrop-blur hover:bg-white/15"><Icon name="expand" size={14} /> Recrop</button>
             <div ref={captionFrameRef} className="relative max-h-[450px] max-w-full overflow-hidden rounded-lg bg-neutral-950 [container-type:inline-size]" style={{ aspectRatio: `${currentAspect.width}/${currentAspect.height}`, width: `${Math.min(760, 450 * currentAspect.width / currentAspect.height)}px` }}>
               {/* Fade-through-colour transitions need something to fade *to*. */}
               {(seamPreview.backdrop || opening?.backdrop || closing?.backdrop) && <div aria-hidden="true" className="absolute inset-0" style={{ background: seamPreview.backdrop ?? opening?.backdrop ?? closing?.backdrop }} />}
@@ -3763,6 +4027,8 @@ function StudioWorkflow({
                     selected={editorTool === "visual" && selectedVisualLayerId === layer.id}
                     rowLocked={!!visualRowLocks[layer.kind][layer.row]}
                     frameRef={captionFrameRef}
+                    previewTime={previewTime}
+                    timelinePlaying={timelinePlaying}
                     onSelect={() => { setSelectedVisualLayerId(layer.id); setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("visual"); }}
                     onBeginEdit={beginEditorEdit}
                     onChange={(patch) => setVisualLayers((current) => current.map((item) => item.id === layer.id ? { ...item, ...patch } : item))}
@@ -3822,33 +4088,73 @@ function StudioWorkflow({
                   <div className="h-10 shrink-0" />
                   <div className="flex h-[74px] shrink-0 items-center justify-center border-t border-white/5" title="Video"><Icon name="video" size={13} /></div>
                   <div className="flex h-7 shrink-0 items-center justify-center border-t border-white/5" title="Clip audio (attached)"><Icon name="audio" size={10} /></div>
-                  <div className="h-12 shrink-0 border-t border-white/5" />
                   {VISUAL_KINDS.map((kind) => <Fragment key={`gutter-visual-group-${kind}`}>
-                    <div className="h-12 shrink-0 border-t border-white/5" />
                     {Array.from({ length: visualRowsByKind[kind].length }, (_, rowIndex) => (
-                      <div key={`gutter-${kind}-${rowIndex}`} className="flex shrink-0 items-center justify-center gap-0.5 border-t border-white/5" style={{ height: VISUAL_ROW_HEIGHT }} title={`${VISUAL_KIND_LABELS[kind]} row ${rowIndex + 1}`}>
-                        {kind === "gif" ? <span className="text-[8px] font-black">GIF</span> : <Icon name={kind === "sticker" ? "star" : kind === "video" ? "video" : "image"} size={11} />}
-                        <span className="font-mono text-[9px]">{rowIndex + 1}</span>
-                      </div>
+                      <Fragment key={`gutter-${kind}-${rowIndex}`}>
+                        <div className="flex shrink-0 items-center justify-center gap-0.5 border-t border-white/5" style={{ height: VISUAL_ROW_HEIGHT }} title={`${VISUAL_KIND_LABELS[kind]} row ${rowIndex + 1}`}>
+                          {kind === "gif" ? <span className="text-[8px] font-black">GIF</span> : <Icon name={kind === "sticker" ? "star" : kind === "video" ? "video" : "image"} size={11} />}
+                          <span className="font-mono text-[9px]">{rowIndex + 1}</span>
+                        </div>
+                        {kind === "video" && <div className="flex shrink-0 items-center justify-center border-t border-white/5" style={{ height: ATTACHED_AUDIO_ROW_HEIGHT }} title={`Video row ${rowIndex + 1} attached audio`}><Icon name="audio" size={10} /></div>}
+                      </Fragment>
                     ))}
                   </Fragment>)}
                   {Array.from({ length: audioRowCount }, (_, rowIndex) => (
-                    <div key={`gutter-audio-${rowIndex}`} className="flex h-10 shrink-0 items-center justify-center gap-0.5 border-t border-white/5" title={`Audio row ${rowIndex + 1}`}>
+                    <div key={`gutter-audio-${rowIndex}`} className="flex shrink-0 items-center justify-center gap-0.5 border-t border-white/5" style={{ height: AUDIO_ROW_HEIGHT }} title={`Audio row ${rowIndex + 1}`}>
                       <Icon name="audio" size={11} />
                       <span className="font-mono text-[9px]">{rowIndex + 1}</span>
                     </div>
                   ))}
-                  <div className="h-12 shrink-0 border-t border-white/5" />
                   {Array.from({ length: captionRowCount }, (_, rowIndex) => (
                     <div key={`gutter-caption-${rowIndex}`} className="flex h-10 shrink-0 items-center justify-center gap-0.5 border-t border-white/5" title={`Text row ${rowIndex + 1}`}>
                       <Icon name="type" size={11} />
                       <span className="font-mono text-[9px]">{rowIndex + 1}</span>
                     </div>
                   ))}
-                  <div className="h-12 shrink-0 border-t border-white/5" />
+                  {genericRows.map((row, rowIndex) => <div key={`gutter-generic-${rowIndex}`} className={`relative shrink-0 border-t border-white/5 ${genericRowDropTarget === rowIndex ? "bg-primary/10" : ""}`} style={{ height: genericRowHeights[rowIndex] }} title={`Flexible row ${rowIndex + 1}`}>{(row.segments.length > 0 || row.visuals.some((layer) => layer.kind === "video")) && <span aria-hidden="true" className="absolute inset-x-0 border-t border-white/5" style={{ top: GENERIC_ROW_HEIGHT }} />}</div>)}
+                  <div className="flex h-12 shrink-0 items-center justify-center border-t border-white/10" title="Add a timeline row"><Icon name="plus" size={12} /></div>
                 </div>
+	              {/* Track controls deliberately live outside the time canvas. Keeping
+	                  row actions in this fixed rail means media blocks stay honest
+	                  representations of time: drag the body to move it and either
+	                  edge to trim it, without controls covering the edit itself. */}
+	              <div className="sticky left-7 z-40 flex w-16 shrink-0 flex-col border-r border-white/10 bg-[#0d0d0d] text-neutral-300 shadow-[8px_0_16px_rgba(0,0,0,0.3)]">
+	                <div className="h-10 shrink-0 border-b border-white/10" />
+	                <div className="h-[74px] shrink-0" />
+	                <div className="h-7 shrink-0" />
+	                {VISUAL_KINDS.map((kind) => {
+	                  const rows = visualRowsByKind[kind];
+	                  const kindLabel = VISUAL_KIND_LABELS[kind];
+	                  return <Fragment key={`controls-${kind}`}>
+	                    {rows.map((_, rowIndex) => {
+	                      const locked = !!visualRowLocks[kind][rowIndex];
+	                      return <Fragment key={`controls-${kind}-${rowIndex}`}><div className="flex shrink-0 items-center justify-center gap-1 border-t border-white/[0.06] px-1" style={{ height: VISUAL_ROW_HEIGHT }}>
+	                        <button type="button" onClick={() => { beginEditorEdit(); setVisualRowLocks((current) => ({ ...current, [kind]: { ...current[kind], [rowIndex]: !locked } })); }} aria-pressed={locked} aria-label={`${locked ? "Unlock" : "Lock"} ${kindLabel} row ${rowIndex + 1}`} title={locked ? "Unlock row" : "Lock row"} className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md border ${locked ? "border-primary/60 bg-primary/20 text-primary" : "border-white/15 bg-black/60 text-neutral-400 hover:text-white"}`}><Icon name={locked ? "lock" : "unlock"} size={12} /></button>
+	                        <span className="hidden">{kindLabel} {rowIndex + 1}</span>
+	                        <button type="button" disabled={locked} onClick={() => deleteVisualRow(kind, rowIndex)} aria-label={`Delete ${kindLabel} row ${rowIndex + 1}`} title={locked ? "Unlock row before deleting it" : "Delete row"} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 disabled:opacity-30"><Icon name="trash" size={12} /></button>
+	                      </div>{kind === "video" && <div className="shrink-0 border-t border-white/[0.06]" style={{ height: ATTACHED_AUDIO_ROW_HEIGHT }} />}</Fragment>;
+	                    })}
+	                  </Fragment>;
+	                })}
+	                {Array.from({ length: audioRowCount }, (_, rowIndex) => {
+	                  const locked = !!audioRowLocks[rowIndex];
+	                  return <div key={`controls-audio-${rowIndex}`} className="flex shrink-0 items-center justify-center gap-1 border-t border-white/[0.06] px-1" style={{ height: AUDIO_ROW_HEIGHT }}>
+	                    <button type="button" onClick={() => { beginEditorEdit(); setAudioRowLocks((current) => ({ ...current, [rowIndex]: !locked })); }} aria-pressed={locked} aria-label={`${locked ? "Unlock" : "Lock"} Audio row ${rowIndex + 1}`} title={locked ? "Unlock row" : "Lock row"} className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md border ${locked ? "border-primary/60 bg-primary/20 text-primary" : "border-white/15 bg-black/60 text-neutral-400 hover:text-white"}`}><Icon name={locked ? "lock" : "unlock"} size={12} /></button><button type="button" disabled={locked} onClick={() => deleteAudioRow(rowIndex)} aria-label={`Delete Audio row ${rowIndex + 1}`} title={locked ? "Unlock row before deleting it" : "Delete row"} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 disabled:opacity-30"><Icon name="trash" size={12} /></button>
+	                  </div>;
+	                })}
+	                {Array.from({ length: captionRowCount }, (_, rowIndex) => {
+	                  const locked = !!captionRowLocks[rowIndex];
+	                  return <div key={`controls-caption-${rowIndex}`} className="flex h-10 shrink-0 items-center justify-center gap-1 border-t border-white/[0.06] px-1"><button type="button" onClick={() => { beginEditorEdit(); setCaptionRowLocks((current) => ({ ...current, [rowIndex]: !locked })); }} aria-pressed={locked} aria-label={`${locked ? "Unlock" : "Lock"} Text row ${rowIndex + 1}`} title={locked ? "Unlock row" : "Lock row"} className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md border ${locked ? "border-primary/60 bg-primary/20 text-primary" : "border-white/15 bg-black/60 text-neutral-400 hover:text-white"}`}><Icon name={locked ? "lock" : "unlock"} size={12} /></button><button type="button" disabled={locked} onClick={() => deleteCaptionRow(rowIndex)} aria-label={`Delete Text row ${rowIndex + 1}`} title={locked ? "Unlock row before deleting it" : "Delete row"} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 disabled:opacity-30"><Icon name="trash" size={12} /></button></div>;
+	                })}
+	                {genericRows.map((_, rowIndex) => {
+	                  const locked = !!genericRowLocks[rowIndex];
+	                  const hasAttachedAudio = genericRows[rowIndex].segments.length > 0 || genericRows[rowIndex].visuals.some((layer) => layer.kind === "video");
+	                  return <div key={`controls-generic-${rowIndex}`} className={`shrink-0 border-t border-white/[0.06] ${genericRowDropTarget === rowIndex ? "bg-primary/10" : ""}`} style={{ height: genericRowHeights[rowIndex] }}><div className="flex items-center justify-center gap-1 px-1" style={{ height: GENERIC_ROW_HEIGHT }}><button type="button" onClick={() => setGenericRowLocks((current) => ({ ...current, [rowIndex]: !locked }))} aria-pressed={locked} aria-label={`${locked ? "Unlock" : "Lock"} flexible row ${rowIndex + 1}`} className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md border ${locked ? "border-primary/60 bg-primary/20 text-primary" : "border-white/15 bg-black/60 text-neutral-400 hover:text-white"}`}><Icon name={locked ? "lock" : "unlock"} size={12} /></button><button type="button" disabled={locked} onClick={() => deleteGenericRow(rowIndex)} aria-label={`Delete flexible row ${rowIndex + 1}`} className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 disabled:opacity-30"><Icon name="trash" size={12} /></button></div>{hasAttachedAudio && <div className="border-t border-white/[0.06]" style={{ height: ATTACHED_AUDIO_ROW_HEIGHT }} />}</div>;
+	                })}
+	                <div className="h-12 shrink-0 border-t border-white/10" />
+	              </div>
 	              <div ref={timelineCanvasRef} onPointerMove={moveCaptionDrag} onPointerUp={endCaptionDrag} onPointerCancel={endCaptionDrag} className="relative min-h-[194px] shrink-0 select-none" style={{ width: `${Math.max(TIMELINE_MIN_WIDTH_PX, timelineDuration * TIMELINE_PIXELS_PER_SECOND * timelineZoom)}px` }}>
-                <button type="button" data-keep-selection className="relative block h-10 w-full cursor-crosshair border-b border-white/10 bg-[#101010] text-left" aria-label="Seek timeline" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); seekFromTimelinePointer(event.clientX); }} onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) seekFromTimelinePointer(event.clientX); }} onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}>
+                <button type="button" className="relative block h-10 w-full cursor-crosshair border-b border-white/10 bg-[#101010] text-left" aria-label="Seek timeline" onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); seekFromTimelinePointer(event.clientX); }} onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) seekFromTimelinePointer(event.clientX); }} onPointerUp={(event) => event.currentTarget.releasePointerCapture(event.pointerId)}>
                   {timelineTicks(timelineDuration).map((tick) => (
                     <span
                       key={tick}
@@ -3875,6 +4181,7 @@ function StudioWorkflow({
                 </button>
                 <div className="relative h-[74px] border-b border-white/10 bg-[#0d0d0d]" aria-label="Video track">
                   {segments.map((segment, index) => {
+                    if (segment.genericRow !== undefined) return null;
                     const gap = Math.max(0, segment.gapBefore ?? 0);
                     if (gap <= 0) return null;
                     const offset = segmentOffsets[index];
@@ -3888,6 +4195,7 @@ function StudioWorkflow({
                     </div>;
                   })}
                   {segments.map((segment, index) => {
+                    if (segment.genericRow !== undefined) return null;
                     const segmentDuration = computeSegmentDuration(segment);
                     const segmentOffset = segmentOffsets[index];
                     const selected = activeSegment?.id === segment.id && ["clip", "trim"].includes(editorTool);
@@ -3900,7 +4208,7 @@ function StudioWorkflow({
                     const tileCount = Math.max(1, Math.min(80, Math.ceil(clipPixels / FILMSTRIP_TILE_PX)));
                     const segmentEnd = segment.end ?? sourceDuration;
                     const clipColor = accentColor(index);
-                    return <div key={segment.id} role="button" tabIndex={0} aria-label={`Clip ${index + 1}, ${formatTime(segmentDuration, true)}${(segment.gapBefore ?? 0) > 0 ? `, preceded by ${formatTime(segment.gapBefore ?? 0, true)} of blank space` : ""}`}
+                    return <div key={segment.id} role="button" tabIndex={0} data-keep-selection aria-label={`Clip ${index + 1}, ${formatTime(segmentDuration, true)}${(segment.gapBefore ?? 0) > 0 ? `, preceded by ${formatTime(segment.gapBefore ?? 0, true)} of blank space` : ""}`}
                       onPointerDown={(event) => beginClipPositionDrag(event, segment)}
                       onPointerMove={moveClipPositionDrag}
                       onPointerUp={endClipPositionDrag}
@@ -3938,27 +4246,7 @@ function StudioWorkflow({
                         return <span key={tile} className="h-full shrink-0 border-r border-black/30 last:border-r-0" style={{ width: FILMSTRIP_TILE_PX, ...filmstripTileStyle(segment.media.id, frame, stripFrames) }} />;
                       })}</span>}
                       <span
-                        data-clip-reorder
-                        draggable
-                        onPointerDown={(event) => event.stopPropagation()}
-                        onClick={(event) => {
-                          // stopPropagation on pointerdown keeps this strip's
-                          // native drag-to-reorder from also triggering the
-                          // clip body's own pointer-drag (gap adjustment) —
-                          // but that means a plain click here never reaches
-                          // beginClipPositionDrag either, so it needs its own
-                          // selection logic. A real drag suppresses the
-                          // browser's synthetic click, so this only ever
-                          // fires for an actual click, never a reorder drag.
-                          seekFromTimelinePointer(event.clientX);
-                          setActiveSegmentId(segment.id);
-                          setSelectedCaptionId(null);
-                          setSelectedAudioClipId(null);
-                          setEditorTool("clip");
-                        }}
-                        onDragStart={(event) => { event.dataTransfer.setData(CLIP_DND_TYPE, String(index)); event.dataTransfer.effectAllowed = "move"; }}
-                        onDragEnd={() => setClipDropTarget(null)}
-                        title="Drag to reorder"
+                        title="Drag to reposition in time or move to another row"
                         className={`absolute inset-x-0 bottom-0 flex cursor-grab items-center gap-1 ${clipColor.labelBg} px-2 py-1 active:cursor-grabbing`}
                       >
                         <Icon name="dots" size={11} className="shrink-0 text-neutral-500" />
@@ -4043,7 +4331,7 @@ function StudioWorkflow({
                     // deleted — it used to reappear (looking re-attached) the
                     // moment that clip went away. The second check now only
                     // covers drafts saved before that fix.
-                    if (segment.audioRemoved) return null;
+                    if (segment.genericRow !== undefined || segment.audioRemoved) return null;
                     if (audioClips.some((clip) => clip.kind === "detached" && clip.sourceSegmentId === segment.id)) return null;
                     const segmentDuration = computeSegmentDuration(segment);
                     const segmentOffset = segmentOffsets[index];
@@ -4055,7 +4343,7 @@ function StudioWorkflow({
                     // still glued to its video doesn't make sense without detaching first.
                     const selected = activeSegment?.id === segment.id && editorTool === "volume";
                     const clipColor = accentColor(index);
-                    return <div key={`audio-${segment.id}`} role="button" tabIndex={0}
+                    return <div key={`audio-${segment.id}`} role="button" tabIndex={0} data-keep-selection
                       onPointerDown={(event) => { if ((event.target as HTMLElement).closest("[data-audio-trim-handle]")) return; seekFromTimelinePointer(event.clientX); setActiveSegmentId(segment.id); setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("volume"); }}
                       className={`absolute inset-y-0.5 overflow-hidden rounded border text-left ${selected ? `${clipColor.chipBg} border-white/40` : `${clipColor.chipBg} ${clipColor.chipBorder} hover:brightness-125`}`}
                       style={{ left: `${(segmentOffset / timelineDuration) * 100}%`, width: `${(segmentDuration / timelineDuration) * 100}%` }}
@@ -4076,24 +4364,11 @@ function StudioWorkflow({
                   const kindLabel = VISUAL_KIND_LABELS[kind];
                   const kindIcon = (size: number) => kind === "gif" ? <span className="font-black">GIF</span> : <Icon name={kind === "sticker" ? "star" : kind === "video" ? "video" : "image"} size={size} />;
                   return <Fragment key={`visual-section-${kind}`}>
-                    <div className="relative flex h-11 items-center border-b border-white/10 bg-[#0a0a0a]">
-                      <div
-                        className="sticky left-9 z-20 flex items-center gap-2 pointer-events-auto pr-2"
-                        style={{ width: timelineViewportWidth ? `${Math.max(200, timelineViewportWidth - 48)}px` : "calc(100% - 24px)" }}
-                      >
-                        <button type="button" onClick={() => { beginEditorEdit(); setVisualRowCounts((current) => ({ ...current, [kind]: current[kind] + 1 })); }} className="flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-white/15 bg-white/[0.02] px-3 text-[11px] font-bold text-neutral-300 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-                          <Icon name="plus" size={13} /> Add Row
-                        </button>
-                        <button type="button" onClick={() => onAddVisual(kind, rows.length)} className="flex h-8 flex-1 min-w-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-white/15 bg-white/[0.02] px-3 text-[11px] font-bold text-neutral-300 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-                          {kindIcon(13)} Add {kindLabel}
-                        </button>
-                      </div>
-                    </div>
-                    {rows.length > 0 && <div ref={(el) => { visualLaneRef.current[kind] = el; }} className="relative border-b border-white/10 bg-[#0a0a0a]" style={{ height: rows.length * VISUAL_ROW_HEIGHT }} aria-label={`${kindLabel} overlay tracks`}>
+                    {rows.length > 0 && <div ref={(el) => { visualLaneRef.current[kind] = el; }} className="relative border-b border-white/10 bg-[#0a0a0a]" style={{ height: rows.length * visualTrackHeight(kind) }} aria-label={`${kindLabel} overlay tracks`}>
                       {rows.map((row, rowIndex) => {
                         const locked = !!kindLocks[rowIndex];
-                        return <div key={`${kind}-row-${rowIndex}`} className="absolute inset-x-0 flex items-center border-t border-white/[0.06] first:border-t-0" style={{ top: rowIndex * VISUAL_ROW_HEIGHT, height: VISUAL_ROW_HEIGHT }}>
-                          <div className="sticky left-9 z-20 flex items-center gap-1.5 pointer-events-auto">
+                        return <div key={`${kind}-row-${rowIndex}`} className="absolute inset-x-0 flex items-start border-t border-white/[0.06] first:border-t-0" style={{ top: rowIndex * visualTrackHeight(kind), height: visualTrackHeight(kind) }}>
+                          <div className="hidden">
                             <button type="button" onClick={() => { beginEditorEdit(); setVisualRowLocks((current) => ({ ...current, [kind]: { ...current[kind], [rowIndex]: !locked } })); }} aria-pressed={locked} aria-label={`${locked ? "Unlock" : "Lock"} ${kindLabel} row ${rowIndex + 1}`} title={locked ? "Unlock row" : "Lock row"} className={`flex h-7 w-7 items-center justify-center rounded-lg border transition-colors ${locked ? "border-primary/60 bg-primary/20 text-primary" : "border-white/15 bg-black/80 text-neutral-400 hover:text-white"}`}><Icon name={locked ? "lock" : "unlock"} size={12} /></button>
                             <span className="rounded bg-black/80 px-2 py-1 font-mono text-[10px] font-bold text-neutral-300 border border-white/10">{kindLabel} {rowIndex + 1}</span>
                             <button type="button" disabled={locked} onClick={() => deleteVisualRow(kind, rowIndex)} aria-label={`Delete ${kindLabel} row ${rowIndex + 1}`} title={locked ? "Unlock row before deleting it" : "Delete row"} className="flex h-7 w-7 items-center justify-center rounded-lg border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 disabled:opacity-30"><Icon name="trash" size={12} /></button>
@@ -4102,10 +4377,21 @@ function StudioWorkflow({
                             const selected = editorTool === "visual" && selectedVisualLayerId === layer.id;
                             const left = (layer.start / timelineDuration) * 100;
                             const width = ((layer.end - layer.start) / timelineDuration) * 100;
-                            return <div key={layer.id} role="button" tabIndex={0} data-keep-selection onPointerDown={(event) => { if (locked || (event.target as HTMLElement).closest("[data-visual-trim-handle]")) return; beginVisualDrag(event, layer, "move"); }} onPointerMove={moveVisualDrag} onPointerUp={endVisualDrag} onPointerCancel={endVisualDrag} onKeyDown={(event) => { if (locked) return; if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedVisualLayerId(layer.id); setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("visual"); } }} className={`absolute touch-none overflow-hidden rounded-md border text-left ${locked ? "cursor-default opacity-70" : "cursor-grab"} ${selected ? "border-primary bg-primary/25 ring-1 ring-primary" : "border-cyan-400/50 bg-cyan-500/15 hover:brightness-125"}`} style={{ left: `${left}%`, width: `${width}%`, top: 5, height: VISUAL_ROW_HEIGHT - 10 }}>
-                              <span className={`block truncate py-2 text-[10px] font-bold text-white ${selected ? "px-5" : "px-2"}`}>{layer.media.name}</span>
+                            const stripFrames = layer.kind === "video" ? (filmstrips[layer.media.id] ?? 0) : 0;
+                            const tileCount = Math.max(1, Math.min(80, Math.ceil(((layer.end - layer.start) / timelineDuration) * timelineCanvasWidth / FILMSTRIP_TILE_PX)));
+                            return <Fragment key={layer.id}>
+                              {kind === "video" && <div className="absolute overflow-hidden border-y border-cyan-400/35 bg-[#091319]" style={{ left: `${left}%`, width: `${width}%`, top: VISUAL_ROW_HEIGHT, height: ATTACHED_AUDIO_ROW_HEIGHT }} title="Attached audio"><Waveform peaks={waveformPeaks[layer.media.id]} startRatio={0} endRatio={1} className="absolute inset-x-1 top-1/2 h-[calc(100%_-_8px)] w-[calc(100%_-_8px)] -translate-y-1/2 text-[#6b7375]" /></div>}
+                            <div role="button" tabIndex={0} data-keep-selection onPointerDown={(event) => { if (locked || (event.target as HTMLElement).closest("[data-visual-trim-handle]")) return; beginVisualDrag(event, layer, "move"); }} onPointerMove={moveVisualDrag} onPointerUp={endVisualDrag} onPointerCancel={endVisualDrag} onKeyDown={(event) => { if (locked) return; if (event.key === "Enter" || event.key === " ") { event.preventDefault(); setSelectedVisualLayerId(layer.id); setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("visual"); } }} className={`absolute touch-none overflow-hidden rounded-md border text-left ${locked ? "cursor-default opacity-70" : "cursor-grab"} ${selected ? "border-primary bg-primary/25 ring-1 ring-primary" : "border-cyan-400/50 bg-cyan-500/15 hover:brightness-125"}`} style={{ left: `${left}%`, width: `${width}%`, top: 5, height: VISUAL_ROW_HEIGHT - 10 }}>
+                              {stripFrames > 0 ? <span aria-hidden="true" className="absolute inset-0 flex opacity-60">{Array.from({ length: tileCount }, (_, tile) => <span key={tile} className="h-full shrink-0 border-r border-black/25 last:border-r-0" style={{ width: FILMSTRIP_TILE_PX, ...filmstripTileStyle(layer.media.id, Math.min(stripFrames - 1, Math.floor(((tile + 0.5) / tileCount) * stripFrames)), stripFrames) }} />)}</span> : <span aria-hidden="true" className="absolute inset-0 bg-cover bg-center opacity-55" style={{ backgroundImage: `url(/api/media-file/${layer.media.id})` }} />}
+                              <span aria-hidden="true" className="absolute inset-0 bg-gradient-to-r from-black/65 via-black/20 to-black/55" />
+                              <span className={`relative flex min-w-0 items-center gap-1.5 truncate py-2 text-[10px] font-bold text-white ${selected ? "px-5" : "px-2"}`}>
+                                <span className="shrink-0 text-cyan-200">{kindIcon(11)}</span>
+                                <span className="min-w-0 truncate">{layer.media.name}</span>
+                                <span className="ml-auto shrink-0 font-mono text-[9px] font-semibold text-cyan-100/80">{formatTime(layer.end - layer.start, true)}</span>
+                              </span>
                               {selected && !locked && <><span data-visual-trim-handle role="slider" tabIndex={0} aria-label="Trim visual layer start" aria-valuemin={0} aria-valuemax={layer.end - 0.2} aria-valuenow={layer.start} onPointerDown={(event) => beginVisualDrag(event, layer, "start")} onPointerMove={moveVisualDrag} onPointerUp={endVisualDrag} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); beginEditorEdit(); const delta = event.key === "ArrowLeft" ? -0.1 : 0.1; setVisualLayers((current) => current.map((item) => item.id === layer.id ? { ...item, start: clamp(item.start + delta, 0, item.end - 0.2) } : item)); }} className="absolute inset-y-0 left-0 z-20 w-4 cursor-ew-resize bg-primary/90" /><span data-visual-trim-handle role="slider" tabIndex={0} aria-label="Trim visual layer end" aria-valuemin={layer.start + 0.2} aria-valuemax={timelineDuration} aria-valuenow={layer.end} onPointerDown={(event) => beginVisualDrag(event, layer, "end")} onPointerMove={moveVisualDrag} onPointerUp={endVisualDrag} onKeyDown={(event) => { if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return; event.preventDefault(); beginEditorEdit(); const delta = event.key === "ArrowLeft" ? -0.1 : 0.1; setVisualLayers((current) => current.map((item) => item.id === layer.id ? { ...item, end: clamp(item.end + delta, item.start + 0.2, timelineDuration) } : item)); }} className="absolute inset-y-0 right-0 z-20 w-4 cursor-ew-resize bg-primary/90" /></>}
-                            </div>;
+                            </div>
+                            </Fragment>;
                           })}
                         </div>;
                       })}
@@ -4125,7 +4411,7 @@ function StudioWorkflow({
                       className={`absolute inset-x-0 flex items-center border-t border-white/[0.06] first:border-t-0 ${audioRowDropTarget === rowIndex ? "bg-primary/10 ring-1 ring-inset ring-primary/50" : ""}`}
                       style={{ top: rowIndex * AUDIO_ROW_HEIGHT, height: AUDIO_ROW_HEIGHT }}
                     >
-                      <div className="sticky left-9 z-20 flex items-center gap-1.5 pointer-events-auto">
+                      <div className="hidden">
                         <button type="button" onClick={() => { beginEditorEdit(); setAudioRowLocks((current) => ({ ...current, [rowIndex]: !locked })); }} aria-pressed={locked} aria-label={`${locked ? "Unlock" : "Lock"} Audio row ${rowIndex + 1}`} title={locked ? "Unlock row" : "Lock row"} className={`flex h-7 w-7 items-center justify-center rounded-lg border transition-colors ${locked ? "border-primary/60 bg-primary/20 text-primary" : "border-white/15 bg-black/80 text-neutral-400 hover:text-white"}`}><Icon name={locked ? "lock" : "unlock"} size={12} /></button>
                         <span className="rounded bg-black/80 px-2 py-1 font-mono text-[10px] font-bold text-neutral-300 border border-white/10">Audio {rowIndex + 1}</span>
                         <button type="button" disabled={locked} onClick={() => deleteAudioRow(rowIndex)} aria-label={`Delete Audio row ${rowIndex + 1}`} title={locked ? "Unlock row before deleting it" : "Delete row"} className="flex h-7 w-7 items-center justify-center rounded-lg border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 disabled:opacity-30"><Icon name="trash" size={12} /></button>
@@ -4141,28 +4427,6 @@ function StudioWorkflow({
                     ),
                   ))}
                 </div>}
-                <div className="relative flex h-11 items-center border-t border-white/10 bg-[#0a0a0a]">
-                  <div
-                    className="sticky left-9 z-20 flex items-center gap-2 pointer-events-auto pr-2"
-                    style={{ width: timelineViewportWidth ? `${Math.max(200, timelineViewportWidth - 48)}px` : "calc(100% - 24px)" }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setAudioExtraRows((current) => current + 1)}
-                      title="Reserve an empty row to drag audio clips into"
-                      className="flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-white/15 bg-white/[0.02] px-3 text-[11px] font-bold text-neutral-300 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    >
-                      <Icon name="plus" size={13} /> Add Row
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => { setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("audio"); }}
-                      className="flex h-8 flex-1 min-w-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-white/15 bg-white/[0.02] px-3 text-[11px] font-bold text-neutral-300 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    >
-                      <Icon name="audio" size={13} /> Add Audio Clip
-                    </button>
-                  </div>
-                </div>
                 {(captionLayers.length > 0 || captionExtraRows > 0) && <div
                   ref={captionLaneRef}
                   className="relative border-t border-white/10 bg-[#0a0a0a]"
@@ -4176,7 +4440,7 @@ function StudioWorkflow({
                       className={`absolute inset-x-0 flex items-center border-t border-white/[0.06] first:border-t-0 ${captionRowDropTarget === rowIndex ? "bg-primary/10 ring-1 ring-inset ring-primary/50" : ""}`}
                       style={{ top: rowIndex * CAPTION_ROW_HEIGHT, height: CAPTION_ROW_HEIGHT }}
                     >
-                      <div className="sticky left-9 z-20 flex items-center gap-1.5 pointer-events-auto">
+                      <div className="hidden">
                         <button type="button" onClick={() => { beginEditorEdit(); setCaptionRowLocks((current) => ({ ...current, [rowIndex]: !locked })); }} aria-pressed={locked} aria-label={`${locked ? "Unlock" : "Lock"} Text row ${rowIndex + 1}`} title={locked ? "Unlock row" : "Lock row"} className={`flex h-7 w-7 items-center justify-center rounded-lg border transition-colors ${locked ? "border-primary/60 bg-primary/20 text-primary" : "border-white/15 bg-black/80 text-neutral-400 hover:text-white"}`}><Icon name={locked ? "lock" : "unlock"} size={12} /></button>
                         <span className="rounded bg-black/80 px-2 py-1 font-mono text-[10px] font-bold text-neutral-300 border border-white/10">Text {rowIndex + 1}</span>
                         <button type="button" disabled={locked} onClick={() => deleteCaptionRow(rowIndex)} aria-label={`Delete Text row ${rowIndex + 1}`} title={locked ? "Unlock row before deleting it" : "Delete row"} className="flex h-7 w-7 items-center justify-center rounded-lg border border-red-500/20 bg-red-500/10 text-red-400 hover:bg-red-500/20 hover:text-red-300 disabled:opacity-30"><Icon name="trash" size={12} /></button>
@@ -4208,26 +4472,36 @@ function StudioWorkflow({
                     </div>;
                   }))}
                 </div>}
-                <div className="relative flex h-11 items-center border-t border-white/10 bg-[#0a0a0a]">
-                  <div
-                    className="sticky left-9 z-20 flex items-center gap-2 pointer-events-auto pr-2"
-                    style={{ width: timelineViewportWidth ? `${Math.max(200, timelineViewportWidth - 48)}px` : "calc(100% - 24px)" }}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setCaptionExtraRows((current) => current + 1)}
-                      title="Reserve an empty row to drag text overlays into"
-                      className="flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-white/15 bg-white/[0.02] px-3 text-[11px] font-bold text-neutral-300 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    >
-                      <Icon name="plus" size={13} /> Add Row
-                    </button>
-                    <button
-                      type="button"
-                      onClick={addCaptionLayer}
-                      className="flex h-8 flex-1 min-w-0 items-center justify-center gap-1.5 rounded-lg border border-dashed border-white/15 bg-white/[0.02] px-3 text-[11px] font-bold text-neutral-300 transition-colors hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                    >
-                      <Icon name="type" size={13} /> Add Text Overlay
-                    </button>
+                {effectiveGenericRowCount > 0 && <div ref={genericLaneRef} className="relative border-t border-white/10 bg-[#090909]" style={{ height: genericRowsHeight }} aria-label="Flexible timeline rows">
+                  {genericRows.map((row, rowIndex) => {
+                    const rowTop = genericRowOffsets[rowIndex];
+                    const locked = !!genericRowLocks[rowIndex];
+                    return <Fragment key={`generic-row-${rowIndex}`}>
+                      <div className={`absolute inset-x-0 border-t border-dashed ${genericRowDropTarget === rowIndex ? "border-primary bg-primary/10 ring-1 ring-inset ring-primary/60" : "border-white/20"}`} style={{ top: rowTop, height: genericRowHeights[rowIndex] }} aria-label={`Flexible row ${rowIndex + 1}${row.segments.length + row.visuals.length + row.audio.length + row.captions.length === 0 ? ", empty drop target" : ""}`}>
+                        {row.segments.length + row.visuals.length + row.audio.length + row.captions.length === 0 && <span className="pointer-events-none absolute inset-0 flex items-center justify-center text-[10px] font-semibold text-neutral-600">Drop video, audio, image, GIF, sticker, or text here</span>}
+                        {(row.segments.length > 0 || row.visuals.some((layer) => layer.kind === "video")) && <span aria-hidden="true" className="absolute inset-x-0 border-t border-white/10" style={{ top: GENERIC_ROW_HEIGHT }} />}
+                        {locked && <span className="sr-only">Locked</span>}
+                      </div>
+                      {row.segments.map((segment) => renderGenericSegment(segment, rowIndex, rowTop))}
+                      {row.visuals.map((layer) => renderGenericVisual(layer, rowIndex, rowTop))}
+                      {row.audio.map((clip) => renderAudioBlock(clip, rowTop + 4, GENERIC_ROW_HEIGHT - 8, rowIndex))}
+                      {row.captions.map((layer) => renderGenericCaption(layer, rowIndex, rowTop))}
+                    </Fragment>;
+                  })}
+                </div>}
+                <div className="relative flex h-12 items-center border-t border-white/10 bg-[#0a0a0a] px-2" aria-label="Add timeline content">
+                  <div className="flex min-w-max items-center gap-1.5">
+                    <button type="button" onClick={() => {
+                      beginEditorEdit();
+                      setGenericRowCount((current) => current + 1);
+                    }} title="Add an empty flexible row" className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-white/25 bg-white/[0.02] px-3 text-[11px] font-bold text-neutral-200 hover:border-primary hover:bg-primary/10 hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"><Icon name="plus" size={13} /> Row</button>
+                    <span aria-hidden="true" className="mx-0.5 h-5 w-px bg-white/10" />
+                    <button type="button" onClick={() => onAddVisual("video", visualRowsByKind.video.length)} className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-white/20 px-2.5 text-[11px] font-bold text-neutral-300 hover:border-primary hover:bg-primary/10 hover:text-primary"><Icon name="video" size={13} /> + Video</button>
+                    <button type="button" onClick={onAudioUpload} disabled={audioUploading} className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-white/20 px-2.5 text-[11px] font-bold text-neutral-300 hover:border-primary hover:bg-primary/10 hover:text-primary disabled:opacity-40"><Icon name="audio" size={13} /> + Audio</button>
+                    <button type="button" onClick={() => onAddVisual("image", visualRowsByKind.image.length)} className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-white/20 px-2.5 text-[11px] font-bold text-neutral-300 hover:border-primary hover:bg-primary/10 hover:text-primary"><Icon name="image" size={13} /> + Image</button>
+                    <button type="button" onClick={() => onAddVisual("gif", visualRowsByKind.gif.length)} className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-white/20 px-2.5 text-[11px] font-bold text-neutral-300 hover:border-primary hover:bg-primary/10 hover:text-primary"><span className="text-[9px] font-black">GIF</span> + GIF</button>
+                    <button type="button" onClick={() => onAddVisual("sticker", visualRowsByKind.sticker.length)} className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-white/20 px-2.5 text-[11px] font-bold text-neutral-300 hover:border-primary hover:bg-primary/10 hover:text-primary"><Icon name="star" size={13} /> + Sticker</button>
+                    <button type="button" onClick={addCaptionLayer} className="flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-dashed border-white/20 px-2.5 text-[11px] font-bold text-neutral-300 hover:border-primary hover:bg-primary/10 hover:text-primary"><Icon name="type" size={13} /> + Text</button>
                   </div>
                 </div>
                 {snapIndicator !== null && <div
@@ -4242,9 +4516,16 @@ function StudioWorkflow({
           </div>
           <div className="min-h-24 border-b border-white/10 px-4 py-4">
             {editorTool === "visual" && selectedVisualLayer && (() => {
-              const rowLocked = !!visualRowLocks[selectedVisualLayer.kind][selectedVisualLayer.row];
+              const rowLocked = selectedVisualLayer.genericRow !== undefined
+                ? !!genericRowLocks[selectedVisualLayer.genericRow]
+                : !!visualRowLocks[selectedVisualLayer.kind][selectedVisualLayer.row];
               const locked = rowLocked;
               const patchVisual = (patch: Partial<VisualLayer>) => setVisualLayers((current) => current.map((layer) => layer.id === selectedVisualLayer.id ? { ...layer, ...patch } : layer));
+              const originalWidth = clamp(
+                ((selectedVisualLayer.media.width ?? currentAspect.width) / currentAspect.width) * 100,
+                5,
+                100,
+              );
               const chroma = selectedVisualLayer.chroma ?? { enabled: false, color: "#00ff00", similarity: 0.3, blend: 0.08 };
               return <section aria-labelledby="visual-layer-settings-heading">
                 <div className="flex flex-wrap items-center justify-between gap-3">
@@ -4258,7 +4539,10 @@ function StudioWorkflow({
                   {(["x", "y", "width"] as const).map((field) => <label key={field} className="text-xs font-semibold text-neutral-300"><span className="flex justify-between"><span>{field === "x" ? "Horizontal" : field === "y" ? "Vertical" : "Size"}</span><span className="font-mono text-neutral-400">{Math.round(selectedVisualLayer[field])}%</span></span><input type="range" min={field === "width" ? 5 : 0} max="100" step="1" disabled={locked} value={selectedVisualLayer[field]} onPointerDown={beginEditorEdit} onChange={(event) => patchVisual({ [field]: Number(event.target.value) })} className="mt-2 w-full accent-primary disabled:opacity-35" /></label>)}
                 </div>
                 <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-white/10 pt-4">
-                  <button type="button" disabled={locked} onClick={() => { beginEditorEdit(); patchVisual({ x: 50, y: 50, width: selectedVisualLayer.kind === "sticker" ? 25 : 45 }); }} className="min-h-9 rounded-lg border border-white/15 px-3 text-xs font-bold text-white hover:bg-white/10 disabled:opacity-35">Reset position</button>
+                  <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Visual layer placement">
+                    <button type="button" disabled={locked} onClick={() => { beginEditorEdit(); patchVisual({ x: 50, y: 50 }); }} title="Move this layer to the center without changing its size" className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-white/15 px-3 text-xs font-bold text-white transition-colors hover:border-white/25 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-35"><Icon name="refresh" size={13} /> Center</button>
+                    <button type="button" disabled={locked} onClick={() => { beginEditorEdit(); patchVisual({ width: originalWidth }); }} title={`Restore the media's native size (${Math.round(originalWidth)}% of the output width)`} className="inline-flex min-h-9 items-center gap-1.5 rounded-lg border border-white/15 px-3 text-xs font-bold text-white transition-colors hover:border-white/25 hover:bg-white/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary disabled:opacity-35"><Icon name="expand" size={13} /> Original size</button>
+                  </div>
                   <label className="inline-flex min-h-9 items-center gap-2 text-xs font-bold text-white"><input type="checkbox" checked={chroma.enabled} disabled={locked} onChange={(event) => { beginEditorEdit(); patchVisual({ chroma: { ...chroma, enabled: event.target.checked } }); }} className="accent-primary" /> Green screen</label>
                   {chroma.enabled && <><label className="flex items-center gap-2 text-xs font-semibold text-neutral-300">Key color <input type="color" value={chroma.color} disabled={locked} onPointerDown={beginEditorEdit} onChange={(event) => patchVisual({ chroma: { ...chroma, color: event.target.value } })} className="h-8 w-10 rounded border border-white/15 bg-transparent" /></label><label className="min-w-40 text-xs font-semibold text-neutral-300">Tolerance · {Math.round(chroma.similarity * 100)}%<input type="range" min="0.05" max="0.65" step="0.01" value={chroma.similarity} disabled={locked} onPointerDown={beginEditorEdit} onChange={(event) => patchVisual({ chroma: { ...chroma, similarity: Number(event.target.value) } })} className="ml-2 align-middle accent-primary" /></label><label className="min-w-40 text-xs font-semibold text-neutral-300">Edge blend · {Math.round(chroma.blend * 100)}%<input type="range" min="0" max="0.3" step="0.01" value={chroma.blend} disabled={locked} onPointerDown={beginEditorEdit} onChange={(event) => patchVisual({ chroma: { ...chroma, blend: Number(event.target.value) } })} className="ml-2 align-middle accent-primary" /></label><span className="text-[11px] text-neutral-500">Applied in the rendered video.</span></>}
                 </div>
@@ -4647,12 +4931,12 @@ function StudioWorkflow({
               Split
             </button>
             <button type="button" aria-pressed={editorTool === "trim"} onClick={() => { setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("trim"); }} className={`flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium hover:bg-white/10 hover:text-white ${editorTool === "trim" ? "bg-white/10 text-white" : "text-neutral-300"}`}><Icon name="trim" size={19} />Trim</button>
-            <button type="button" onClick={duplicateActive} disabled={segments.length >= MAX_SEGMENTS} className="flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium text-neutral-300 hover:bg-white/10 hover:text-white disabled:opacity-35"><Icon name="copy" size={19} />Duplicate</button>
+            <button type="button" onClick={duplicateSelectedItem} disabled={editorTool === "none" || (editorTool !== "visual" && editorTool !== "audio" && editorTool !== "captions" && segments.length >= MAX_SEGMENTS)} title="Duplicate the selected timeline item" className="flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium text-neutral-300 hover:bg-white/10 hover:text-white disabled:opacity-35"><Icon name="copy" size={19} />Duplicate</button>
             <button type="button" onClick={onUpload} className="flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium text-neutral-300 hover:bg-white/10 hover:text-white"><Icon name="upload" size={19} />Upload</button>
             <button type="button" onClick={onLibrary} className="flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium text-neutral-300 hover:bg-white/10 hover:text-white"><Icon name="image" size={19} />Library</button>
             <button type="button" onClick={onCrop} className="flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium text-neutral-300 hover:bg-white/10 hover:text-white"><Icon name="expand" size={19} />Recrop</button>
-            <button type="button" aria-pressed={editorTool === "transition"} onClick={() => { setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("transition"); }} className={`flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium hover:bg-white/10 hover:text-white ${editorTool === "transition" ? "bg-white/10 text-white" : "text-neutral-300"}`}><Icon name="sparkles" size={19} />Transition</button>
-            <button type="button" aria-pressed={editorTool === "effects"} onClick={() => { setSelectedCaptionId(null); setSelectedAudioClipId(null); if (!selectedVisualLayerId && !activeSegment && segments.length > 0) { setActiveSegmentId(segments[0].id); } setEditorTool("effects"); }} className={`flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium hover:bg-white/10 hover:text-white ${editorTool === "effects" ? "bg-white/10 text-white" : "text-neutral-300"}`}><Icon name="wand" size={19} />Effects</button>
+            <button type="button" disabled={editorTool === "audio" || editorTool === "volume"} aria-pressed={editorTool === "transition"} onClick={() => { setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("transition"); }} title={editorTool === "audio" || editorTool === "volume" ? "Transitions apply to video clips, not audio" : undefined} className={`flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 ${editorTool === "transition" ? "bg-white/10 text-white" : "text-neutral-300"}`}><Icon name="sparkles" size={19} />Transition</button>
+            <button type="button" disabled={editorTool === "audio" || editorTool === "volume"} aria-pressed={editorTool === "effects"} onClick={() => { setSelectedCaptionId(null); setSelectedAudioClipId(null); if (!selectedVisualLayerId && !activeSegment && segments.length > 0) { setActiveSegmentId(segments[0].id); } setEditorTool("effects"); }} title={editorTool === "audio" || editorTool === "volume" ? "Effects apply to visual media, not audio" : undefined} className={`flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium hover:bg-white/10 hover:text-white disabled:cursor-not-allowed disabled:opacity-35 ${editorTool === "effects" ? "bg-white/10 text-white" : "text-neutral-300"}`}><Icon name="wand" size={19} />Effects</button>
             <button type="button" onClick={() => onAddVisual("gif", visualRowsByKind.gif.length)} className="flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium text-neutral-300 hover:bg-white/10 hover:text-white"><span className="text-[11px] font-black leading-none my-0.5 border border-current px-1 py-0.5 rounded">GIF</span>GIFs</button>
             <button type="button" onClick={() => onAddVisual("sticker", visualRowsByKind.sticker.length)} className="flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium text-neutral-300 hover:bg-white/10 hover:text-white"><Icon name="star" size={19} />Stickers</button>
             <button type="button" aria-pressed={editorTool === "volume"} onClick={() => { setSelectedCaptionId(null); setSelectedAudioClipId(null); setEditorTool("volume"); }} className={`flex min-w-20 flex-col items-center gap-1 rounded-lg px-3 py-2 text-xs font-medium hover:bg-white/10 hover:text-white ${editorTool === "volume" ? "bg-white/10 text-white" : "text-neutral-300"}`}><Icon name="audio" size={19} />Volume</button>
@@ -4905,19 +5189,6 @@ function VideoEditor({ onExit, accounts, initialClip, initialCaption, initialDra
     return locks;
   });
   const [selectedVisualLayerId, setSelectedVisualLayerId] = useState<string | null>(null);
-  // Clicking anywhere outside a caption box or its styling panel clears the
-  // selection (so its border/handles disappear) — same idiom as slideshow's
-  // text layers. Clicks on a caption box or its resize/delete controls stop
-  // propagation, so they never reach here.
-  useEffect(() => {
-    if (!selectedCaptionId) return;
-    function onDown(event: PointerEvent) {
-      if ((event.target as HTMLElement).closest("[data-keep-selection]")) return;
-      setSelectedCaptionId(null);
-    }
-    document.addEventListener("pointerdown", onDown);
-    return () => document.removeEventListener("pointerdown", onDown);
-  }, [selectedCaptionId]);
   const [caption, setCaption] = useState(() => initialDraft?.caption ?? initialCaption);
   const [uploading, setUploading] = useState(false);
   const [uploadStage, setUploadStage] = useState("");
@@ -5094,11 +5365,21 @@ function VideoEditor({ onExit, accounts, initialClip, initialCaption, initialDra
       return false;
     }
     try {
-      const media = await uploadOneFile(file);
+      const [media, sourceDuration] = await Promise.all([
+        uploadOneFile(file),
+        target.kind === "video" ? probeVideoDuration(file) : Promise.resolve(0),
+      ]);
       rememberEditorState();
-      const duration = Math.max(1, computeTimelineDuration(segments) || 5);
+      const timelineDuration = Math.max(0.5, computeTimelineDuration(segments) || 5);
+      // Every added item needs room to move. Video layers use their real source
+      // length instead of silently covering the entire project; still media,
+      // GIFs and stickers keep the short overlay default.
+      const duration = target.kind === "video"
+        ? Math.min(sourceDuration > 0 ? sourceDuration : 5, timelineDuration)
+        : Math.min(3, timelineDuration);
+      const start = 0;
       const layer: VisualLayer = {
-        id: crypto.randomUUID(), media, kind: target.kind, start: 0, end: duration, row: target.row,
+        id: crypto.randomUUID(), media, kind: target.kind, start, end: start + duration, row: target.row,
         x: 50, y: 50, width: target.kind === "sticker" ? 25 : target.kind === "gif" ? 32 : 45,
         chroma: { enabled: false, color: "#00ff00", similarity: 0.3, blend: 0.08 },
       };
