@@ -78,16 +78,18 @@ export function ConnectionsPanel({
       )}
 
       {PLATFORMS.filter((p) => p.note).length > 0 && (
-        <div className="mt-3 rounded-xl border border-line bg-page/50 px-4 py-3">
-          <p className="text-xs font-bold text-muted">Before you connect</p>
+        <div className="mt-3 rounded-xl border border-primary/20 bg-primary-soft px-4 py-3">
+          <p className="flex items-center gap-1.5 text-xs font-bold text-primary-deep">
+            <Icon name="info" size={14} /> Before you connect
+          </p>
           <ul className="mt-1.5 flex flex-col gap-1">
             {PLATFORMS.filter((p) => p.note)
               .sort((a, b) => (a.id === "facebook" ? -1 : b.id === "facebook" ? 1 : 0))
               .map((p) => (
-              <li key={p.id} className="flex items-start gap-2 text-xs text-muted">
+              <li key={p.id} className="flex items-start gap-2 text-xs text-primary-dark/80">
                 <PlatformIcon id={p.id} size={14} />
                 <span>
-                  <span className="font-semibold">{p.name}:</span> {p.note}
+                  <span className="font-semibold text-primary-dark">{p.name}:</span> {p.note}
                   {p.noteLink && (
                     <>
                       {" "}
