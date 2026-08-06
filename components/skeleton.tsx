@@ -267,72 +267,29 @@ export function AnalyticsSkeleton() {
   );
 }
 
-export function BulkToolsSkeleton() {
+export function BatchSchedulerSkeleton() {
   return (
-    <div className="fade-up">
-      <h1 className="text-2xl font-bold">Bulk tools</h1>
-      <div className="mt-6 rounded-xl border border-line bg-primary-soft/30 p-5">
-        <SkeletonBlock className="h-6 w-36 rounded-full" />
-        <SkeletonBlock className="mt-3 h-6 w-full max-w-2xl" />
-        <SkeletonBlock className="mt-3 h-4 w-full max-w-xl" />
-      </div>
-      <div className="mt-6 grid gap-4 md:grid-cols-3">
-        {Array.from({ length: 3 }).map((_, i) => (
-          <div key={i} className="flex flex-col gap-4 rounded-xl border border-line bg-white p-6">
-            <div className="flex gap-2">
-              <SkeletonBlock className="h-8 w-8" />
-              <SkeletonBlock className="h-8 w-8" />
-            </div>
-            <div>
-              <SkeletonBlock className="h-5 w-44" />
-              <SkeletonBlock className="mt-3 h-4 w-full" />
-            </div>
-            <div className="flex gap-1 pt-1">
-              {Array.from({ length: 6 }).map((__, j) => (
-                <SkeletonBlock key={j} className="h-4 w-4 rounded-full" />
-              ))}
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-export function BulkUploaderSkeleton({ kind }: { kind: "Video" | "Image" }) {
-  const noun = kind.toLowerCase();
-  return (
-    <div className="fade-up">
-      <h1 className="flex items-center gap-2 text-2xl font-bold">
-        Bulk {kind} Scheduling <SkeletonBlock className="h-6 w-12 rounded-full" />
+    <div className="fade-up pb-10">
+      <h1 className="flex items-center gap-2 text-2xl font-bold text-ink">
+        <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-primary" />
+        Batch Scheduler
       </h1>
-      <div className="mt-5 grid gap-6 lg:grid-cols-[1fr_320px]">
-        <div className="min-w-0">
-          <p className="text-sm font-semibold text-muted">Post to</p>
-          <div className="mt-2 flex gap-3 overflow-x-auto pb-2">
-            {Array.from({ length: 8 }).map((_, i) => (
-              <SkeletonBlock key={i} className="h-11 w-11 shrink-0 rounded-full" />
-            ))}
-          </div>
+      <SkeletonBlock className="mt-2 h-4 w-full max-w-xl" />
 
-          <div className="mt-4 flex flex-col items-center gap-1.5 rounded-2xl border-2 border-dashed border-line bg-white p-10 text-center">
-            <SkeletonBlock className="h-7 w-7" />
-            <p className="font-semibold">Click to upload or drag and drop</p>
-            <p className="text-xs text-muted">Up to 30 {noun}s</p>
+      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <div className="card min-w-0 p-6 sm:p-7">
+          <SkeletonBlock className="h-3.5 w-20" />
+          <div className="mt-4 flex gap-2">
+            <SkeletonBlock className="h-9 w-36" />
+            <SkeletonBlock className="h-9 w-32" />
           </div>
-
-          <h2 className="mt-6 font-bold">Your {kind}s</h2>
-          <div className="mt-3 flex flex-col gap-3">
+          <div className="mt-5 flex flex-col gap-3">
             {Array.from({ length: 2 }).map((_, i) => (
-              <div key={i} className="card flex flex-wrap items-start gap-3 p-4">
+              <div key={i} className="flex gap-3 rounded-xl border border-line p-3">
                 <SkeletonBlock className="h-16 w-16 shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <SkeletonBlock className="h-5 w-60 max-w-full" />
+                  <SkeletonBlock className="h-5 w-52 max-w-full" />
                   <SkeletonBlock className="mt-2 h-16 w-full" />
-                  <div className="mt-2 flex gap-2">
-                    <SkeletonBlock className="h-10 w-36" />
-                    <SkeletonBlock className="h-10 w-28" />
-                  </div>
                 </div>
               </div>
             ))}
@@ -340,20 +297,12 @@ export function BulkUploaderSkeleton({ kind }: { kind: "Video" | "Image" }) {
         </div>
 
         <div className="flex flex-col gap-4">
-          <div className="card p-4">
-            <p className="font-bold">Bulk Schedule Settings</p>
-            {Array.from({ length: 5 }).map((_, i) => (
-              <div key={i} className="mt-3">
-                <SkeletonBlock className="h-4 w-24" />
-                <SkeletonBlock className="mt-1 h-10 w-full" />
-              </div>
-            ))}
-          </div>
-          <div className="card p-4">
-            <p className="font-bold">Confirm &amp; Schedule All</p>
-            <SkeletonBlock className="mt-3 h-4 w-full" />
-            <SkeletonBlock className="mt-3 h-10 w-full" />
-          </div>
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="card p-5">
+              <SkeletonBlock className="h-3.5 w-24" />
+              <SkeletonBlock className="mt-3 h-16 w-full" />
+            </div>
+          ))}
         </div>
       </div>
     </div>

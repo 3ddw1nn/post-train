@@ -1,5 +1,5 @@
-import { BulkToolsSkeleton } from "@/components/skeleton";
+import { BatchSchedulerSkeleton } from "@/components/skeleton";
 
-export default function BulkToolsLoading() {
-  return <BulkToolsSkeleton />;
+export default function BatchSchedulerLoading() {
+  return <BatchSchedulerSkeleton />;
 }
