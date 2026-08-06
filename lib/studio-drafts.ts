@@ -29,6 +29,26 @@ export type StudioDraftRow = {
   updated_at: string;
 };
 
+/**
+ * Media ids referenced anywhere in a draft's saved state.
+ *
+ * A draft's `state` is an opaque JSON blob per studio, so this scans for id
+ * literals rather than reading known fields — the same approach
+ * convex/media.ts's removeIfUnreferenced uses, and the reason it works is that
+ * media ids have a distinctive `mid_` prefix.
+ *
+ * ponytail: substring scan over every draft's blob. Ceiling is drafts × blob
+ * size; fine at a handful of drafts per workspace. Upgrade path is a real
+ * join table of draft → media if a workspace ever accumulates hundreds.
+ */
+export function mediaIdsInDrafts(drafts: Pick<StudioDraftRow, "state">[]): Set<string> {
+  const ids = new Set<string>();
+  for (const draft of drafts) {
+    for (const id of draft.state.match(/\bmid_[a-z0-9]+\b/gi) ?? []) ids.add(id);
+  }
+  return ids;
+}
+
 export async function listStudioDrafts(workspaceId: string): Promise<StudioDraftRow[]> {
   return await convexQuery<StudioDraftRow[]>(api.studioDrafts.listForWorkspace, {
     workspace_id: workspaceId,

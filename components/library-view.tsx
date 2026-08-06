@@ -430,6 +430,10 @@ export function LibraryView({
   const storagePercent = Math.min(100, (usedBytes / storage.limitBytes) * 100);
   const storageFull = usedBytes >= storage.limitBytes;
 
+  /** Count behind the studio row's "All" tab — whichever mode is showing. */
+  const activeTotal =
+    viewMode === "finished" ? finishedTotal : viewMode === "drafts" ? draftsTotal : uploadsTotal;
+
   const MODES: { key: ViewMode; label: string; total: number }[] = [
     { key: "finished", label: "Finished", total: finishedTotal },
     { key: "drafts", label: "Drafts", total: draftsTotal },
@@ -515,20 +519,65 @@ export function LibraryView({
         </div>
       </section>
 
-      {/* The studio picker used to be a six-item tab row. Demoting it to a
-          dropdown is what freed the tab dimension for origin — stacking four
-          rows of tabs would have been the alternative. */}
+      {/* Studio stays a tab row here — the Library is where you go to find a
+          specific project, and tabs show every studio's count at a glance
+          without a click. Uploads has no studio, so the row is hidden there
+          rather than rendered with every count at zero. */}
       <div id="library-files" className="mt-5 scroll-mt-24 border-b border-line pb-3">
-        <MediaFilterBar
-          filter={filter}
-          onChange={setFilter}
-          counts={counts}
-          platforms={viewMode === "finished" ? platformsPresent(allFinished) : []}
-          templates={templates.map((t) => ({ id: t.id, label: t.label }))}
-          showType={viewMode !== "drafts"}
-          showPlatform={viewMode === "finished"}
-          showTemplate={viewMode !== "uploads"}
-        />
+        {viewMode !== "uploads" && (
+          <div className="flex flex-wrap gap-1.5">
+            <button
+              type="button"
+              onClick={() => setFilter({ ...filter, template: null })}
+              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-bold transition-colors ${
+                !filter.template
+                  ? "border-primary bg-primary-soft text-primary-deep"
+                  : "border-line bg-white text-muted hover:text-ink"
+              }`}
+            >
+              <Icon name="stack" size={14} /> All
+              {activeTotal > 0 && (
+                <span className={!filter.template ? "text-primary-deep/70" : "text-muted/70"}>
+                  {activeTotal}
+                </span>
+              )}
+            </button>
+            {templates.map((t) => {
+              const count = counts.template[t.id] ?? 0;
+              const isActive = t.id === filter.template;
+              return (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setFilter({ ...filter, template: t.id })}
+                  className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-bold transition-colors ${
+                    isActive
+                      ? "border-primary bg-primary-soft text-primary-deep"
+                      : "border-line bg-white text-muted hover:text-ink"
+                  }`}
+                >
+                  <Icon name={t.icon} size={14} /> {t.label}
+                  {count > 0 && (
+                    <span className={isActive ? "text-primary-deep/70" : "text-muted/70"}>{count}</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        {/* Platform is the one facet a tab row can't carry — a row per studio
+            times a row per platform is the combinatorial mess we're avoiding. */}
+        {viewMode === "finished" && (
+          <MediaFilterBar
+            className="mt-2.5"
+            filter={filter}
+            onChange={setFilter}
+            counts={counts}
+            platforms={platformsPresent(allFinished)}
+            showType={false}
+            showTemplate={false}
+          />
+        )}
       </div>
 
       {viewMode === "finished" ? (

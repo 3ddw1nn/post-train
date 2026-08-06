@@ -33,6 +33,19 @@ import { CAPTION_MAX, platform as platformOf, type PostType } from "@/lib/platfo
 
 type Account = { id: number; platform: string; username: string; avatar_url: string | null };
 
+/**
+ * Library media as the picker sees it. `/api/app/media` returns full media
+ * rows, so `studio_finished_at` is already on the wire — ComposerMedia just
+ * doesn't declare it. `in_draft` is computed by that route (a join against
+ * unfinished studio_drafts).
+ */
+type LibraryMedia = ComposerMedia & { studio_finished_at?: string | null; in_draft?: boolean };
+
+/** Where a file came from. Drafts is deliberately not a tab: a draft is an
+ *  unfinished project, and its intermediate renders aren't work you'd want
+ *  going live — they surface under Uploads with a count, not as a pick. */
+type Origin = "all" | "finished" | "uploads";
+
 type Row = {
   media: ComposerMedia;
   caption: string;
@@ -84,8 +97,9 @@ export function BatchScheduler({
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
-  const [library, setLibrary] = useState<ComposerMedia[] | null>(null);
+  const [library, setLibrary] = useState<LibraryMedia[] | null>(null);
   const [libFilter, setLibFilter] = useState<MediaFilter>(EMPTY_FILTER);
+  const [origin, setOrigin] = useState<Origin>("all");
   const [uploading, setUploading] = useState(0);
   const [toasts, setToasts] = useState<string[]>([]);
   const [bulkCaption, setBulkCaption] = useState("");
@@ -102,7 +116,7 @@ export function BatchScheduler({
     if (!pickerOpen || library) return;
     fetch("/api/app/media")
       .then((r) => r.json())
-      .then((d) => setLibrary((d.data ?? []).filter((m: ComposerMedia) => POSTABLE.has(m.kind))))
+      .then((d) => setLibrary((d.data ?? []).filter((m: LibraryMedia) => POSTABLE.has(m.kind))))
       .catch(() => setLibrary([]));
   }, [pickerOpen, library]);
 
@@ -289,9 +303,20 @@ export function BatchScheduler({
   // rather than the raw library so a filter can't advertise items that are all
   // already in the batch.
   const available = library?.filter((m) => !chosenIds.has(m.id)) ?? null;
-  const libCounts = facetCounts(available ?? [], libFilter);
-  const libPlatforms = platformsPresent(available ?? []);
-  const visibleLibrary = available === null ? null : applyMediaFilter(available, libFilter);
+  const byOrigin = (items: LibraryMedia[], which: Origin) =>
+    which === "all" ? items : items.filter((m) => (which === "finished" ? !!m.studio_finished_at : !m.studio_finished_at));
+  const originCounts: Record<Origin, number> = {
+    all: available?.length ?? 0,
+    finished: byOrigin(available ?? [], "finished").length,
+    uploads: byOrigin(available ?? [], "uploads").length,
+  };
+  const inOrigin = byOrigin(available ?? [], origin);
+  const libCounts = facetCounts(inOrigin, libFilter);
+  const libPlatforms = platformsPresent(inOrigin);
+  const visibleLibrary = available === null ? null : applyMediaFilter(inOrigin, libFilter);
+  // Files tied up in an unfinished Studio project. Schedulable, but worth
+  // saying out loud so posting a half-done render isn't a surprise.
+  const inDraftCount = byOrigin(available ?? [], "uploads").filter((m) => m.in_draft).length;
 
   return (
     <div className="fade-up pb-10">
@@ -389,16 +414,51 @@ export function BatchScheduler({
                   </div>
                 ) : (
                   <>
-                    <p className="text-xs font-semibold text-muted">
-                      Tap to add. Studio outputs and uploads both live here.
-                    </p>
-                    <MediaFilterBar
-                      className="mt-2.5"
-                      filter={libFilter}
-                      onChange={setLibFilter}
-                      counts={libCounts}
-                      platforms={libPlatforms}
-                    />
+                    <p className="text-xs font-semibold text-muted">Tap to add.</p>
+                    <div className="mt-2.5 flex flex-wrap items-center gap-2">
+                      <div
+                        className="flex items-center gap-1 rounded-lg border border-line bg-white p-1"
+                        role="tablist"
+                        aria-label="Content source"
+                      >
+                        {(
+                          [
+                            { key: "all", label: "All", icon: "stack" },
+                            { key: "finished", label: "Finished", icon: "check" },
+                            { key: "uploads", label: "Uploads", icon: "upload" },
+                          ] as const
+                        ).map((t) => (
+                          <button
+                            key={t.key}
+                            type="button"
+                            role="tab"
+                            aria-selected={origin === t.key}
+                            onClick={() => setOrigin(t.key)}
+                            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-bold transition-colors ${
+                              origin === t.key
+                                ? "bg-primary-soft text-primary-deep"
+                                : "text-muted hover:text-ink"
+                            }`}
+                          >
+                            <Icon name={t.icon} size={13} /> {t.label}
+                            <span className="font-semibold opacity-70">{originCounts[t.key]}</span>
+                          </button>
+                        ))}
+                      </div>
+                      <MediaFilterBar
+                        filter={libFilter}
+                        onChange={setLibFilter}
+                        counts={libCounts}
+                        platforms={libPlatforms}
+                      />
+                    </div>
+                    {origin !== "finished" && inDraftCount > 0 && (
+                      <p className="mt-2 flex items-center gap-1.5 text-xs text-muted">
+                        <Icon name="info" size={12} />
+                        {inDraftCount} file{inDraftCount === 1 ? " is" : "s are"} still in use by an
+                        unfinished Content Studio project.
+                      </p>
+                    )}
                     {visibleLibrary.length === 0 ? (
                       <p className="py-8 text-center text-sm font-semibold text-muted">
                         Nothing matches those filters.
@@ -438,13 +498,13 @@ export function BatchScheduler({
                               </span>
                               {/* Which platform this export was rendered for —
                                   a 9:16 TikTok cut and a 1:1 Instagram one are
-                                  otherwise indistinguishable at this size. */}
+                                  otherwise indistinguishable at this size. Raw
+                                  uploads render an empty strip rather than the
+                                  word "Upload": with an Uploads tab right
+                                  above, repeating it under every tile is noise,
+                                  but the strip stays so tile heights match. */}
                               <span className="flex h-6 items-center justify-center gap-1 px-1">
-                                {madeFor.length > 0 ? (
-                                  <PlatformIconRow ids={madeFor} size={12} />
-                                ) : (
-                                  <span className="text-[10px] font-semibold text-muted">Upload</span>
-                                )}
+                                {madeFor.length > 0 && <PlatformIconRow ids={madeFor} size={12} />}
                               </span>
                             </button>
                           );
