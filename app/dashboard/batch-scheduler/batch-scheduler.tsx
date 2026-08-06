@@ -76,6 +76,7 @@ export function BatchScheduler({
   const [selected, setSelected] = useState<Set<number>>(new Set());
   const [pickerOpen, setPickerOpen] = useState(false);
   const [library, setLibrary] = useState<ComposerMedia[] | null>(null);
+  const [libTab, setLibTab] = useState<"all" | "video" | "image">("all");
   const [uploading, setUploading] = useState(0);
   const [toasts, setToasts] = useState<string[]>([]);
   const [bulkCaption, setBulkCaption] = useState("");
@@ -275,7 +276,17 @@ export function BatchScheduler({
 
   const pending = rows.filter((r) => r.status !== "done").length;
   const spreadDays = pending ? Math.ceil(pending / perDay) : 0;
-  const visibleLibrary = library?.filter((m) => !chosenIds.has(m.id)) ?? null;
+  // Anything in the Library not already queued. Counts come off this rather
+  // than the raw library so a tab can't advertise items that are all already
+  // in the batch.
+  const available = library?.filter((m) => !chosenIds.has(m.id)) ?? null;
+  const libCounts = {
+    all: available?.length ?? 0,
+    video: available?.filter((m) => m.kind === "video").length ?? 0,
+    image: available?.filter((m) => m.kind === "image").length ?? 0,
+  };
+  const visibleLibrary =
+    available === null ? null : libTab === "all" ? available : available.filter((m) => m.kind === libTab);
 
   return (
     <div className="fade-up pb-10">
@@ -357,7 +368,7 @@ export function BatchScheduler({
                   <p className="py-6 text-center text-sm font-semibold text-muted">
                     Loading your Library…
                   </p>
-                ) : visibleLibrary.length === 0 ? (
+                ) : libCounts.all === 0 ? (
                   <div className="py-6 text-center">
                     <p className="text-sm font-semibold text-ink">
                       {library?.length ? "Everything here is already in the batch." : "Your Library is empty."}
@@ -373,28 +384,73 @@ export function BatchScheduler({
                   </div>
                 ) : (
                   <>
-                    <p className="text-xs font-semibold text-muted">
-                      Tap to add. Studio outputs and uploads both live here.
-                    </p>
-                    <div className="mt-3 grid max-h-80 grid-cols-3 gap-2.5 overflow-y-auto pr-1 sm:grid-cols-4 lg:grid-cols-5">
-                      {visibleLibrary.map((m) => (
-                        <button
-                          key={m.id}
-                          type="button"
-                          onClick={() => addMedia(m)}
-                          disabled={rows.length >= MAX_BATCH}
-                          title={m.name}
-                          className="group relative overflow-hidden rounded-lg border border-line bg-white transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
-                        >
-                          <span className="grid aspect-square place-items-center overflow-hidden bg-ink">
-                            <MediaThumb media={m} size={120} fill />
-                          </span>
-                          <span className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-primary-deep opacity-0 shadow transition-opacity group-hover:opacity-100">
-                            <Icon name="plus" size={13} strokeWidth={3} />
-                          </span>
-                        </button>
-                      ))}
+                    <div className="flex flex-wrap items-center justify-between gap-3">
+                      <p className="text-xs font-semibold text-muted">
+                        Tap to add. Studio outputs and uploads both live here.
+                      </p>
+                      <div
+                        className="flex items-center gap-1 rounded-lg border border-line bg-white p-1"
+                        role="tablist"
+                        aria-label="Media type"
+                      >
+                        {(
+                          [
+                            { key: "all", label: "All", icon: "stack" },
+                            { key: "video", label: "Videos", icon: "video" },
+                            { key: "image", label: "Photos", icon: "image" },
+                          ] as const
+                        ).map((t) => (
+                          <button
+                            key={t.key}
+                            type="button"
+                            role="tab"
+                            aria-selected={libTab === t.key}
+                            onClick={() => setLibTab(t.key)}
+                            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-bold transition-colors ${
+                              libTab === t.key
+                                ? "bg-primary-soft text-primary-deep"
+                                : "text-muted hover:text-ink"
+                            }`}
+                          >
+                            <Icon name={t.icon} size={13} /> {t.label}
+                            <span className="font-semibold opacity-70">{libCounts[t.key]}</span>
+                          </button>
+                        ))}
+                      </div>
                     </div>
+                    {visibleLibrary.length === 0 ? (
+                      <p className="py-8 text-center text-sm font-semibold text-muted">
+                        No {libTab === "video" ? "videos" : "photos"} left to add.
+                      </p>
+                    ) : (
+                      <div className="mt-3 grid max-h-80 grid-cols-3 gap-2.5 overflow-y-auto pr-1 sm:grid-cols-4 lg:grid-cols-5">
+                        {visibleLibrary.map((m) => (
+                          <button
+                            key={m.id}
+                            type="button"
+                            onClick={() => addMedia(m)}
+                            disabled={rows.length >= MAX_BATCH}
+                            title={m.name}
+                            className="group relative overflow-hidden rounded-lg border border-line bg-white transition-colors hover:border-primary disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+                          >
+                            <span className="grid aspect-square place-items-center overflow-hidden bg-ink">
+                              <MediaThumb media={m} size={120} fill />
+                            </span>
+                            {/* Square crop makes a 9:16 video and a photo look
+                                alike in the All tab — the badge is what tells
+                                them apart without switching tabs. */}
+                            {m.kind === "video" && (
+                              <span className="absolute left-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-md bg-ink/75 text-white">
+                                <Icon name="video" size={11} />
+                              </span>
+                            )}
+                            <span className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-primary-deep opacity-0 shadow transition-opacity group-hover:opacity-100">
+                              <Icon name="plus" size={13} strokeWidth={3} />
+                            </span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
                   </>
                 )}
               </div>
