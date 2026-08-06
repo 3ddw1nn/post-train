@@ -578,6 +578,19 @@ export function LibraryView({
             showTemplate={false}
           />
         )}
+        {/* Uploads has no studio row to fall back on — type is the only facet
+            that means anything for a raw file, so it's the one place this
+            surfaces as All/Videos/Photos instead of a studio tab row. */}
+        {viewMode === "uploads" && (
+          <MediaFilterBar
+            filter={filter}
+            onChange={setFilter}
+            counts={counts}
+            platforms={[]}
+            showPlatform={false}
+            showTemplate={false}
+          />
+        )}
       </div>
 
       {viewMode === "finished" ? (

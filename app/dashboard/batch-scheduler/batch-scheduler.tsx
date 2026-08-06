@@ -39,7 +39,36 @@ type Account = { id: number; platform: string; username: string; avatar_url: str
  * doesn't declare it. `in_draft` is computed by that route (a join against
  * unfinished studio_drafts).
  */
-type LibraryMedia = ComposerMedia & { studio_finished_at?: string | null; in_draft?: boolean };
+type LibraryMedia = ComposerMedia & {
+  studio_finished_at?: string | null;
+  studio_template?: string | null;
+  in_draft?: boolean;
+};
+
+/** Same ids/labels/icons as app/dashboard/library/page.tsx's TEMPLATES — kept
+ *  as its own small map rather than imported, since that one lives in a page
+ *  file (server component) and this is client-only display text. */
+const STUDIO_LABELS: Record<string, { label: string; icon: string }> = {
+  "grid-2x2": { label: "2x2 Grid Video", icon: "grid" },
+  "fade-in": { label: "Video Editor", icon: "video" },
+  "ai-ugc": { label: "AI UGC Video", icon: "sparkles" },
+  slideshow: { label: "Slideshow", icon: "image" },
+  thumbnail: { label: "Thumbnail Maker", icon: "image" },
+};
+
+function sourceLabel(media: LibraryMedia): { label: string; icon: string } {
+  const studio = media.studio_template ? STUDIO_LABELS[media.studio_template] : undefined;
+  return studio ?? { label: "Upload", icon: "upload" };
+}
+
+function formatScheduled(iso: string): string {
+  return new Date(iso).toLocaleString(undefined, {
+    month: "short",
+    day: "numeric",
+    hour: "numeric",
+    minute: "2-digit",
+  });
+}
 
 /** Where a file came from. Drafts is deliberately not a tab: a draft is an
  *  unfinished project, and its intermediate renders aren't work you'd want
@@ -47,12 +76,16 @@ type LibraryMedia = ComposerMedia & { studio_finished_at?: string | null; in_dra
 type Origin = "all" | "finished" | "uploads";
 
 type Row = {
-  media: ComposerMedia;
+  media: LibraryMedia;
   caption: string;
   /** Local "YYYY-MM-DDTHH:mm". Unused in queue mode — the server picks slots. */
   at: string;
   status: "pending" | "working" | "done" | "error";
   error?: string;
+  /** The actual ISO time the server scheduled this for — set once status is
+   *  "done". In queue mode this is the only place the date is knowable at
+   *  all, since the server picks the slot. */
+  scheduledAt?: string;
 };
 
 /** Batching is a sequential POST loop, so this is a real wall-clock cost, not
@@ -146,7 +179,7 @@ export function BatchScheduler({
     [selected, eligibleIds]
   );
 
-  function addMedia(media: ComposerMedia) {
+  function addMedia(media: LibraryMedia) {
     setRows((r) =>
       r.length >= MAX_BATCH
         ? r
@@ -274,12 +307,18 @@ export function BatchScheduler({
               : { scheduled_at: new Date(row.at).toISOString() }),
           }),
         });
+        const data = await res.json().catch(() => null);
         if (!res.ok) {
-          const data = await res.json().catch(() => null);
           throw new Error(data?.error?.message ?? "Failed to schedule");
         }
         ok++;
-        setRows((r) => r.map((x, j) => (j === i ? { ...x, status: "done", error: undefined } : x)));
+        setRows((r) =>
+          r.map((x, j) =>
+            j === i
+              ? { ...x, status: "done", error: undefined, scheduledAt: data?.scheduled_at ?? undefined }
+              : x
+          )
+        );
       } catch (e) {
         failed++;
         setRows((r) =>
@@ -530,43 +569,67 @@ export function BatchScheduler({
               </div>
             ) : (
               <div className="mt-5 flex flex-col gap-3">
-                {rows.map((row, i) => (
-                  <div
-                    key={row.media.id}
-                    className={`flex flex-wrap items-start gap-3 rounded-xl border p-3 transition-colors ${
-                      row.status === "done"
-                        ? "border-primary/30 bg-primary-soft/25"
-                        : row.status === "error"
-                          ? "border-red-200 bg-red-50/60"
-                          : "border-line bg-white"
-                    }`}
-                  >
-                    <span className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-ink">
-                      <MediaThumb media={row.media} size={64} fill />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2">
-                        <p className="truncate text-sm font-semibold">{row.media.name}</p>
-                        {row.status === "done" && (
-                          <span className="pill shrink-0 bg-primary-soft text-primary-deep">
-                            <Icon name="check" size={11} strokeWidth={3} /> Scheduled
-                          </span>
-                        )}
-                        {row.status === "working" && (
-                          <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent" />
-                        )}
-                        <button
-                          type="button"
-                          aria-label={`Remove ${row.media.name}`}
-                          disabled={running}
-                          className="ml-auto shrink-0 text-muted hover:text-danger disabled:opacity-40"
-                          onClick={() => setRows((r) => r.filter((_, j) => j !== i))}
-                        >
-                          <Icon name="trash" size={15} />
-                        </button>
-                      </div>
+                {rows.map((row, i) => {
+                  const source = sourceLabel(row.media);
+                  // Every card states a date: the confirmed one once posted,
+                  // the picked one under Spread, or that the queue will assign
+                  // one — never blank, since "no date shown" reads as
+                  // "no date set" even when queue mode has already decided it
+                  // will get one.
+                  const dateText =
+                    row.status === "done" && row.scheduledAt
+                      ? formatScheduled(row.scheduledAt)
+                      : mode === "spread"
+                        ? row.at
+                          ? formatScheduled(new Date(row.at).toISOString())
+                          : "Not scheduled yet"
+                        : "Next queue slot";
+                  return (
+                    <div
+                      key={row.media.id}
+                      className={`flex flex-wrap items-start gap-3 rounded-xl border p-3 transition-colors ${
+                        row.status === "done"
+                          ? "border-primary/30 bg-primary-soft/25"
+                          : row.status === "error"
+                            ? "border-red-200 bg-red-50/60"
+                            : "border-line bg-white"
+                      }`}
+                    >
+                      <span className="h-16 w-16 shrink-0 overflow-hidden rounded-lg bg-ink">
+                        <MediaThumb media={row.media} size={64} fill />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-center gap-2">
+                          <p className="truncate text-sm font-semibold">{row.media.name}</p>
+                          {row.status === "done" && (
+                            <span className="pill shrink-0 bg-primary-soft text-primary-deep">
+                              <Icon name="check" size={11} strokeWidth={3} /> Scheduled
+                            </span>
+                          )}
+                          {row.status === "working" && (
+                            <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                          )}
+                          <button
+                            type="button"
+                            aria-label={`Remove ${row.media.name}`}
+                            disabled={running}
+                            className="ml-auto shrink-0 text-muted hover:text-danger disabled:opacity-40"
+                            onClick={() => setRows((r) => r.filter((_, j) => j !== i))}
+                          >
+                            <Icon name="trash" size={15} />
+                          </button>
+                        </div>
 
-                      {row.status === "done" ? (
+                        <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold text-muted">
+                          <span className="flex items-center gap-1">
+                            <Icon name={source.icon} size={12} /> {source.label}
+                          </span>
+                          <span className="flex items-center gap-1">
+                            <Icon name="calendar" size={12} /> {dateText}
+                          </span>
+                        </div>
+
+                        {row.status === "done" ? (
                         <p className="mt-1.5 truncate text-xs text-muted">
                           {row.caption || <span className="italic">No caption</span>}
                         </p>
@@ -602,12 +665,13 @@ export function BatchScheduler({
                           )}
                         </>
                       )}
-                      {row.error && (
-                        <p className="mt-1.5 text-xs font-semibold text-danger">{row.error}</p>
-                      )}
+                        {row.error && (
+                          <p className="mt-1.5 text-xs font-semibold text-danger">{row.error}</p>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
