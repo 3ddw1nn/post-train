@@ -7,7 +7,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "check:filters": "tsc lib/media-filters.ts --outDir node_modules/.cache/media-filters --module commonjs --target es2020 --skipLibCheck && node scripts/check-media-filters.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1089.0",

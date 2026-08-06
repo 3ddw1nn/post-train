@@ -5,6 +5,16 @@
 import { useEffect, useMemo, useState } from "react";
 import { Icon } from "./icons";
 import { PlatformIconRow } from "./platform-icon";
+import { MediaFilterBar, PICK_ONE_TYPES } from "./media-filter-bar";
+import {
+  EMPTY_FILTER,
+  applyMediaFilter,
+  facetCounts,
+  platformIdsFor,
+  platformsPresent,
+  type MediaFilter,
+  type MediaTypeFilter,
+} from "@/lib/media-filters";
 import { platform as platformOf } from "@/lib/platforms";
 
 export type ComposerMedia = {
@@ -213,7 +223,11 @@ export function MediaLibraryModal({
   allowedAspectRatios?: string[];
 }) {
   const [items, setItems] = useState<ComposerMedia[] | null>(null);
-  const [activeTab, setActiveTab] = useState<"photo" | "video">(kind === "video" ? "video" : "photo");
+  // A pick fills one slot, so the type is always concrete here — never "all".
+  const [filter, setFilter] = useState<MediaFilter>({
+    ...EMPTY_FILTER,
+    type: kind === "video" ? "video" : "image",
+  });
   // Picking a video clip means picking a *finished Content Studio video* to
   // reuse as source footage, not any random upload — Slideshow/Thumbnail
   // Maker outputs and in-progress drafts are excluded server-side.
@@ -224,16 +238,20 @@ export function MediaLibraryModal({
       .then((r) => r.json())
       .then((d) => setItems(d.data ?? []));
   }, [studioVideo]);
-  const showPhotoTab = kind !== "video";
+  // In video mode the type is locked, so only that one tab is offered — which
+  // renders no toggle at all, matching the old showPhotoTab behavior.
+  const typeOptions: MediaTypeFilter[] = kind === "video" ? ["video"] : PICK_ONE_TYPES;
   const visible = useMemo(() => {
     if (items === null) return null;
-    const mediaType = kind === "video" ? "video" : activeTab === "photo" ? "image" : "video";
-    return items.filter((media) => {
-      if (media.kind !== mediaType) return false;
-      if (mediaType !== "video" || !allowedAspectRatios?.length) return true;
+    // Aspect filtering is this modal's own constraint (a destination only
+    // accepts certain ratios) and stays on top of the shared filter.
+    return applyMediaFilter(items, filter).filter((media) => {
+      if (media.kind !== "video" || !allowedAspectRatios?.length) return true;
       return !!aspectLabel(media) && allowedAspectRatios.includes(aspectLabel(media)!);
     });
-  }, [activeTab, allowedAspectRatios, items, kind]);
+  }, [allowedAspectRatios, items, filter]);
+  const counts = useMemo(() => facetCounts(items ?? [], filter), [items, filter]);
+  const platforms = useMemo(() => platformsPresent(items ?? []), [items]);
   return (
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 p-4"
@@ -251,12 +269,15 @@ export function MediaLibraryModal({
         >
           <Icon name="x" size={16} />
         </button>
-        <div className="flex items-center justify-between gap-4 pr-12">
+        <div className="flex flex-wrap items-center justify-between gap-3 pr-12">
           <p className="font-bold">Media library</p>
-          <div className="flex items-center gap-1 rounded-lg border border-line bg-page p-1" role="tablist" aria-label="Media type">
-            {showPhotoTab && <button type="button" role="tab" aria-selected={activeTab === "photo"} onClick={() => setActiveTab("photo")} className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${activeTab === "photo" ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}><Icon name="image" size={14} /> Photos</button>}
-            <button type="button" role="tab" aria-selected={activeTab === "video"} onClick={() => setActiveTab("video")} className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${activeTab === "video" ? "bg-white text-ink shadow-sm" : "text-muted hover:text-ink"}`}><Icon name="video" size={14} /> Videos</button>
-          </div>
+          <MediaFilterBar
+            filter={filter}
+            onChange={setFilter}
+            counts={counts}
+            platforms={platforms}
+            typeOptions={typeOptions}
+          />
         </div>
         {allowedAspectRatios?.length ? <p className="mt-2 text-xs font-medium text-muted">Showing videos supported by the selected platform: {allowedAspectRatios.join(", ")}.</p> : null}
         {visible === null ? (
@@ -282,10 +303,7 @@ export function MediaLibraryModal({
 function MediaLibraryItem({ media, onPick }: { media: ComposerMedia; onPick: (media: ComposerMedia) => void }) {
   // Finished Studio outputs retain every platform selected at Finish. Older
   // one-platform outputs use the original per-file field, so include it too.
-  const formattedPlatformIds = [...new Set([
-    ...(media.studio_platform_ids ?? []),
-    ...(media.studio_platform_id ? [media.studio_platform_id] : []),
-  ])];
+  const formattedPlatformIds = platformIdsFor(media);
   const formattedPlatformNames = formattedPlatformIds
     .map((id) => platformOf(id)?.name ?? id)
     .join(", ");

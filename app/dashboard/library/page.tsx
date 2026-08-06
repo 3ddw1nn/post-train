@@ -91,5 +91,34 @@ export default async function LibraryPage() {
     media_size_bytes: draftProjectBytes.get(draft.id) ?? 0,
   }));
 
-  return <LibraryView templates={TEMPLATES} itemsByTemplate={itemsByTemplate} drafts={draftsWithProjectBytes} storage={storage} />;
+  // ── Uploads ───────────────────────────────────────────────────────────────
+  // Every stored file that isn't a finished Library item. This exists because
+  // getWorkspaceStorageStatus bills *every* media row, while the Finished and
+  // Drafts views only ever showed Studio output — so the storage meter filled
+  // from files the user had no way to see or delete here. Finished + Drafts +
+  // Uploads now accounts for the whole bill.
+  //
+  // Derived from the `media` list already fetched above for draft size math,
+  // so this adds no queries.
+  const mediaIdsUsedByDrafts = new Set(drafts.flatMap((draft) => mediaIdsInState(draft.state)));
+  const uploads = media.data
+    .filter((item) => !item.studio_finished_at && item.upload_status === "uploaded")
+    .map((item) => ({
+      ...item,
+      // A Studio render sitting inside an open draft is indistinguishable from
+      // a raw upload by row alone — studio_* are cleared when a project returns
+      // to drafting — so "in use" can only come from joining against the drafts.
+      // Deleting one would break that draft; the ?safe=1 route already refuses.
+      in_use: mediaIdsUsedByDrafts.has(item.id),
+    }));
+
+  return (
+    <LibraryView
+      templates={TEMPLATES}
+      itemsByTemplate={itemsByTemplate}
+      drafts={draftsWithProjectBytes}
+      uploads={uploads}
+      storage={storage}
+    />
+  );
 }

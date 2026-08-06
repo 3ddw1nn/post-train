@@ -1,20 +1,44 @@
 "use client";
 
-// Tabbed view of "finished" Content Studio outputs — one tab per template.
-// An item only lands here once a studio's Finish button has been clicked
-// (see app/api/app/studio/finish/route.ts); this is deliberately NOT the
-// same thing as the old auto-populated "My videos" list that got removed.
-// A Finished/Drafts switch shares the same template tabs and reuses
-// studio_drafts (state a wizard saves as it's edited, before Finish).
+// The Library, in three modes.
+//
+// Finished = Content Studio output that's been through Finish (see
+// app/api/app/studio/finish/route.ts); deliberately NOT the old auto-populated
+// "My videos" list that got removed. Drafts = studio_drafts, the state a wizard
+// saves as it's edited, before Finish. Uploads = every other stored file.
+//
+// Uploads exists because getWorkspaceStorageStatus bills *every* media row
+// while the first two modes only ever showed Studio output — so the meter above
+// filled from files with no representation here, and no way to delete them.
+// The three modes together now account for what's actually billed.
+//
+// Origin is the tab dimension because it changes what an item *is* and what you
+// can do with it (post / resume / reuse). Type, platform and studio are only
+// narrowing, so they're filter controls — see components/media-filter-bar.tsx.
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Icon } from "./icons";
 import { MediaThumb } from "./media";
-import { PlatformIcon } from "./platform-icon";
+import { PlatformIcon, PlatformIconRow } from "./platform-icon";
+import { MediaFilterBar } from "./media-filter-bar";
+import {
+  EMPTY_FILTER,
+  applyMediaFilter,
+  facetCounts,
+  platformIdsFor,
+  platformsPresent,
+  type FacetCounts,
+  type MediaFilter,
+} from "@/lib/media-filters";
 import { formatBytes, relativeTime } from "@/lib/format";
 import type { MediaRow, WorkspaceStorageStatus } from "@/lib/media";
 import type { StudioDraftRow } from "@/lib/studio-drafts";
+
+/** A stored file that isn't a finished Library item. `in_use` is a join result
+ *  against studio_drafts, not a column — a Studio render inside an open draft
+ *  is indistinguishable from a raw upload by row alone. */
+export type UploadRow = MediaRow & { in_use: boolean };
 
 export type LibraryTemplate = {
   id: string;
@@ -234,44 +258,152 @@ function DraftCard({ draft, template, onDeleted }: { draft: StudioDraftRow; temp
   );
 }
 
-const ALL_TAB = "all";
-type ViewMode = "finished" | "drafts";
+type ViewMode = "finished" | "drafts" | "uploads";
 
 function formatStorage(bytes: number) {
   const formatted = formatBytes(bytes);
   return formatted === "1.0 GB" ? "1 GB" : formatted;
 }
 
+/** One raw file. Deliberately lighter than LibraryCard — an upload has no
+ *  campaign, no batch and nothing to resume, so a full card would be mostly
+ *  empty chrome. */
+function UploadTile({ media, onRemoved }: { media: UploadRow; onRemoved: (id: string, freedBytes: number) => void }) {
+  const [confirmOpen, setConfirmOpen] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const madeFor = platformIdsFor(media);
+
+  async function remove() {
+    setRemoving(true);
+    setError(null);
+    // ?safe=1 refuses (409) when a post or draft still references the file,
+    // which is what makes deleting an "In use" upload non-destructive.
+    const res = await fetch(`/api/app/media/${media.id}?safe=1`, { method: "DELETE" });
+    if (!res.ok) {
+      const body = await res.json().catch(() => null);
+      setError(body?.error?.message ?? "This file couldn't be deleted.");
+      setRemoving(false);
+      return;
+    }
+    onRemoved(media.id, media.size_bytes);
+    setConfirmOpen(false);
+    setRemoving(false);
+  }
+
+  return (
+    <div className="card group overflow-hidden">
+      <div className="relative grid aspect-square place-items-center overflow-hidden bg-ink">
+        <MediaThumb media={media} size={220} fill />
+        {media.in_use && (
+          <span className="absolute left-2 top-2 rounded-md bg-white/90 px-1.5 py-0.5 text-[10px] font-bold text-primary-deep shadow-sm">
+            In use
+          </span>
+        )}
+        <span className="absolute bottom-2 left-2 rounded-md bg-ink/85 px-1.5 py-1 text-[10px] font-bold uppercase text-white shadow-sm">
+          {media.kind}
+        </span>
+      </div>
+      <div className="flex items-start gap-2 px-3 py-2.5">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-sm font-bold" title={media.name}>
+            {media.name}
+          </p>
+          <p className="mt-0.5 flex items-center gap-1.5 text-xs font-semibold text-muted">
+            {formatBytes(media.size_bytes)}
+            {madeFor.length > 0 && <PlatformIconRow ids={madeFor} size={12} />}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={() => setConfirmOpen(true)}
+          aria-label={`Delete ${media.name}`}
+          className="shrink-0 rounded-md p-1 text-muted transition-colors hover:bg-page hover:text-danger"
+        >
+          <Icon name="trash" size={15} />
+        </button>
+      </div>
+
+      {confirmOpen && (
+        <div
+          className="fixed inset-0 z-[120] flex items-center justify-center bg-black/30 p-4"
+          onClick={() => setConfirmOpen(false)}
+        >
+          <div className="card w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+            <p className="text-lg font-extrabold">Delete this file?</p>
+            <p className="mt-2 text-sm text-muted">
+              &ldquo;{media.name}&rdquo; will be removed and its storage freed.
+              {media.in_use && " It's used by a draft, so this will likely be refused."}
+            </p>
+            {error && <p className="mt-2 text-sm font-semibold text-danger">{error}</p>}
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" className="btn-subtle" onClick={() => setConfirmOpen(false)}>
+                Cancel
+              </button>
+              <button type="button" className="btn-danger" disabled={removing} onClick={() => void remove()}>
+                {removing ? "Deleting…" : "Delete"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function LibraryView({
   templates,
   itemsByTemplate,
   drafts,
+  uploads,
   storage,
 }: {
   templates: LibraryTemplate[];
   itemsByTemplate: Record<string, MediaRow[]>;
   drafts: StudioDraftRow[];
+  uploads: UploadRow[];
   storage: WorkspaceStorageStatus;
 }) {
   const router = useRouter();
   const [viewMode, setViewMode] = useState<ViewMode>("finished");
-  const [active, setActive] = useState<string>(ALL_TAB);
+  const [filter, setFilter] = useState<MediaFilter>(EMPTY_FILTER);
   const [items, setItems] = useState(itemsByTemplate);
   // A draft that's been through Finish already shows up as a finished item
   // above — only the still-in-progress ones belong in this tab.
   const [draftItems, setDraftItems] = useState(() => drafts.filter((d) => d.status !== "finished"));
+  const [uploadItems, setUploadItems] = useState(uploads);
   const [usedBytes, setUsedBytes] = useState(storage.usedBytes);
   useEffect(() => setUsedBytes(storage.usedBytes), [storage.usedBytes]);
 
   const templateById = new Map(templates.map((t) => [t.id, t]));
-  const activeTemplate = templateById.get(active);
+  const activeTemplate = templateById.get(filter.template ?? "");
 
-  const finishedTotal = templates.reduce((sum, t) => sum + (items[t.id]?.length ?? 0), 0);
+  const allFinished = templates.flatMap((t) => items[t.id] ?? []);
+  const finishedTotal = allFinished.length;
   const draftsTotal = draftItems.length;
+  const uploadsTotal = uploadItems.length;
 
-  const activeFinishedItems = active === ALL_TAB ? templates.flatMap((t) => items[t.id] ?? []) : items[active] ?? [];
-  const finishedGroups = groupByBatch(activeFinishedItems);
-  const activeDrafts = active === ALL_TAB ? draftItems : draftItems.filter((d) => d.template === active);
+  const finishedGroups = groupByBatch(applyMediaFilter(allFinished, filter));
+  const activeDrafts = filter.template
+    ? draftItems.filter((d) => d.template === filter.template)
+    : draftItems;
+  // Uploads carry no studio_* fields, so only the type facet can apply here.
+  const visibleUploads = applyMediaFilter(uploadItems, { ...filter, platform: null, template: null });
+
+  // Drafts aren't media rows, so their template counts can't come from
+  // facetCounts — they're counted off studio_drafts directly.
+  const counts: FacetCounts =
+    viewMode === "finished"
+      ? facetCounts(allFinished, filter)
+      : viewMode === "uploads"
+        ? facetCounts(uploadItems, { ...filter, platform: null, template: null })
+        : {
+            type: { all: draftsTotal, video: 0, image: 0 },
+            platform: {},
+            template: Object.fromEntries(
+              templates.map((t) => [t.id, draftItems.filter((d) => d.template === t.id).length])
+            ),
+          };
 
   function removeGroup(ids: string[], freedBytes: number) {
     setItems((current) => {
@@ -289,13 +421,20 @@ export function LibraryView({
     router.refresh();
   }
 
-  function countFor(templateId: string) {
-    return viewMode === "finished" ? (items[templateId]?.length ?? 0) : draftItems.filter((d) => d.template === templateId).length;
+  function removeUpload(id: string, freedBytes: number) {
+    setUploadItems((current) => current.filter((m) => m.id !== id));
+    setUsedBytes((current) => Math.max(0, current - freedBytes));
+    router.refresh();
   }
 
-  const activeTotal = viewMode === "finished" ? finishedTotal : draftsTotal;
   const storagePercent = Math.min(100, (usedBytes / storage.limitBytes) * 100);
   const storageFull = usedBytes >= storage.limitBytes;
+
+  const MODES: { key: ViewMode; label: string; total: number }[] = [
+    { key: "finished", label: "Finished", total: finishedTotal },
+    { key: "drafts", label: "Drafts", total: draftsTotal },
+    { key: "uploads", label: "Uploads", total: uploadsTotal },
+  ];
 
   return (
     <div className="fade-up">
@@ -305,26 +444,33 @@ export function LibraryView({
           <p className="mt-1 text-sm text-muted">
             {viewMode === "finished"
               ? "Everything you've finished from Content Studio, ready to post."
-              : "Everything still in progress in Content Studio."}
+              : viewMode === "drafts"
+                ? "Everything still in progress in Content Studio."
+                : "Raw files you've uploaded. These take up storage even when unused."}
           </p>
         </div>
         <div className="relative inline-flex items-center rounded-full border border-line bg-page p-1" aria-label="Library view">
           <span
             aria-hidden
             className="absolute inset-y-1 left-1 w-24 rounded-full bg-white shadow-sm transition-transform duration-200 ease-out"
-            style={{ transform: viewMode === "drafts" ? "translateX(96px)" : "translateX(0)" }}
+            style={{ transform: `translateX(${MODES.findIndex((m) => m.key === viewMode) * 96}px)` }}
           />
-          {(["finished", "drafts"] as const).map((mode) => (
+          {MODES.map((mode) => (
             <button
-              key={mode}
+              key={mode.key}
               type="button"
-              aria-pressed={viewMode === mode}
-              onClick={() => setViewMode(mode)}
-              className={`relative z-10 w-24 rounded-full py-1.5 text-sm font-bold capitalize transition-colors ${
-                viewMode === mode ? "text-ink" : "text-muted hover:text-ink"
+              aria-pressed={viewMode === mode.key}
+              onClick={() => setViewMode(mode.key)}
+              className={`relative z-10 flex w-24 items-center justify-center gap-1.5 rounded-full py-1.5 text-sm font-bold transition-colors ${
+                viewMode === mode.key ? "text-ink" : "text-muted hover:text-ink"
               }`}
             >
-              {mode}
+              {mode.label}
+              {mode.total > 0 && (
+                <span className={viewMode === mode.key ? "text-ink/50" : "text-muted/60"}>
+                  {mode.total}
+                </span>
+              )}
             </button>
           ))}
         </div>
@@ -369,74 +515,80 @@ export function LibraryView({
         </div>
       </section>
 
-      <div id="library-files" className="mt-5 flex scroll-mt-24 flex-wrap gap-1.5 border-b border-line pb-3">
-        <button
-          type="button"
-          onClick={() => setActive(ALL_TAB)}
-          className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-bold transition-colors ${
-            active === ALL_TAB ? "border-primary bg-primary-soft text-primary-deep" : "border-line bg-white text-muted hover:text-ink"
-          }`}
-        >
-          <Icon name="stack" size={14} /> All
-          {activeTotal > 0 && <span className={active === ALL_TAB ? "text-primary-deep/70" : "text-muted/70"}>{activeTotal}</span>}
-        </button>
-        {templates.map((t) => {
-          const count = countFor(t.id);
-          const isActive = t.id === active;
-          return (
-            <button
-              key={t.id}
-              type="button"
-              onClick={() => setActive(t.id)}
-              className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm font-bold transition-colors ${
-                isActive ? "border-primary bg-primary-soft text-primary-deep" : "border-line bg-white text-muted hover:text-ink"
-              }`}
-            >
-              <Icon name={t.icon} size={14} /> {t.label}
-              {count > 0 && <span className={isActive ? "text-primary-deep/70" : "text-muted/70"}>{count}</span>}
-            </button>
-          );
-        })}
+      {/* The studio picker used to be a six-item tab row. Demoting it to a
+          dropdown is what freed the tab dimension for origin — stacking four
+          rows of tabs would have been the alternative. */}
+      <div id="library-files" className="mt-5 scroll-mt-24 border-b border-line pb-3">
+        <MediaFilterBar
+          filter={filter}
+          onChange={setFilter}
+          counts={counts}
+          platforms={viewMode === "finished" ? platformsPresent(allFinished) : []}
+          templates={templates.map((t) => ({ id: t.id, label: t.label }))}
+          showType={viewMode !== "drafts"}
+          showPlatform={viewMode === "finished"}
+          showTemplate={viewMode !== "uploads"}
+        />
       </div>
 
       {viewMode === "finished" ? (
         finishedGroups.length === 0 ? (
           <div className="mt-8 rounded-xl border border-dashed border-line bg-page/50 p-10 text-center">
-            <p className="text-sm font-bold text-ink">Nothing finished {active === ALL_TAB ? "" : "here "}yet</p>
+            <p className="text-sm font-bold text-ink">
+              {finishedTotal > 0 ? "Nothing matches those filters" : "Nothing finished yet"}
+            </p>
             <p className="mt-1 text-sm text-muted">
-              {active === ALL_TAB
-                ? "Click Finish on any studio's last step to save something here."
-                : `Click Finish on the ${activeTemplate?.label} studio's last step to save something here.`}
+              {finishedTotal > 0
+                ? "Try clearing the platform or studio filter."
+                : activeTemplate
+                  ? `Click Finish on the ${activeTemplate.label} studio's last step to save something here.`
+                  : "Click Finish on any studio's last step to save something here."}
             </p>
           </div>
         ) : (
           <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-            {finishedGroups.map((group) => {
-              const groupTemplate = active === ALL_TAB ? templateById.get(group[0].studio_template ?? "") : activeTemplate;
-              return (
-                <LibraryCard
-                  key={group[0].studio_batch_id || group[0].id}
-                  group={group}
-                  template={groupTemplate}
-                  onRemoved={removeGroup}
-                />
-              );
-            })}
+            {finishedGroups.map((group) => (
+              <LibraryCard
+                key={group[0].studio_batch_id || group[0].id}
+                group={group}
+                template={templateById.get(group[0].studio_template ?? "")}
+                onRemoved={removeGroup}
+              />
+            ))}
           </div>
         )
-      ) : activeDrafts.length === 0 ? (
+      ) : viewMode === "drafts" ? (
+        activeDrafts.length === 0 ? (
+          <div className="mt-8 rounded-xl border border-dashed border-line bg-page/50 p-10 text-center">
+            <p className="text-sm font-bold text-ink">No drafts {activeTemplate ? "here " : ""}yet</p>
+            <p className="mt-1 text-sm text-muted">
+              {activeTemplate
+                ? `Start the ${activeTemplate.label} studio and it'll be saved here automatically as you go.`
+                : "Start a template in Content Studio and it'll be saved here automatically as you go."}
+            </p>
+          </div>
+        ) : (
+          <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+            {activeDrafts.map((draft) => (
+              <DraftCard key={draft.id} draft={draft} template={templateById.get(draft.template)} onDeleted={removeDraft} />
+            ))}
+          </div>
+        )
+      ) : visibleUploads.length === 0 ? (
         <div className="mt-8 rounded-xl border border-dashed border-line bg-page/50 p-10 text-center">
-          <p className="text-sm font-bold text-ink">No drafts {active === ALL_TAB ? "" : "here "}yet</p>
-          <p className="mt-1 text-sm text-muted">
-            {active === ALL_TAB
-              ? "Start a template in Content Studio and it'll be saved here automatically as you go."
-              : `Start the ${activeTemplate?.label} studio and it'll be saved here automatically as you go.`}
+          <p className="text-sm font-bold text-ink">
+            {uploadsTotal > 0 ? "Nothing matches those filters" : "No uploaded files"}
+          </p>
+          <p className="mx-auto mt-1 max-w-md text-sm text-muted">
+            {uploadsTotal > 0
+              ? "Try switching the media type back to All."
+              : "Files you upload in Create Post, Batch Scheduler or Content Studio land here. They count toward the storage meter above even when nothing uses them."}
           </p>
         </div>
       ) : (
-        <div className="mt-5 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {activeDrafts.map((draft) => (
-            <DraftCard key={draft.id} draft={draft} template={templateById.get(draft.template)} onDeleted={removeDraft} />
+        <div className="mt-5 grid gap-4 grid-cols-2 sm:grid-cols-3 lg:grid-cols-4">
+          {visibleUploads.map((media) => (
+            <UploadTile key={media.id} media={media} onRemoved={removeUpload} />
           ))}
         </div>
       )}
