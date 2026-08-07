@@ -42,7 +42,7 @@ export default async function DashboardToolPage({ params }: { params: Promise<{ 
           <ToolRenderer slug={t.slug} />
         </div>
       ) : (
-        <div className="card mt-5 max-w-2xl p-5 md:p-6">
+        <div className="card mx-auto mt-5 max-w-2xl p-5 md:p-6">
           <ToolRenderer slug={t.slug} />
         </div>
       )}
