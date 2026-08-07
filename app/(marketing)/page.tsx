@@ -7,7 +7,7 @@ import { UserAvatar } from "@/components/avatar-menu";
 import { ShaderGradientBg, StaticGradientBg } from "@/components/shader-gradient-bg";
 
 export const metadata = {
-  title: "Post Train — schedule and cross-post to 10 platforms",
+  title: "Post Train — schedule and cross-post to 11 platforms",
 };
 
 const ALL_IDS = PLATFORMS.map((p) => p.id);
@@ -236,7 +236,7 @@ export default function LandingPage() {
         <ShaderGradientBg className="pointer-events-none absolute inset-0" />
         <div className="relative z-10 mx-auto grid max-w-4xl grid-cols-1 gap-8 px-6 text-center sm:grid-cols-3">
           {[
-            ["10", "platforms, one dashboard"],
+            ["11", "platforms, one dashboard"],
             ["<2 min", "from upload to everywhere"],
             ["7 days", "free on every plan"],
           ].map(([big, small]) => (
@@ -385,7 +385,7 @@ export default function LandingPage() {
         <div className="relative z-10">
           <h2 className="text-3xl font-extrabold">All aboard.</h2>
           <p className="mx-auto mt-2 max-w-md text-white/80">
-            Your next post could be on 10 platforms in the next two minutes.
+            Your next post could be on 11 platforms in the next two minutes.
           </p>
           <Link href="/create-account" className="btn-primary mt-6 !px-8 !py-3 text-base">
             Try it for free

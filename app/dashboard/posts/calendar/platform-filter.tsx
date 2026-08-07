@@ -5,6 +5,7 @@ import { useSearchParams } from "next/navigation";
 import { PLATFORMS } from "@/lib/platforms";
 import { Dropdown } from "@/components/interactive";
 import { Icon } from "@/components/icons";
+import { PlatformIcon } from "@/components/platform-icon";
 
 export function PlatformFilter({
   value,
@@ -34,12 +35,17 @@ export function PlatformFilter({
           className="flex h-10 min-w-[190px] items-center justify-between gap-2 rounded-[10px] border border-line bg-white px-3 text-left text-sm font-bold text-ink hover:bg-page"
           aria-label="Filter by platform"
         >
-          <span className="truncate">{selected?.name ?? "All Platforms"}</span>
+          <span className="flex min-w-0 items-center gap-2">
+            {selected && <PlatformIcon id={selected.id} size={16} />}
+            <span className="truncate">{selected?.name ?? "All Platforms"}</span>
+          </span>
           <Icon name="chevronDown" size={15} className="shrink-0 text-muted" />
         </button>
       }
     >
-      <div className="max-h-80 overflow-y-auto py-1">
+      {/* Tall enough for "All" + 11 platforms so the tail isn't hidden behind
+          a scrollbar nobody notices; still scrolls on short screens. */}
+      <div className="max-h-[min(27rem,60vh)] overflow-y-auto py-1">
         <PlatformOption href={hrefFor("")} active={!value} label="All Platforms" />
         {PLATFORMS.map((platform) => (
           <PlatformOption
@@ -47,6 +53,7 @@ export function PlatformFilter({
             href={hrefFor(platform.id)}
             active={platform.id === value}
             label={platform.name}
+            platformId={platform.id}
           />
         ))}
       </div>
@@ -58,10 +65,12 @@ function PlatformOption({
   href,
   active,
   label,
+  platformId,
 }: {
   href: string;
   active: boolean;
   label: string;
+  platformId?: string;
 }) {
   return (
     <Link
@@ -70,7 +79,8 @@ function PlatformOption({
         active ? "text-primary-deep" : "text-ink"
       }`}
     >
-      <Icon name="check" size={14} className={active ? "text-primary-deep" : "opacity-0"} />
+      <Icon name="check" size={14} className={`shrink-0 ${active ? "text-primary-deep" : "opacity-0"}`} />
+      {platformId && <PlatformIcon id={platformId} size={16} />}
       <span className="truncate">{label}</span>
     </Link>
   );

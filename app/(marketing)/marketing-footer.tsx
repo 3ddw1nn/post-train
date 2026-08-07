@@ -10,7 +10,7 @@ export function MarketingFooter() {
         <div>
           <Logo size={24} />
           <p className="mt-3 max-w-52 text-sm text-muted">
-            Post everywhere in one trip. Upload once, publish to 10 platforms.
+            Post everywhere in one trip. Upload once, publish to 11 platforms.
           </p>
         </div>
         <div>

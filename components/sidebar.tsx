@@ -7,7 +7,6 @@ import { Logo, LogoMark } from "./logo";
 import { Icon } from "./icons";
 import { ActionButton, Dropdown, FormDialog } from "./interactive";
 import { UserFooter } from "./avatar-menu";
-import { Pill } from "./ui";
 import { DevModeButton } from "./dev-mode-button";
 
 type WorkspaceLite = { id: string; name: string };
@@ -18,7 +17,6 @@ type NavItem = {
   icon: string;
   match?: string[];
   exclude?: string[];
-  badge?: "beta";
   external?: boolean;
 };
 
@@ -42,7 +40,7 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
         icon: "list",
         exclude: ["/dashboard/posts/calendar"],
       },
-      { label: "Analytics", href: "/dashboard/analytics", icon: "chart", badge: "beta" },
+      { label: "Analytics", href: "/dashboard/analytics", icon: "chart" },
     ],
   },
   {
@@ -450,11 +448,6 @@ export function Sidebar({
                   >
                     <Icon name={item.icon} size={18} />
                     <span className="flex-1">{item.label}</span>
-                    {item.badge === "beta" && (
-                      <span title="Beta" className="text-violet-500">
-                        <Icon name="flask" size={14} />
-                      </span>
-                    )}
                   </Link>
                 ))}
               </div>
@@ -534,8 +527,4 @@ export function Sidebar({
       )}
     </>
   );
-}
-
-export function BetaPill() {
-  return <Pill tone="beta">Beta</Pill>;
 }

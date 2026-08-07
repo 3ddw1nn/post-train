@@ -5,7 +5,7 @@ export function Pill({
   tone = "neutral",
   children,
 }: {
-  tone?: "success" | "neutral" | "warning" | "locked" | "info" | "beta";
+  tone?: "success" | "neutral" | "warning" | "locked" | "info";
   children: React.ReactNode;
 }) {
   const tones: Record<string, string> = {
@@ -14,7 +14,6 @@ export function Pill({
     warning: "bg-warning-bg text-warning-ink",
     locked: "bg-orange-100 text-orange-700",
     info: "bg-blue-50 text-blue-700",
-    beta: "bg-violet-50 text-violet-700",
   };
   return <span className={`pill ${tones[tone]}`}>{children}</span>;
 }

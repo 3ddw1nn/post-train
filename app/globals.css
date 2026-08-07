@@ -123,6 +123,50 @@ body {
   }
 }
 
+/* Chart entry animations. Each is keyed on the chart's React `key`, so
+   changing the timeframe/metric remounts and replays them — that's what makes
+   a filter change read as the data moving rather than snapping. The global
+   prefers-reduced-motion rule above already collapses these to ~0ms. */
+.chart-draw {
+  stroke-dasharray: 1200;
+  animation: chartDraw 0.7s ease-out both;
+}
+@keyframes chartDraw {
+  from {
+    stroke-dashoffset: 1200;
+  }
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+.chart-grow {
+  animation: chartGrow 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  transform-origin: left center;
+}
+@keyframes chartGrow {
+  from {
+    transform: scaleX(0);
+    opacity: 0;
+  }
+  to {
+    transform: scaleX(1);
+    opacity: 1;
+  }
+}
+
+.chart-fade {
+  animation: chartFade 0.6s ease-out both;
+}
+@keyframes chartFade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
 .skeleton-shimmer {
   position: relative;
   overflow: hidden;

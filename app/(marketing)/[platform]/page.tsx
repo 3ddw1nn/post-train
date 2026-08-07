@@ -89,7 +89,7 @@ export default async function PlatformPage({
                   ? "Pin titles, destination links and board picks"
                   : "Exact-time scheduling in your timezone",
             "Per-post results with share links and error detail",
-            ...(p.analytics ? ["Views, likes, comments & shares synced on demand (beta)"] : []),
+            ...(p.analytics ? ["Views, likes, comments & shares synced on demand"] : []),
           ].map((f) => (
             <li key={f} className="card flex items-center gap-3 p-4 text-sm font-medium">
               <span className="text-primary-deep">

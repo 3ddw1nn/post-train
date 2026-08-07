@@ -67,7 +67,7 @@ export default async function PostsPage({
         ]}
         platformOptions={[
           { value: "all", label: "All platforms" },
-          ...PLATFORMS.map((platform) => ({ value: platform.id, label: platform.name })),
+          ...PLATFORMS.map((platform) => ({ value: platform.id, label: platform.name, platformId: platform.id })),
         ]}
       />
 

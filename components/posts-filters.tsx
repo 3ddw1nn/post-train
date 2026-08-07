@@ -5,8 +5,11 @@ import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Icon } from "./icons";
 import { Dropdown } from "./interactive";
+import { PlatformIcon } from "./platform-icon";
 
-type Option = { value: string; label: string };
+/** `platformId` opts a row into showing its brand logo — the fastest way to
+ *  scan a list of 11 near-identically-shaped names. */
+type Option = { value: string; label: string; platformId?: string };
 
 export function PostsFilters({
   typeOptions,
@@ -108,12 +111,17 @@ function FilterDropdown({
             type="button"
             className="flex h-11 w-full items-center justify-between gap-2 rounded-[8px] border border-line bg-white px-3 text-left text-sm font-bold text-ink shadow-[0_1px_1px_rgba(6,63,59,0.03)] transition-colors hover:bg-page"
           >
-            <span className="truncate">{selected.label}</span>
+            <span className="flex min-w-0 items-center gap-2">
+              {selected.platformId && <PlatformIcon id={selected.platformId} size={16} />}
+              <span className="truncate">{selected.label}</span>
+            </span>
             <Icon name="chevronDown" size={15} className="shrink-0 text-muted" />
           </button>
         }
       >
-        <div className="max-h-72 overflow-y-auto py-1">
+        {/* Tall enough for "All" + 11 platforms so the tail isn't hidden
+            behind a scrollbar nobody notices; still scrolls on short screens. */}
+        <div className="max-h-[min(27rem,60vh)] overflow-y-auto py-1">
           {options.map((option) => {
             const active = option.value === optimisticValue;
             return (
@@ -128,8 +136,9 @@ function FilterDropdown({
                 <Icon
                   name="check"
                   size={14}
-                  className={active ? "text-primary-deep" : "opacity-0"}
+                  className={`shrink-0 ${active ? "text-primary-deep" : "opacity-0"}`}
                 />
+                {option.platformId && <PlatformIcon id={option.platformId} size={16} />}
                 <span className="truncate">{option.label}</span>
               </Link>
             );

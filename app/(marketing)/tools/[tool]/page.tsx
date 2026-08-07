@@ -31,7 +31,7 @@ export default async function ToolPage({ params }: { params: Promise<{ tool: str
           Like free tools? You&apos;ll love the paid one.
         </p>
         <p className="mt-1 text-sm text-primary-dark/80">
-          Schedule to 10 platforms from one dashboard — 7 days free.
+          Schedule to 11 platforms from one dashboard — 7 days free.
         </p>
         <Link href="/create-account" className="btn-primary mt-3">
           Try Post Train free

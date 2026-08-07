@@ -1,4 +1,4 @@
-// Analytics beta per spec §5.9: TikTok / YouTube / Instagram, on-demand sync.
+// Analytics per spec §5.9: TikTok / YouTube / Instagram, on-demand sync.
 // ponytail: metrics are simulated deterministically from the result id + post age
 // (real impl pulls platform metric APIs per spec 10 §3); everything downstream —
 // storage shape, timeframe filters, API responses — is the real contract.
@@ -108,6 +108,53 @@ export async function syncAnalytics(
     triggered.push({ platform: plat, runId: `run_${randomBytes(8).toString("hex")}` });
   }
   return triggered;
+}
+
+/** An analytics row plus the authoring context the dashboard slices by. The
+ *  metrics table can't answer "do videos beat images" or "is the Slideshow
+ *  studio worth it" on its own — post type and studio template live on the
+ *  post/media rows, so they're joined here rather than denormalized onto
+ *  every analytics row (which would need a schema change and a full resync
+ *  to backfill). */
+export type EnrichedAnalyticsRecord = AnalyticsRecord & {
+  post_type: string | null;
+  studio_template: string | null;
+};
+
+/**
+ * Every analytics row for a workspace, joined to its post's type and the
+ * Content Studio template that produced its media.
+ *
+ * ponytail: four full-table reads joined in memory, same as syncAnalytics
+ * above. Fine at one workspace's scale; the upgrade path if a workspace ever
+ * outgrows it is to denormalize post_type/studio_template onto
+ * analytics_records at sync time and drop this join entirely.
+ */
+export async function listAnalyticsEnriched(workspaceId: string): Promise<EnrichedAnalyticsRecord[]> {
+  const [{ data }, posts, results, postMedia, media] = await Promise.all([
+    listAnalytics(workspaceId, { timeframe: "all", limit: 5000 }),
+    listRecords<{ id: string; type: string; workspace_id: string }>("posts", { workspace_id: workspaceId }),
+    listRecords<{ id: string; post_id: string }>("post_results"),
+    listRecords<{ post_id: string; media_id: string; sort_order: number }>("post_media"),
+    listRecords<{ id: string; studio_template?: string | null }>("media"),
+  ]);
+  const postById = new Map(posts.map((p) => [p.id, p]));
+  const postIdByResult = new Map(results.map((r) => [r.id, r.post_id]));
+  const templateByMedia = new Map(media.map((m) => [m.id, m.studio_template ?? null]));
+  const templateByPost = new Map<string, string | null>();
+  for (const link of [...postMedia].sort((a, b) => a.sort_order - b.sort_order)) {
+    if (!templateByPost.get(link.post_id)) {
+      templateByPost.set(link.post_id, templateByMedia.get(link.media_id) ?? null);
+    }
+  }
+  return data.map((row) => {
+    const postId = postIdByResult.get(row.post_result_id);
+    return {
+      ...row,
+      post_type: postId ? postById.get(postId)?.type ?? null : null,
+      studio_template: postId ? templateByPost.get(postId) ?? null : null,
+    };
+  });
 }
 
 export async function listAnalytics(

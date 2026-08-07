@@ -29,7 +29,11 @@ import {
   platformsPresent,
   type MediaFilter,
 } from "@/lib/media-filters";
+import { byOrigin, sourceLabel, sourceDateLabel, type Origin } from "@/lib/media-source";
 import { CAPTION_MAX, platform as platformOf, type PostType } from "@/lib/platforms";
+import { CaptionBrief, CaptionEditor, captionMaxFor } from "@/components/caption-editor";
+import { checkPlatformAspect, formatAspectList } from "@/lib/platform-aspect";
+import { PlatformIcon } from "@/components/platform-icon";
 
 type Account = { id: number; platform: string; username: string; avatar_url: string | null };
 
@@ -42,24 +46,9 @@ type Account = { id: number; platform: string; username: string; avatar_url: str
 type LibraryMedia = ComposerMedia & {
   studio_finished_at?: string | null;
   studio_template?: string | null;
+  created_at?: string;
   in_draft?: boolean;
 };
-
-/** Same ids/labels/icons as app/dashboard/library/page.tsx's TEMPLATES — kept
- *  as its own small map rather than imported, since that one lives in a page
- *  file (server component) and this is client-only display text. */
-const STUDIO_LABELS: Record<string, { label: string; icon: string }> = {
-  "grid-2x2": { label: "2x2 Grid Video", icon: "grid" },
-  "fade-in": { label: "Video Editor", icon: "video" },
-  "ai-ugc": { label: "AI UGC Video", icon: "sparkles" },
-  slideshow: { label: "Slideshow", icon: "image" },
-  thumbnail: { label: "Thumbnail Maker", icon: "image" },
-};
-
-function sourceLabel(media: LibraryMedia): { label: string; icon: string } {
-  const studio = media.studio_template ? STUDIO_LABELS[media.studio_template] : undefined;
-  return studio ?? { label: "Upload", icon: "upload" };
-}
 
 function formatScheduled(iso: string): string {
   return new Date(iso).toLocaleString(undefined, {
@@ -70,14 +59,11 @@ function formatScheduled(iso: string): string {
   });
 }
 
-/** Where a file came from. Drafts is deliberately not a tab: a draft is an
- *  unfinished project, and its intermediate renders aren't work you'd want
- *  going live — they surface under Uploads with a count, not as a pick. */
-type Origin = "all" | "finished" | "uploads";
-
 type Row = {
   media: LibraryMedia;
-  caption: string;
+  /** platformId → caption. Each destination gets its own text, since the
+   *  character budgets and house style differ per platform. */
+  captions: Record<string, string>;
   /** Local "YYYY-MM-DDTHH:mm". Unused in queue mode — the server picks slots. */
   at: string;
   status: "pending" | "working" | "done" | "error";
@@ -129,6 +115,9 @@ export function BatchScheduler({
   const router = useRouter();
   const [rows, setRows] = useState<Row[]>([]);
   const [selected, setSelected] = useState<Set<number>>(new Set());
+  const [accountSearch, setAccountSearch] = useState("");
+  const [showAccountSearch, setShowAccountSearch] = useState(false);
+  const [rememberAccounts, setRememberAccounts] = useState(false);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [library, setLibrary] = useState<LibraryMedia[] | null>(null);
   const [libFilter, setLibFilter] = useState<MediaFilter>(EMPTY_FILTER);
@@ -136,6 +125,12 @@ export function BatchScheduler({
   const [uploading, setUploading] = useState(0);
   const [toasts, setToasts] = useState<string[]>([]);
   const [bulkCaption, setBulkCaption] = useState("");
+  const [brief, setBrief] = useState("");
+  const [briefLength, setBriefLength] = useState<"short" | "medium" | "long">("medium");
+  /** The tab the user explicitly picked. May be stale (they deselected that
+   *  destination) — `activePlatform` below is the value actually rendered. */
+  const [pickedPlatform, setPickedPlatform] = useState<string | null>(null);
+  const [pendingRemove, setPendingRemove] = useState<number | null>(null);
   const [mode, setMode] = useState<"queue" | "spread">(hasQueue ? "queue" : "spread");
   const [startDate, setStartDate] = useState("");
   const [startTime, setStartTime] = useState("11:00");
@@ -160,6 +155,21 @@ export function BatchScheduler({
 
   const chosenIds = useMemo(() => new Set(rows.map((r) => r.media.id)), [rows]);
 
+  /** A row's caption for one platform. Reading through here is what keeps the
+   *  "use the filename as the caption" preference working for destinations
+   *  added *after* the file was, without seeding anything up front. */
+  function captionFor(row: Row, platformId: string): string {
+    const own = row.captions[platformId];
+    if (own !== undefined) return own;
+    return prefFilenameCaption ? row.media.name.replace(/\.[^.]+$/, "") : "";
+  }
+
+  function setCaption(index: number, platformId: string, value: string) {
+    setRows((current) =>
+      current.map((row, i) => (i === index ? { ...row, captions: { ...row.captions, [platformId]: value } } : row))
+    );
+  }
+
   /** Accounts that support every media kind currently in the batch. Mixing a
    *  video and an image narrows the list rather than silently sending each
    *  item to a different subset — a fan-out you can't see is a fan-out you
@@ -174,6 +184,74 @@ export function BatchScheduler({
     [accounts, kinds]
   );
   const eligibleIds = useMemo(() => new Set(eligible.map((a) => a.id)), [eligible]);
+  const filteredEligible = eligible.filter(
+    (a) =>
+      !accountSearch ||
+      a.username.toLowerCase().includes(accountSearch.toLowerCase()) ||
+      a.platform.includes(accountSearch.toLowerCase())
+  );
+
+  const REMEMBER_KEY = "pt_remember_accounts_batch";
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(REMEMBER_KEY);
+      if (saved) {
+        const ids = JSON.parse(saved) as number[];
+        setSelected(new Set(ids.filter((id) => accounts.some((a) => a.id === id))));
+        setRememberAccounts(true);
+      }
+    } catch {}
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+  useEffect(() => {
+    if (!rememberAccounts) {
+      localStorage.removeItem(REMEMBER_KEY);
+    } else {
+      localStorage.setItem(REMEMBER_KEY, JSON.stringify([...selected]));
+    }
+  }, [rememberAccounts, selected]);
+
+  /** The distinct platforms this batch will publish to — one caption tab each. */
+  const destinationPlatforms = useMemo(() => {
+    const ids = new Set<string>();
+    for (const account of eligible) if (selected.has(account.id)) ids.add(account.platform);
+    return [...ids];
+  }, [eligible, selected]);
+
+  /** platformId → how many queued files don't fit that platform's placements.
+   *  Drives the caution badge on each tab. */
+  const aspectProblems = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const platformId of destinationPlatforms) {
+      counts[platformId] = rows.filter((row) => !checkPlatformAspect(row.media, platformId).ok).length;
+    }
+    return counts;
+  }, [destinationPlatforms, rows]);
+
+  /** The tightest character budget across the destinations — what a single
+   *  shared caption has to fit inside to survive on every platform. */
+  const tightestPlatform = useMemo(
+    () =>
+      destinationPlatforms.reduce<string | null>(
+        (tightest, id) => (tightest === null || captionMaxFor(id) < captionMaxFor(tightest) ? id : tightest),
+        null
+      ),
+    [destinationPlatforms]
+  );
+  const shortestCaptionMax = tightestPlatform ? captionMaxFor(tightestPlatform) : CAPTION_MAX;
+
+  /**
+   * The tab actually shown: the user's pick while it's still a destination,
+   * otherwise the first one.
+   *
+   * Derived rather than synced through an effect — an effect doesn't run
+   * during server rendering, so the first paint had no active tab and every
+   * row fell back to "pick a destination" before hydration corrected it.
+   */
+  const activePlatform =
+    pickedPlatform && destinationPlatforms.includes(pickedPlatform)
+      ? pickedPlatform
+      : destinationPlatforms[0] ?? null;
   const activeSelection = useMemo(
     () => [...selected].filter((id) => eligibleIds.has(id)),
     [selected, eligibleIds]
@@ -187,7 +265,7 @@ export function BatchScheduler({
             ...r,
             {
               media,
-              caption: prefFilenameCaption ? media.name.replace(/\.[^.]+$/, "") : "",
+              captions: {},
               at: "",
               status: "pending",
             },
@@ -297,11 +375,25 @@ export function BatchScheduler({
         const res = await fetch("/api/app/posts", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
+          // Same shape the Composer posts: a fallback `caption` plus a
+          // per-platform override map, so each destination publishes its own
+          // text rather than one caption stretched across all of them.
           body: JSON.stringify({
             type: row.media.kind,
-            caption: row.caption,
+            caption: captionFor(row, destinationPlatforms[0] ?? ""),
             media: [row.media.id],
             social_accounts: activeSelection,
+            platform_configurations: Object.fromEntries(
+              destinationPlatforms.flatMap((platformId) => {
+                const text = captionFor(row, platformId).trim();
+                return text ? [[platformId, { caption: text }]] : [];
+              })
+            ),
+            account_configurations: activeSelection.flatMap((accountId) => {
+              const account = eligible.find((a) => a.id === accountId);
+              const text = account ? captionFor(row, account.platform).trim() : "";
+              return text ? [{ account_id: accountId, caption: text }] : [];
+            }),
             ...(mode === "queue"
               ? { use_queue: true }
               : { scheduled_at: new Date(row.at).toISOString() }),
@@ -342,8 +434,6 @@ export function BatchScheduler({
   // rather than the raw library so a filter can't advertise items that are all
   // already in the batch.
   const available = library?.filter((m) => !chosenIds.has(m.id)) ?? null;
-  const byOrigin = (items: LibraryMedia[], which: Origin) =>
-    which === "all" ? items : items.filter((m) => (which === "finished" ? !!m.studio_finished_at : !m.studio_finished_at));
   const originCounts: Record<Origin, number> = {
     all: available?.length ?? 0,
     finished: byOrigin(available ?? [], "finished").length,
@@ -388,7 +478,89 @@ export function BatchScheduler({
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_340px]">
         {/* ── Content ─────────────────────────────────────────────────── */}
         <div className="min-w-0">
-          <div className="card p-6 sm:p-7">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Post to</p>
+            {accounts.length === 0 ? (
+              <p className="mt-3 text-sm text-muted">
+                No accounts connected —{" "}
+                <Link href="/dashboard/connections" className="font-semibold text-primary-deep hover:underline">
+                  connect one first
+                </Link>
+                .
+              </p>
+            ) : (
+              <>
+                <div className="mt-3 flex items-center justify-between">
+                  <button
+                    type="button"
+                    className="flex items-center gap-1 text-sm font-semibold text-muted hover:text-ink"
+                    onClick={() => setShowAccountSearch((v) => !v)}
+                  >
+                    Search &amp; Filter <Icon name="chevronDown" size={14} />
+                  </button>
+                  <label className="flex items-center gap-2 text-xs font-semibold text-muted">
+                    Remember
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={rememberAccounts}
+                      className="pt-toggle scale-90"
+                      data-on={rememberAccounts}
+                      onClick={() => setRememberAccounts((v) => !v)}
+                    >
+                      <span />
+                    </button>
+                  </label>
+                </div>
+                {showAccountSearch && (
+                  <input
+                    className="input mt-2"
+                    placeholder="Filter accounts by handle or platform…"
+                    value={accountSearch}
+                    onChange={(e) => setAccountSearch(e.target.value)}
+                  />
+                )}
+                <div className="mt-3 flex flex-wrap gap-2.5">
+                  {filteredEligible.map((a) => (
+                    <button
+                      key={a.id}
+                      type="button"
+                      title={`@${a.username} · ${platformOf(a.platform)?.name}`}
+                      onClick={() =>
+                        setSelected((s) => {
+                          const next = new Set(s);
+                          if (next.has(a.id)) next.delete(a.id);
+                          else next.add(a.id);
+                          return next;
+                        })
+                      }
+                    >
+                      <AccountAvatar
+                        username={a.username}
+                        platformId={a.platform}
+                        avatarUrl={a.avatar_url}
+                        size={40}
+                        selected={selected.has(a.id)}
+                      />
+                    </button>
+                  ))}
+                </div>
+                {kinds.length > 1 && (
+                  <p className="mt-2.5 text-xs text-muted">
+                    Showing accounts that support both images and video, since your batch mixes
+                    the two.
+                  </p>
+                )}
+                {rows.length > 0 && eligible.length === 0 && (
+                  <p className="mt-2.5 text-xs font-semibold text-danger">
+                    None of your accounts support every media type in this batch.
+                  </p>
+                )}
+              </>
+            )}
+          </div>
+
+          <div className="mt-6 border-t border-line pt-5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Content</p>
               <span className="text-xs font-semibold text-muted">
@@ -432,7 +604,10 @@ export function BatchScheduler({
             />
 
             {pickerOpen && (
-              <div className="mt-4 rounded-xl border border-line bg-page/60 p-4">
+              // White, not the old page-tinted fill: with the section's card
+              // wrapper gone this panel sits directly on the page background,
+              // where a page-coloured fill reads as no panel at all.
+              <div className="mt-4 rounded-xl border border-line bg-white p-4">
                 {visibleLibrary === null ? (
                   <p className="py-6 text-center text-sm font-semibold text-muted">
                     Loading your Library…
@@ -506,6 +681,8 @@ export function BatchScheduler({
                       <div className="mt-3 grid max-h-80 grid-cols-3 gap-2.5 overflow-y-auto pr-1 sm:grid-cols-4 lg:grid-cols-5">
                         {visibleLibrary.map((m) => {
                           const madeFor = platformIdsFor(m);
+                          const source = sourceLabel(m);
+                          const sourceDate = sourceDateLabel(m);
                           return (
                             <button
                               key={m.id}
@@ -535,15 +712,24 @@ export function BatchScheduler({
                                   <Icon name="plus" size={13} strokeWidth={3} />
                                 </span>
                               </span>
-                              {/* Which platform this export was rendered for —
-                                  a 9:16 TikTok cut and a 1:1 Instagram one are
-                                  otherwise indistinguishable at this size. Raw
-                                  uploads render an empty strip rather than the
-                                  word "Upload": with an Uploads tab right
-                                  above, repeating it under every tile is noise,
-                                  but the strip stays so tile heights match. */}
-                              <span className="flex h-6 items-center justify-center gap-1 px-1">
-                                {madeFor.length > 0 && <PlatformIconRow ids={madeFor} size={12} />}
+                              {/* The footer is deliberately reserved for the
+                                  provenance people need while batching: which
+                                  Studio created an asset (or Upload), and the
+                                  relevant source date. Platform dots stay as a
+                                  compact secondary cue for Studio exports. */}
+                              <span className="flex min-h-12 flex-col justify-center gap-0.5 bg-white px-2 py-1.5 text-left">
+                                <span className="flex min-w-0 items-center gap-1 text-[11px] font-bold leading-4 text-ink">
+                                  <Icon name={source.icon} size={11} />
+                                  <span className="truncate">{source.label}</span>
+                                  {madeFor.length > 0 && (
+                                    <span className="ml-auto shrink-0"><PlatformIconRow ids={madeFor} size={12} /></span>
+                                  )}
+                                </span>
+                                {sourceDate && (
+                                  <span className="truncate text-[10px] font-semibold leading-3.5 text-muted" title={sourceDate.title}>
+                                    {sourceDate.label} {sourceDate.date}
+                                  </span>
+                                )}
                               </span>
                             </button>
                           );
@@ -555,9 +741,73 @@ export function BatchScheduler({
               </div>
             )}
 
+            {/* Caption workspace — the brief every Auto-fill reads from, and
+                one tab per destination so each platform gets its own text. */}
+            {rows.length > 0 && (
+              <div className="mt-6 border-t border-line pt-5">
+                <CaptionBrief
+                  value={brief}
+                  onChange={setBrief}
+                  length={briefLength}
+                  onLengthChange={setBriefLength}
+                  hint="AI Auto-fill uses this prompt, plus the file's name, to write a caption tailored to each platform."
+                />
+
+                <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
+                  <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Captions</p>
+                  {destinationPlatforms.length > 0 && (
+                    <div
+                      className="flex flex-wrap items-center gap-1 rounded-lg border border-line bg-white p-1"
+                      role="tablist"
+                      aria-label="Caption platform"
+                    >
+                      {destinationPlatforms.map((platformId) => {
+                        const problems = aspectProblems[platformId] ?? 0;
+                        const active = activePlatform === platformId;
+                        return (
+                          <button
+                            key={platformId}
+                            type="button"
+                            role="tab"
+                            aria-selected={active}
+                            onClick={() => setPickedPlatform(platformId)}
+                            className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-bold transition-colors ${
+                              active ? "bg-primary-soft text-primary-deep" : "text-muted hover:text-ink"
+                            }`}
+                          >
+                            <PlatformIcon id={platformId} size={14} />
+                            {platformOf(platformId)?.name ?? platformId}
+                            {problems > 0 && (
+                              <span
+                                className="flex items-center text-amber-600"
+                                title={`${problems} file${problems === 1 ? " doesn't" : "s don't"} fit this platform's aspect ratios`}
+                              >
+                                <Icon name="warningTriangle" size={12} />
+                                <span className="sr-only">
+                                  {problems} file{problems === 1 ? " does not" : "s do not"} fit this platform&apos;s aspect ratios
+                                </span>
+                              </span>
+                            )}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
+                {activePlatform && (aspectProblems[activePlatform] ?? 0) > 0 && (
+                  <p className="mt-2 flex items-center gap-1.5 rounded-lg bg-warning-bg px-3 py-2 text-xs font-semibold text-warning-ink">
+                    <Icon name="warningTriangle" size={13} />
+                    {aspectProblems[activePlatform]} file{aspectProblems[activePlatform] === 1 ? "" : "s"} below don&apos;t
+                    match {platformOf(activePlatform)?.name}&apos;s aspect ratios. They&apos;ll still post — the platform
+                    will crop or letterbox them.
+                  </p>
+                )}
+              </div>
+            )}
+
             {/* Selected items */}
             {rows.length === 0 ? (
-              <div className="mt-5 rounded-xl border-2 border-dashed border-line px-6 py-10 text-center">
+              <div className="mt-5 rounded-2xl border-2 border-dashed border-line bg-white px-6 py-10 text-center">
                 <span className="mx-auto flex h-11 w-11 items-center justify-center rounded-full bg-page text-muted">
                   <Icon name="stack" size={20} />
                 </span>
@@ -614,7 +864,7 @@ export function BatchScheduler({
                             aria-label={`Remove ${row.media.name}`}
                             disabled={running}
                             className="ml-auto shrink-0 text-muted hover:text-danger disabled:opacity-40"
-                            onClick={() => setRows((r) => r.filter((_, j) => j !== i))}
+                            onClick={() => setPendingRemove(i)}
                           >
                             <Icon name="trash" size={15} />
                           </button>
@@ -631,26 +881,45 @@ export function BatchScheduler({
 
                         {row.status === "done" ? (
                         <p className="mt-1.5 truncate text-xs text-muted">
-                          {row.caption || <span className="italic">No caption</span>}
+                          {(activePlatform && captionFor(row, activePlatform)) || <span className="italic">No caption</span>}
                         </p>
                       ) : (
                         <>
-                          <div className="relative mt-2">
-                            <textarea
-                              className="input h-16 resize-y"
-                              placeholder="Caption for this post…"
-                              value={row.caption}
-                              maxLength={CAPTION_MAX}
-                              onChange={(e) =>
-                                setRows((r) =>
-                                  r.map((x, j) => (j === i ? { ...x, caption: e.target.value } : x))
-                                )
-                              }
-                            />
-                            <span className="absolute bottom-1.5 right-2.5 text-[10px] text-muted">
-                              {row.caption.length}/{CAPTION_MAX}
-                            </span>
-                          </div>
+                          {activePlatform ? (
+                            <div className="mt-2">
+                              <CaptionEditor
+                                platformId={activePlatform}
+                                value={captionFor(row, activePlatform)}
+                                onChange={(next) => setCaption(i, activePlatform, next)}
+                                brief={brief}
+                                length={briefLength}
+                                format={row.media.kind === "video" ? "video" : "post"}
+                                campaignName={row.media.name}
+                                showLabel={false}
+                                rows="h-16"
+                                notice={(() => {
+                                  const fit = checkPlatformAspect(row.media, activePlatform);
+                                  if (fit.ok) return null;
+                                  return (
+                                    <p
+                                      role="alert"
+                                      className="flex items-start gap-1.5 border-t border-red-200 bg-red-50 px-3 py-2 text-xs font-semibold text-danger"
+                                    >
+                                      <Icon name="warningTriangle" size={13} className="mt-px shrink-0" />
+                                      <span>
+                                        This file is {fit.aspect} — {platformOf(activePlatform)?.name} has no placement
+                                        for that. It accepts {formatAspectList(fit.supported)}.
+                                      </span>
+                                    </p>
+                                  );
+                                })()}
+                              />
+                            </div>
+                          ) : (
+                            <p className="mt-2 rounded-lg border border-dashed border-line px-3 py-2.5 text-xs text-muted">
+                              Pick a destination under <span className="font-semibold">Post to</span> to write captions.
+                            </p>
+                          )}
                           {mode === "spread" && (
                             <input
                               type="datetime-local"
@@ -680,78 +949,54 @@ export function BatchScheduler({
         {/* ── Rail ────────────────────────────────────────────────────── */}
         <div className="flex flex-col gap-4">
           <div className="card p-5">
-            <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Post to</p>
-            {accounts.length === 0 ? (
-              <p className="mt-3 text-sm text-muted">
-                No accounts connected —{" "}
-                <Link href="/dashboard/connections" className="font-semibold text-primary-deep hover:underline">
-                  connect one first
-                </Link>
-                .
-              </p>
-            ) : (
-              <>
-                <div className="mt-3 flex flex-wrap gap-2.5">
-                  {eligible.map((a) => (
-                    <button
-                      key={a.id}
-                      type="button"
-                      title={`@${a.username} · ${platformOf(a.platform)?.name}`}
-                      onClick={() =>
-                        setSelected((s) => {
-                          const next = new Set(s);
-                          if (next.has(a.id)) next.delete(a.id);
-                          else next.add(a.id);
-                          return next;
-                        })
-                      }
-                    >
-                      <AccountAvatar
-                        username={a.username}
-                        platformId={a.platform}
-                        avatarUrl={a.avatar_url}
-                        size={40}
-                        selected={selected.has(a.id)}
-                      />
-                    </button>
-                  ))}
-                </div>
-                {kinds.length > 1 && (
-                  <p className="mt-2.5 text-xs text-muted">
-                    Showing accounts that support both images and video, since your batch mixes
-                    the two.
-                  </p>
-                )}
-                {rows.length > 0 && eligible.length === 0 && (
-                  <p className="mt-2.5 text-xs font-semibold text-danger">
-                    None of your accounts support every media type in this batch.
-                  </p>
-                )}
-              </>
-            )}
-          </div>
-
-          <div className="card p-5">
-            <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Caption</p>
+            <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Same caption everywhere</p>
+            <p className="mt-1 text-xs text-muted">
+              A shortcut for when one line works on every platform. Overwrites what&apos;s in the tabs.
+            </p>
             <div className="relative mt-3">
               <textarea
                 className="input h-20 resize-y"
                 value={bulkCaption}
-                maxLength={CAPTION_MAX}
+                maxLength={shortestCaptionMax}
                 onChange={(e) => setBulkCaption(e.target.value)}
                 placeholder="One caption for every post…"
               />
-              <span className="absolute bottom-1.5 right-2.5 text-[10px] text-muted">
-                {bulkCaption.length}/{CAPTION_MAX}
+              <span
+                className={`absolute bottom-1.5 right-2.5 text-[10px] ${
+                  bulkCaption.length >= shortestCaptionMax ? "font-bold text-danger" : "text-muted"
+                }`}
+              >
+                {bulkCaption.length}/{shortestCaptionMax}
               </span>
             </div>
+            {destinationPlatforms.length > 1 && (
+              <p className="mt-1 text-[11px] text-muted">
+                Capped at {shortestCaptionMax} — the tightest limit among your destinations
+                ({platformOf(tightestPlatform ?? "")?.name}).
+              </p>
+            )}
             <button
               type="button"
               className="btn-subtle mt-2 w-full"
-              disabled={!bulkCaption.trim() || pending === 0}
+              disabled={!bulkCaption.trim() || pending === 0 || destinationPlatforms.length === 0}
               onClick={() =>
                 setRows((r) =>
-                  r.map((x) => (x.status === "done" ? x : { ...x, caption: bulkCaption }))
+                  r.map((x) =>
+                    x.status === "done"
+                      ? x
+                      : {
+                          ...x,
+                          captions: {
+                            ...x.captions,
+                            ...Object.fromEntries(
+                              destinationPlatforms.map((platformId) => [
+                                platformId,
+                                bulkCaption.slice(0, captionMaxFor(platformId)),
+                              ])
+                            ),
+                          },
+                        }
+                  )
                 )
               }
             >
@@ -922,6 +1167,36 @@ export function BatchScheduler({
           </div>
         </div>
       </div>
+
+      {pendingRemove !== null && rows[pendingRemove] && (
+        <div
+          className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 p-4"
+          onClick={() => setPendingRemove(null)}
+        >
+          <div className="card w-full max-w-sm p-5" onClick={(e) => e.stopPropagation()}>
+            <p className="text-lg font-extrabold">Remove this item?</p>
+            <p className="mt-2 text-sm text-muted">
+              <span className="font-semibold text-ink">{rows[pendingRemove].media.name}</span> comes out of this batch,
+              along with any captions you wrote for it. The file stays in your Library.
+            </p>
+            <div className="mt-5 flex justify-end gap-2">
+              <button type="button" className="btn-subtle" onClick={() => setPendingRemove(null)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                className="btn-danger"
+                onClick={() => {
+                  setRows((r) => r.filter((_, j) => j !== pendingRemove));
+                  setPendingRemove(null);
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -221,7 +221,10 @@ export const CAROUSEL_MAX: Partial<Record<PlatformId, number>> = {
   tiktok: 35,
 };
 
-export const ANALYTICS_PLATFORMS: PlatformId[] = ["tiktok", "youtube", "instagram"];
+/** Every platform the Analytics dashboard reports on — all of them. Kept as
+ *  its own list (rather than PLATFORMS.map) so a platform can be held back
+ *  from analytics without being removed from publishing. */
+export const ANALYTICS_PLATFORMS: PlatformId[] = PLATFORMS.map((p) => p.id);
 
 export const CAPTION_MAX = 2200;
 

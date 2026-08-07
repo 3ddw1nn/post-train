@@ -10,11 +10,10 @@ import { Icon } from "./icons";
 import { AccountAvatar, PlatformIcon } from "./platform-icon";
 import { InfoTip } from "./ui";
 import { ActionButton } from "./interactive";
-import { platform as platformOf, FOUR_IMAGE_PLATFORMS, CAPTION_MAX, CAPTION_MAX_BY_PLATFORM, type PostType } from "@/lib/platforms";
+import { platform as platformOf, FOUR_IMAGE_PLATFORMS, type PostType } from "@/lib/platforms";
 import { MediaLibraryModal, MediaThumb, uploadOneFile, type ComposerMedia } from "./media";
-import { checkAiTone, type AiToneResult } from "@/lib/ai-tone";
 import { localDateInputValue, nextMinuteInputValue, isPastSchedule, isPastToday, scheduleMinDate, scheduleMinTime } from "@/lib/format";
-import { CaptionCopyButton } from "./caption-copy-button";
+import { CaptionBrief, CaptionEditor } from "./caption-editor";
 import { CreatePostVideoVariant, VideoLibraryDestinationDialog } from "./create-post-video-variant";
 import { VIDEO_PRESETS } from "@/lib/video-render-settings";
 
@@ -56,11 +55,22 @@ const ACCEPT: Record<PostType, string> = {
   story: "image/*,video/*",
 };
 
-const CAPTION_LENGTHS = [
-  ["short", "Short"],
-  ["medium", "Medium"],
-  ["long", "Long"],
-] as const;
+const ACCEPT_LABEL: Record<PostType, string> = {
+  text: "",
+  image: "images or PDFs",
+  video: "videos",
+  story: "images or videos",
+};
+
+/** Drag-and-drop and paste bypass the file input's `accept` attribute, so this
+ *  re-checks the same allowlist manually. */
+function fileAllowed(file: File, accept: string): boolean {
+  if (!accept) return true;
+  return accept.split(",").some((pattern) => {
+    pattern = pattern.trim();
+    return pattern.endsWith("/*") ? file.type.startsWith(pattern.slice(0, -1)) : file.type === pattern;
+  });
+}
 
 export function Composer({
   type,
@@ -133,10 +143,6 @@ export function Composer({
       ?? Object.fromEntries(Object.entries(initialPlatformCaptions ?? {}).map(([platformId, platformCaption]) => [platformId, { caption: platformCaption }]))
   );
   const [captionLength, setCaptionLength] = useState<"short" | "medium" | "long">(initialCaptionLength ?? "medium");
-  const [captionBusy, setCaptionBusy] = useState<Record<string, boolean>>({});
-  const [captionError, setCaptionError] = useState<Record<string, string>>({});
-  const [toneResults, setToneResults] = useState<Record<string, AiToneResult>>({});
-  const [improveBusy, setImproveBusy] = useState<Record<string, boolean>>({});
   const initialSchedule = post?.scheduled_at ? new Date(post.scheduled_at) : null;
   const [scheduleOn, setScheduleOn] = useState(!!initialSchedule || !!initialDate);
   const [date, setDate] = useState(
@@ -222,61 +228,14 @@ export function Composer({
       ...current,
       [platformId]: { ...(current[platformId] ?? {}), caption: value },
     }));
-    setToneResults((current) => {
-      if (!(platformId in current)) return current;
-      const next = { ...current };
-      delete next[platformId];
-      return next;
-    });
-  }
-
-  async function generateCaption(platformId: string) {
-    if (captionBusy[platformId] || !caption.trim()) return;
-    setCaptionBusy((current) => ({ ...current, [platformId]: true }));
-    setCaptionError((current) => ({ ...current, [platformId]: "" }));
-    try {
-      const response = await fetch("/api/app/studio/platform-caption", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: platformId, context: caption, campaignName: "", length: captionLength, format: type === "video" ? "video" : "post" }),
-      });
-      const data = await response.json() as { text?: string; error?: { message?: string } };
-      if (!response.ok || !data.text) throw new Error(data.error?.message ?? "Couldn't generate a caption.");
-      setPlatformCaption(platformId, data.text);
-    } catch (cause) {
-      setCaptionError((current) => ({ ...current, [platformId]: cause instanceof Error ? cause.message : "Couldn't generate a caption." }));
-    } finally {
-      setCaptionBusy((current) => ({ ...current, [platformId]: false }));
-    }
-  }
-
-  function checkTone(platformId: string) {
-    const text = (configs[platformId]?.caption as string) ?? "";
-    if (text.trim()) setToneResults((current) => ({ ...current, [platformId]: checkAiTone(text) }));
-  }
-
-  async function improveCaption(platformId: string) {
-    const text = (configs[platformId]?.caption as string) ?? "";
-    if (!text.trim() || improveBusy[platformId]) return;
-    setImproveBusy((current) => ({ ...current, [platformId]: true }));
-    try {
-      const response = await fetch("/api/app/studio/improve-caption", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ platform: platformId, text, flagged: toneResults[platformId]?.matches ?? [] }),
-      });
-      const data = await response.json() as { text?: string };
-      if (response.ok && data.text) {
-        setPlatformCaption(platformId, data.text);
-        setToneResults((current) => ({ ...current, [platformId]: checkAiTone(data.text as string) }));
-      }
-    } finally {
-      setImproveBusy((current) => ({ ...current, [platformId]: false }));
-    }
   }
 
   async function uploadFiles(files: FileList | File[]) {
-    const list = Array.from(files);
+    const accept = ACCEPT[type];
+    const list = Array.from(files).filter((file) => fileAllowed(file, accept));
+    if (list.length < files.length) {
+      setError(`Only ${ACCEPT_LABEL[type]} can be added to a ${TYPE_LABEL[type]}.`);
+    }
     for (const file of list) {
       setUploading((u) => u + 1);
       try {
@@ -352,6 +311,11 @@ export function Composer({
   }
 
   const editable = mode === "create" || ["draft", "scheduled"].includes(post?.status ?? "");
+  const missingCaptions = type === "text"
+    ? [...selectedPlatforms].filter((p) => !((configs[p]?.caption as string) ?? "").trim())
+    : [];
+  const hasMissingCaptions = missingCaptions.length > 0;
+  const updateWillPublish = scheduleOn && !!scheduledIso();
   const showFourImageWarning =
     media.filter((m) => m.kind !== "video").length > 4 &&
     FOUR_IMAGE_PLATFORMS.some((p) => selectedPlatforms.has(p));
@@ -524,14 +488,18 @@ export function Composer({
                     ? "Video"
                     : type === "story"
                       ? "Image or video"
-                      : "Image(s) or PDF"}{" "}
-                  <InfoTip
-                    text={
-                      type === "image"
-                        ? "PDFs are attached as a document in this build; production rasterizes each page to an image."
-                        : "Max 250MB per file."
-                    }
-                  />
+                      : "Image(s) or PDF"}
+                  {/* The PDF caveat is genuinely non-obvious and earns a tip;
+                      the size limit is plain text, since an icon you have to
+                      hover to learn a number reads as broken. */}
+                  {type === "image" ? (
+                    <>
+                      {" "}
+                      <InfoTip text="PDFs are attached as a document in this build; production rasterizes each page to an image." />
+                    </>
+                  ) : (
+                    " · Max 250MB per file"
+                  )}
                 </p>
                 <div className="mt-2 flex flex-wrap justify-center gap-2">
                   {type === "video" ? (
@@ -585,102 +553,39 @@ export function Composer({
 
         {/* AI brief + platform captions */}
         <div className="mt-6 border-t border-line pt-5">
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <label htmlFor="composer-caption-brief" className="text-xs font-bold uppercase tracking-[0.1em] text-muted">
-              AI caption brief
-            </label>
-            <div className="flex items-center gap-1 rounded-lg bg-page p-0.5" aria-label="AI caption length">
-              {CAPTION_LENGTHS.map(([id, label]) => (
-                <button
-                  key={id}
-                  type="button"
-                  aria-pressed={captionLength === id}
-                  onClick={() => setCaptionLength(id)}
-                  disabled={!editable}
-                  className={`rounded-lg px-3 py-1.5 text-xs font-bold transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${captionLength === id ? "bg-white text-primary-deep shadow-sm" : "text-muted hover:text-ink"}`}
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <div className="relative mt-2">
-            <textarea
-              id="composer-caption-brief"
-              className="input h-24 resize-y pr-16"
-              placeholder="Describe the post, audience, tone, and key message…"
-              value={caption}
-              maxLength={CAPTION_MAX}
-              onChange={(event) => setCaption(event.target.value)}
-              onPaste={(event) => {
-                if (event.clipboardData.files.length && type !== "text") {
-                  event.preventDefault();
-                  uploadFiles(event.clipboardData.files);
-                }
-              }}
-              disabled={!editable}
-            />
-            <span className="pointer-events-none absolute bottom-2 right-3 text-xs font-semibold text-muted">{caption.length}/{CAPTION_MAX}</span>
-          </div>
-          <p className="mt-2 text-sm text-muted">This prompt is used by AI Auto-fill to write a tailored caption for each selected platform.</p>
+          <CaptionBrief
+            value={caption}
+            onChange={setCaption}
+            length={captionLength}
+            onLengthChange={setCaptionLength}
+            disabled={!editable}
+            onPaste={(event) => {
+              if (event.clipboardData.files.length && type !== "text") {
+                event.preventDefault();
+                uploadFiles(event.clipboardData.files);
+              }
+            }}
+          />
 
           <div className="mt-6">
-            <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Platform captions (optional)</p>
+            <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Platform captions{type !== "text" && " (optional)"}</p>
             {selectedPlatforms.size === 0 ? (
               <p className="mt-2 rounded-xl border border-dashed border-line px-4 py-5 text-sm text-muted">Select at least one account under Post to, then AI can tailor the caption for each platform.</p>
             ) : (
               <div className="mt-3 flex flex-col gap-4">
-                {[...selectedPlatforms].map((platformId) => {
-                  const value = (configs[platformId]?.caption as string) ?? "";
-                  const max = CAPTION_MAX_BY_PLATFORM[platformId as keyof typeof CAPTION_MAX_BY_PLATFORM] ?? CAPTION_MAX;
-                  const tone = toneResults[platformId];
-                  return (
-                    <div key={platformId}>
-                      <div className="flex items-center justify-between gap-3">
-                        <label htmlFor={`platform-caption-${platformId}`} className="flex items-center gap-1.5 text-sm font-bold text-ink">
-                          <PlatformIcon id={platformId} size={15} /> {platformOf(platformId)?.name ?? platformId}
-                        </label>
-                        <span className={`text-xs font-semibold ${value.length >= max ? "text-danger" : "text-muted"}`}>{value.length}/{max}</span>
-                      </div>
-                      <div className="mt-1.5 overflow-hidden rounded-xl border border-line bg-white shadow-sm focus-within:border-primary focus-within:ring-2 focus-within:ring-primary/20">
-                        <textarea
-                          id={`platform-caption-${platformId}`}
-                          className="h-24 w-full resize-y border-0 bg-white px-3 py-2.5 text-sm leading-5 text-ink outline-none placeholder:text-muted"
-                          maxLength={max}
-                          value={value}
-                          onChange={(event) => setPlatformCaption(platformId, event.target.value)}
-                          placeholder={`Caption for ${platformOf(platformId)?.name ?? platformId}…`}
-                          disabled={!editable}
-                        />
-                        <div className="flex flex-wrap items-center gap-2 border-t border-line px-3 py-2">
-                          <CaptionCopyButton value={value} />
-                          <button type="button" onClick={() => void generateCaption(platformId)} disabled={!editable || captionBusy[platformId] || !caption.trim()} title={!caption.trim() ? "Add an AI caption brief above first" : undefined} className="btn-subtle !py-1.5 text-xs disabled:opacity-50">
-                            {captionBusy[platformId] ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-muted/40 border-t-transparent" /> : <Icon name="sparkles" size={13} />}
-                            {captionBusy[platformId] ? "Writing…" : "AI Auto-fill"}
-                          </button>
-                          <button type="button" onClick={() => checkTone(platformId)} disabled={!editable || !value.trim()} className="btn-subtle !py-1.5 text-xs disabled:opacity-50">
-                            <Icon name="search" size={13} /> Check Tone
-                          </button>
-                          {tone && tone.level !== "natural" && (
-                            <button type="button" onClick={() => void improveCaption(platformId)} disabled={!editable || improveBusy[platformId]} className="btn-subtle !py-1.5 text-xs disabled:opacity-50">
-                              {improveBusy[platformId] ? <span className="h-3 w-3 animate-spin rounded-full border-2 border-muted/40 border-t-transparent" /> : <Icon name="sparkles" size={13} />}
-                              {improveBusy[platformId] ? "Improving…" : "Make it sound less AI"}
-                            </button>
-                          )}
-                        </div>
-                        {tone && (
-                          <div className="border-t border-line bg-page/50 px-3 py-2">
-                            <p className={`text-xs font-bold ${tone.level === "high" ? "text-danger" : tone.level === "some" ? "text-amber-700" : "text-emerald-700"}`}>
-                              {tone.level === "high" ? "Sounds very AI-generated" : tone.level === "some" ? "A little AI-ish" : "Sounds natural"}
-                            </p>
-                            {tone.matches.length > 0 && <p className="mt-0.5 text-xs text-muted">Flagged: &ldquo;{tone.matches.join("”, “")}&rdquo;</p>}
-                          </div>
-                        )}
-                      </div>
-                      {captionError[platformId] && <p className="mt-1 text-xs font-semibold text-danger" role="alert">{captionError[platformId]}</p>}
-                    </div>
-                  );
-                })}
+                {[...selectedPlatforms].map((platformId) => (
+                  <CaptionEditor
+                    key={platformId}
+                    platformId={platformId}
+                    value={(configs[platformId]?.caption as string) ?? ""}
+                    onChange={(next) => setPlatformCaption(platformId, next)}
+                    brief={caption}
+                    length={captionLength}
+                    format={type === "video" ? "video" : "post"}
+                    disabled={!editable}
+                    required={type === "text"}
+                  />
+                ))}
               </div>
             )}
           </div>
@@ -833,7 +738,7 @@ export function Composer({
                 {scheduleOn ? (
                   <button
                     className="btn-composer-primary w-full"
-                    disabled={busy || selected.size === 0 || !scheduledIso() || uploading > 0 || (scheduleIsPast && !scheduleIsPastToday)}
+                    disabled={busy || selected.size === 0 || !scheduledIso() || uploading > 0 || (scheduleIsPast && !scheduleIsPastToday) || hasMissingCaptions}
                     onClick={() =>
                       submit({ scheduled_at: scheduledIso() }, "/dashboard/posts?status=scheduled")
                     }
@@ -843,7 +748,7 @@ export function Composer({
                 ) : (
                   <button
                     className="btn-composer-primary w-full"
-                    disabled={busy || selected.size === 0 || uploading > 0}
+                    disabled={busy || selected.size === 0 || uploading > 0 || hasMissingCaptions}
                     onClick={() => submit({}, "/dashboard/posts")}
                   >
                     Post now
@@ -851,7 +756,7 @@ export function Composer({
                 )}
                 <button
                   className="btn-subtle w-full"
-                  disabled={busy || selected.size === 0 || uploading > 0}
+                  disabled={busy || selected.size === 0 || uploading > 0 || hasMissingCaptions}
                   onClick={() => submit({ use_queue: true }, "/dashboard/posts?status=scheduled")}
                   title="Assign the next free queue slot from Settings → Queue"
                 >
@@ -875,7 +780,7 @@ export function Composer({
               <>
                 <button
                   className="btn-composer-primary w-full"
-                  disabled={busy || selected.size === 0 || uploading > 0 || (scheduleOn && scheduleIsPast && !scheduleIsPastToday)}
+                  disabled={busy || selected.size === 0 || uploading > 0 || (scheduleOn && scheduleIsPast && !scheduleIsPastToday) || (updateWillPublish && hasMissingCaptions)}
                   onClick={() =>
                     submit(
                       scheduleOn && scheduledIso()
@@ -927,7 +832,7 @@ export function Composer({
             setLibraryOpen(false);
             setLibraryDestination(null);
           }}
-          kind={type === "video" ? "video" : undefined}
+          kind={type === "video" ? "video" : type === "image" ? "image" : undefined}
           allowedAspectRatios={libraryAspectRatios}
         />
       )}

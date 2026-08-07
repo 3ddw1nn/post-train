@@ -230,9 +230,13 @@ export default async function CalendarPage({
                       <Link
                         href={`/dashboard/create?date=${dateStr}`}
                         aria-label={`Create post on ${dateStr}`}
-                        className="rounded-full bg-primary px-2.5 py-1 text-[11px] font-bold text-primary-contrast shadow-sm hover:bg-primary-hover"
+                        // inline-flex + nowrap: as a plain inline box the icon
+                        // wrapped onto its own line in these narrow cells and
+                        // the pill grew into a lozenge.
+                        className="inline-flex shrink-0 items-center gap-1 whitespace-nowrap rounded-full bg-primary px-2 py-1 text-[11px] font-bold leading-none text-primary-contrast shadow-sm transition-colors hover:bg-primary-hover"
                       >
-                        Create <Icon name="plus" size={11} strokeWidth={3} />
+                        <Icon name="plus" size={11} strokeWidth={3} />
+                        <span className={view === "month" ? "sr-only sm:not-sr-only" : ""}>Create</span>
                       </Link>
                     )}
                   </span>

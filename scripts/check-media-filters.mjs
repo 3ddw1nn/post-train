@@ -9,7 +9,7 @@
 // union there makes a TikTok export claim it was made for Instagram.
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const F = require("../node_modules/.cache/media-filters/media-filters.js");
+const F = require("../node_modules/.cache/checks/media-filters.js");
 let pass = 0, fail = 0;
 const ok = (label, cond, extra="") => { cond ? pass++ : fail++; console.log(`${cond?"PASS":"FAIL"}  ${label}${extra&&!cond?" — "+extra:""}`); };
 

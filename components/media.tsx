@@ -15,6 +15,8 @@ import {
   type MediaFilter,
   type MediaTypeFilter,
 } from "@/lib/media-filters";
+import { byOrigin, sourceLabel, sourceDateLabel, type Origin } from "@/lib/media-source";
+import { nearestAspectId } from "@/lib/platform-aspect";
 import { platform as platformOf } from "@/lib/platforms";
 
 export type ComposerMedia = {
@@ -29,15 +31,12 @@ export type ComposerMedia = {
   studio_platform_ids?: string[];
 };
 
+/** The badge on a Library card. Shares nearestAspectId with the scheduler's
+ *  aspect warnings, so a card badged "9:16" can never be flagged as not 9:16. */
 function aspectLabel(media: ComposerMedia) {
   if (media.studio_aspect_ratio) return media.studio_aspect_ratio;
   if (!media.width || !media.height) return null;
-  const ratio = media.width / media.height;
-  const closest = ["9:16", "2:3", "4:5", "1:1", "16:9"].map((value) => {
-    const [width, height] = value.split(":").map(Number);
-    return { value, difference: Math.abs(ratio - width / height) };
-  }).sort((a, b) => a.difference - b.difference)[0];
-  return closest?.difference < 0.035 ? closest.value : `${media.width}:${media.height}`;
+  return nearestAspectId(media.width, media.height) ?? `${media.width}:${media.height}`;
 }
 
 const VIDEO_MIME_BY_EXTENSION: Record<string, string> = {
@@ -211,6 +210,16 @@ export function MediaThumb({
   );
 }
 
+/** Library media as this modal sees it. `/api/app/media` returns full media
+ *  rows, so these fields are already on the wire — ComposerMedia just doesn't
+ *  declare them (same as the Batch Scheduler's own LibraryMedia). */
+type LibraryPickMedia = ComposerMedia & {
+  studio_finished_at?: string | null;
+  studio_template?: string | null;
+  created_at?: string;
+  in_draft?: boolean;
+};
+
 export function MediaLibraryModal({
   onClose,
   onPick,
@@ -222,15 +231,18 @@ export function MediaLibraryModal({
   kind?: string;
   allowedAspectRatios?: string[];
 }) {
-  const [items, setItems] = useState<ComposerMedia[] | null>(null);
+  const [items, setItems] = useState<LibraryPickMedia[] | null>(null);
   // A pick fills one slot, so the type is always concrete here — never "all".
   const [filter, setFilter] = useState<MediaFilter>({
     ...EMPTY_FILTER,
     type: kind === "video" ? "video" : "image",
   });
+  const [origin, setOrigin] = useState<Origin>("all");
   // Picking a video clip means picking a *finished Content Studio video* to
   // reuse as source footage, not any random upload — Slideshow/Thumbnail
-  // Maker outputs and in-progress drafts are excluded server-side.
+  // Maker outputs and in-progress drafts are excluded server-side, which
+  // makes an Origin tab meaningless here — everything returned already is
+  // "Finished".
   const studioVideo = kind === "video";
   useEffect(() => {
     setItems(null);
@@ -238,20 +250,29 @@ export function MediaLibraryModal({
       .then((r) => r.json())
       .then((d) => setItems(d.data ?? []));
   }, [studioVideo]);
-  // In video mode the type is locked, so only that one tab is offered — which
-  // renders no toggle at all, matching the old showPhotoTab behavior.
-  const typeOptions: MediaTypeFilter[] = kind === "video" ? ["video"] : PICK_ONE_TYPES;
+  // A locked kind offers only that one tab, which renders no toggle at all,
+  // matching the old showPhotoTab behavior.
+  const typeOptions: MediaTypeFilter[] = kind === "video" ? ["video"] : kind === "image" ? ["image"] : PICK_ONE_TYPES;
+  const inOrigin = useMemo(() => (studioVideo || items === null ? (items ?? []) : byOrigin(items, origin)), [items, origin, studioVideo]);
   const visible = useMemo(() => {
     if (items === null) return null;
     // Aspect filtering is this modal's own constraint (a destination only
     // accepts certain ratios) and stays on top of the shared filter.
-    return applyMediaFilter(items, filter).filter((media) => {
+    return applyMediaFilter(inOrigin, filter).filter((media) => {
       if (media.kind !== "video" || !allowedAspectRatios?.length) return true;
       return !!aspectLabel(media) && allowedAspectRatios.includes(aspectLabel(media)!);
     });
-  }, [allowedAspectRatios, items, filter]);
-  const counts = useMemo(() => facetCounts(items ?? [], filter), [items, filter]);
-  const platforms = useMemo(() => platformsPresent(items ?? []), [items]);
+  }, [allowedAspectRatios, inOrigin, items, filter]);
+  const counts = useMemo(() => facetCounts(inOrigin, filter), [inOrigin, filter]);
+  const platforms = useMemo(() => platformsPresent(inOrigin), [inOrigin]);
+  const originCounts: Record<Origin, number> = {
+    all: items?.length ?? 0,
+    finished: byOrigin(items ?? [], "finished").length,
+    uploads: byOrigin(items ?? [], "uploads").length,
+  };
+  // Files tied up in an unfinished Studio project. Pickable, but worth saying
+  // out loud so grabbing a half-done render isn't a surprise.
+  const inDraftCount = byOrigin(items ?? [], "uploads").filter((m) => m.in_draft).length;
   return (
     <div
       className="fixed inset-0 z-[70] flex items-center justify-center bg-black/30 p-4"
@@ -269,8 +290,37 @@ export function MediaLibraryModal({
         >
           <Icon name="x" size={16} />
         </button>
-        <div className="flex flex-wrap items-center justify-between gap-3 pr-12">
-          <p className="font-bold">Media library</p>
+        <p className="pr-12 font-bold">Media library</p>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {!studioVideo && (
+            <div
+              className="flex items-center gap-1 rounded-lg border border-line bg-white p-1"
+              role="tablist"
+              aria-label="Content source"
+            >
+              {(
+                [
+                  { key: "all", label: "All", icon: "stack" },
+                  { key: "finished", label: "Finished", icon: "check" },
+                  { key: "uploads", label: "Uploads", icon: "upload" },
+                ] as const
+              ).map((t) => (
+                <button
+                  key={t.key}
+                  type="button"
+                  role="tab"
+                  aria-selected={origin === t.key}
+                  onClick={() => setOrigin(t.key)}
+                  className={`flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-xs font-bold transition-colors ${
+                    origin === t.key ? "bg-primary-soft text-primary-deep" : "text-muted hover:text-ink"
+                  }`}
+                >
+                  <Icon name={t.icon} size={13} /> {t.label}
+                  <span className="font-semibold opacity-70">{originCounts[t.key]}</span>
+                </button>
+              ))}
+            </div>
+          )}
           <MediaFilterBar
             filter={filter}
             onChange={setFilter}
@@ -280,16 +330,25 @@ export function MediaLibraryModal({
           />
         </div>
         {allowedAspectRatios?.length ? <p className="mt-2 text-xs font-medium text-muted">Showing videos supported by the selected platform: {allowedAspectRatios.join(", ")}.</p> : null}
+        {origin !== "finished" && inDraftCount > 0 && (
+          <p className="mt-2 flex items-center gap-1.5 text-xs text-muted">
+            <Icon name="info" size={12} />
+            {inDraftCount} file{inDraftCount === 1 ? " is" : "s are"} still in use by an unfinished
+            Content Studio project.
+          </p>
+        )}
         {visible === null ? (
           <p className="py-10 text-center text-sm text-muted">Loading…</p>
         ) : visible.length === 0 ? (
           <p className="py-10 text-center text-sm text-muted">
             {studioVideo
               ? "Nothing finished yet — finish a video in Content Studio to reuse it here."
-              : "Nothing here yet — media you upload gets reusable across posts."}
+              : items?.length
+                ? "Nothing matches those filters."
+                : "Nothing here yet — media you upload gets reusable across posts."}
           </p>
         ) : (
-          <div className="mt-4 grid min-h-0 grid-cols-2 gap-3 overflow-y-auto pr-1 sm:grid-cols-3 lg:grid-cols-4">
+          <div className="mt-4 grid min-h-0 grid-cols-3 gap-2.5 overflow-y-auto pr-1 sm:grid-cols-4 lg:grid-cols-5">
             {visible.map((m) => (
               <MediaLibraryItem key={m.id} media={m} onPick={onPick} />
             ))}
@@ -300,27 +359,51 @@ export function MediaLibraryModal({
   );
 }
 
-function MediaLibraryItem({ media, onPick }: { media: ComposerMedia; onPick: (media: ComposerMedia) => void }) {
+function MediaLibraryItem({ media, onPick }: { media: LibraryPickMedia; onPick: (media: ComposerMedia) => void }) {
   // Finished Studio outputs retain every platform selected at Finish. Older
   // one-platform outputs use the original per-file field, so include it too.
   const formattedPlatformIds = platformIdsFor(media);
   const formattedPlatformNames = formattedPlatformIds
     .map((id) => platformOf(id)?.name ?? id)
     .join(", ");
+  const source = sourceLabel(media);
+  const sourceDate = sourceDateLabel(media);
 
   return (
-    <button type="button" onClick={() => onPick(media)} title={media.name} className="group overflow-hidden rounded-xl border border-line bg-white text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
-      <div className="relative grid aspect-square place-items-center overflow-hidden bg-ink">
+    <button type="button" onClick={() => onPick(media)} title={media.name} className="group relative overflow-hidden rounded-lg border border-line bg-white text-left transition-colors hover:border-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary">
+      <span className="relative grid aspect-square place-items-center overflow-hidden bg-ink">
         <MediaThumb media={media} size={220} fill />
-        {aspectLabel(media) && <span className="absolute bottom-2 left-2 rounded-md bg-ink/85 px-1.5 py-1 text-[11px] font-bold text-white shadow-sm">{aspectLabel(media)}</span>}
-      </div>
-      <span className="flex min-w-0 items-center gap-1.5 px-2.5 py-2 text-xs font-semibold text-muted">
-        <span className="shrink-0">Last formatted for</span>
-        {formattedPlatformIds.length > 0 ? (
-          <span className="min-w-0" aria-label={`Last formatted for ${formattedPlatformNames}`}>
-            <PlatformIconRow ids={formattedPlatformIds} size={15} />
+        {/* Square crop makes a 9:16 video and a photo look alike in the All
+            view — the badge is what tells them apart without filtering. */}
+        {media.kind === "video" && (
+          <span className="absolute left-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-md bg-ink/75 text-white">
+            <Icon name="video" size={11} />
           </span>
-        ) : null}
+        )}
+        {aspectLabel(media) && <span className="absolute bottom-1.5 left-1.5 rounded-md bg-ink/85 px-1.5 py-1 text-[11px] font-bold text-white shadow-sm">{aspectLabel(media)}</span>}
+        <span className="absolute right-1.5 top-1.5 flex h-6 w-6 items-center justify-center rounded-full bg-white/90 text-primary-deep opacity-0 shadow transition-opacity group-hover:opacity-100">
+          <Icon name="plus" size={13} strokeWidth={3} />
+        </span>
+      </span>
+      {/* The footer is deliberately reserved for the provenance people need
+          while picking: which Studio created an asset (or Upload), and the
+          relevant source date. Platform dots stay as a compact secondary cue
+          for Studio exports. */}
+      <span className="flex min-h-12 flex-col justify-center gap-0.5 bg-white px-2.5 py-1.5">
+        <span className="flex min-w-0 items-center gap-1 text-[11px] font-bold leading-4 text-ink">
+          <Icon name={source.icon} size={11} />
+          <span className="truncate">{source.label}</span>
+          {formattedPlatformIds.length > 0 && (
+            <span className="ml-auto shrink-0" aria-label={`Last formatted for ${formattedPlatformNames}`}>
+              <PlatformIconRow ids={formattedPlatformIds} size={12} />
+            </span>
+          )}
+        </span>
+        {sourceDate && (
+          <span className="truncate text-[10px] font-semibold leading-3.5 text-muted" title={sourceDate.title}>
+            {sourceDate.label} {sourceDate.date}
+          </span>
+        )}
       </span>
     </button>
   );

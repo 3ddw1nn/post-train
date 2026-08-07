@@ -10,7 +10,7 @@ export const metadata: Metadata = {
     template: "%s · Post Train",
   },
   description:
-    "Upload your content once and publish or schedule it across 10 social platforms. Flat pricing, unlimited posts, no per-channel fees.",
+    "Upload your content once and publish or schedule it across 11 social platforms. Flat pricing, unlimited posts, no per-channel fees.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

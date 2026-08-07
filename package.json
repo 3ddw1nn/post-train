@@ -8,7 +8,10 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
-    "check:filters": "tsc lib/media-filters.ts --outDir node_modules/.cache/media-filters --module commonjs --target es2020 --skipLibCheck && node scripts/check-media-filters.mjs"
+    "check:filters": "tsc -p scripts/tsconfig.checks.json && node scripts/check-media-filters.mjs",
+    "check:analytics": "tsc -p scripts/tsconfig.checks.json && node scripts/check-analytics-shape.mjs",
+    "check:aspect": "tsc -p scripts/tsconfig.checks.json && node scripts/check-platform-aspect.mjs",
+    "check": "npm run check:filters && npm run check:analytics && npm run check:aspect"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1089.0",

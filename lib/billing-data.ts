@@ -26,7 +26,7 @@ export const PLANS: Record<
       "Carousels & bulk scheduling",
       "Content studio templates",
       "5 GB workspace storage",
-      "Analytics (beta)",
+      "Analytics",
       "API + MCP access (60 req/min)",
       "Human support",
     ],
