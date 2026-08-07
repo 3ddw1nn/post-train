@@ -1248,6 +1248,7 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
     setRenderElapsedSeconds(0);
     setJobStatus("queued");
     try {
+      const renderBatchId = crypto.randomUUID();
       const started = await Promise.all(
         targets.map(async (platformId) => {
           const format = platformId === "default" ? null : selectedVideoFormatForPlatform(platformId, platformVideoFormatIds);
@@ -1258,6 +1259,7 @@ export function GridStudio({ accounts = [] }: { accounts?: GridAccount[] }) {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               template: "grid-2x2",
+              render_batch_id: renderBatchId,
               output_platform_id: platformId === "default" ? "video" : platformId,
               media_ids: ids,
               video_preset_id: preset.id,

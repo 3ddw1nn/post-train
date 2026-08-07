@@ -12,7 +12,7 @@
 // axis top (a series overflowing its own plot).
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const A = require("../node_modules/.cache/checks/analytics-shape.js");
+const A = require("../node_modules/.cache/checks/lib/analytics-shape.js");
 
 let pass = 0, fail = 0;
 const ok = (label, cond, extra = "") => {

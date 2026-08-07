@@ -240,6 +240,7 @@ export default defineSchema({
     id: v.string(),
     workspace_id: v.string(),
     created_by: v.string(),
+    notification_group_id: v.optional(v.string()),
     template: v.string(), // grid-2x2 | fade-in | ai-ugc
     status: v.string(), // queued | generating | compositing | done | failed
     params: v.string(), // JSON: media_ids/caption/persona/script/cta_media_id/aspect_ratio
@@ -256,7 +257,30 @@ export default defineSchema({
   })
     .index("by_legacy_id", ["id"])
     .index("by_workspace", ["workspace_id"])
+    .index("by_workspace_id_and_created_by_and_notification_group_id", ["workspace_id", "created_by", "notification_group_id"])
     .index("by_status", ["status"]),
+
+  // Durable in-app activity for work that can finish after the user leaves
+  // the initiating screen. A dedupe key lets one item move from processing to
+  // ready/failed instead of adding a second, disconnected notification.
+  notifications: defineTable({
+    id: v.string(),
+    user_id: v.string(),
+    workspace_id: v.string(),
+    dedupe_key: v.string(),
+    type: v.string(), // studio_render | post_publish | account | workspace | billing
+    status: v.string(), // processing | success | error | info
+    title: v.string(),
+    message: v.string(),
+    href: nullableString,
+    read_at: nullableString,
+    toast_shown_at: nullableString,
+    created_at: v.string(),
+    updated_at: v.string(),
+  })
+    .index("by_legacy_id", ["id"])
+    .index("by_user_id_and_workspace_id", ["user_id", "workspace_id"])
+    .index("by_user_id_and_dedupe_key", ["user_id", "dedupe_key"]),
 
   // Saved Content Studio drafts — lets a user leave the wizard mid-edit
   // (Templates, Custom, or a copied IG/TikTok post) and resume later.

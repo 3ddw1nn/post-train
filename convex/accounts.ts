@@ -2,6 +2,24 @@
 import { queryGeneric as query, mutationGeneric as mutation } from "convex/server";
 import { v } from "convex/values";
 import { byLegacyId, nextNumericId, now } from "./model";
+import { writeNotification } from "./notifications";
+
+// Display names only, for notification copy. Kept local rather than imported
+// from lib/platforms because that module pulls in the simple-icons bundle,
+// which has no business running inside a Convex mutation.
+const PLATFORM_NAMES: Record<string, string> = {
+  twitter: "Twitter/X",
+  instagram: "Instagram",
+  linkedin: "LinkedIn",
+  facebook: "Facebook",
+  tiktok: "TikTok",
+  youtube: "YouTube",
+  bluesky: "Bluesky",
+  mastodon: "Mastodon",
+  threads: "Threads",
+  pinterest: "Pinterest",
+  tumblr: "Tumblr",
+};
 
 // Encrypted platform credentials must never reach list/get consumers (they get
 // serialized into RSC payloads and API responses). Publishing reads them via
@@ -81,6 +99,27 @@ export const patchAccount = mutation({
     const account = await byLegacyId(ctx, "social_accounts", args.id);
     if (!account) return null;
     await ctx.db.patch(account._id, args.patch);
+
+    // A dead token is the quietest way to lose a week of scheduled posts:
+    // every publish to this account fails until someone reconnects it. The
+    // notice lives here rather than at the ~8 call sites that flip the flag,
+    // so a future one can't forget it. Only on the transition, so a repeated
+    // failure doesn't renotify.
+    if (args.patch?.status === "needs_reauth" && account.status !== "needs_reauth") {
+      const workspace = await byLegacyId(ctx, "workspaces", account.workspace_id);
+      if (workspace) {
+        await writeNotification(ctx, {
+          user_id: workspace.owner_id,
+          workspace_id: account.workspace_id,
+          dedupe_key: `account-reauth:${account.id}`,
+          type: "account",
+          status: "error",
+          title: `${PLATFORM_NAMES[account.platform] ?? account.platform} needs reconnecting`,
+          message: `@${account.username} lost access, so posts to it will fail until you reconnect.`,
+          href: "/dashboard/connections",
+        });
+      }
+    }
     return stripCredentials(await ctx.db.get(account._id));
   },
 });

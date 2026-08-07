@@ -9,6 +9,7 @@ import { randomBytes } from "node:crypto";
 import { writeFileSync, readFileSync, existsSync, unlinkSync } from "node:fs";
 import path from "node:path";
 import { api } from "@/convex/_generated/api";
+import { upsertNotification } from "./notifications";
 import {
   createR2DownloadUrl,
   createR2UploadUrl,
@@ -123,7 +124,10 @@ export async function deleteMediaForStorageCleanup(workspaceId: string, mediaId:
 async function ensureWorkspaceStorageCapacity(workspaceId: string, incomingBytes: number) {
   let status = await getWorkspaceStorageStatus(workspaceId);
   if (status.usedBytes + incomingBytes <= status.limitBytes) return;
-  if (!status.autoCleanup) throw new StorageLimitError();
+  if (!status.autoCleanup) {
+    await notifyStorage(workspaceId, "full");
+    throw new StorageLimitError();
+  }
 
   const candidates = await convexQuery<MediaRow[]>(api.media.oldestForStorageCleanup, {
     workspace_id: workspaceId,
@@ -131,14 +135,46 @@ async function ensureWorkspaceStorageCapacity(workspaceId: string, incomingBytes
     stale_pending_before: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
   });
   let usedBytes = status.usedBytes;
+  let removed = 0;
   for (const candidate of candidates) {
     const freedBytes = await removeStoredMedia(workspaceId, candidate.id);
-    if (freedBytes !== null) usedBytes -= freedBytes;
-    if (usedBytes + incomingBytes <= status.limitBytes) return;
+    if (freedBytes !== null) {
+      usedBytes -= freedBytes;
+      removed++;
+    }
+    if (usedBytes + incomingBytes <= status.limitBytes) break;
   }
+  // Auto-cleanup permanently deletes the user's own files to make room. Doing
+  // that silently is the kind of thing people only discover when they go
+  // looking for something that is already gone.
+  if (removed > 0) await notifyStorage(workspaceId, "cleaned", removed, status.usedBytes - usedBytes);
 
   status = await getWorkspaceStorageStatus(workspaceId);
-  if (status.usedBytes + incomingBytes > status.limitBytes) throw new StorageLimitError();
+  if (status.usedBytes + incomingBytes > status.limitBytes) {
+    await notifyStorage(workspaceId, "full");
+    throw new StorageLimitError();
+  }
+}
+
+async function notifyStorage(workspaceId: string, kind: "cleaned" | "full", count = 0, freedBytes = 0) {
+  const workspace = await convexQuery<{ owner_id: string } | null>(api.workspaces.getById, { id: workspaceId });
+  if (!workspace) return;
+  const freed = `${(Math.max(0, freedBytes) / (1024 * 1024)).toFixed(0)}MB`;
+  await upsertNotification({
+    user_id: workspace.owner_id,
+    workspace_id: workspaceId,
+    // Date-stamped so a later cleanup is a new entry rather than silently
+    // overwriting the record of an earlier one.
+    dedupe_key: `storage:${kind}:${new Date().toISOString().slice(0, 10)}`,
+    type: "storage",
+    status: kind === "full" ? "error" : "warning",
+    title: kind === "full" ? "Storage is full" : "Old files were removed",
+    message:
+      kind === "full"
+        ? "Your upload was blocked. Delete files from your Library, or turn on automatic cleanup in Settings."
+        : `Automatic cleanup deleted ${count} old file${count === 1 ? "" : "s"} (${freed}) to make room for a new upload.`,
+    href: "/dashboard/library",
+  }).catch(() => undefined);
 }
 
 export function kindFromMime(mime: string): MediaRow["kind"] {

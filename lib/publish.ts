@@ -480,6 +480,7 @@ export async function publishPost(post: PostRow): Promise<void> {
     success: boolean;
     share_url?: string;
     error?: string;
+    error_code?: string;
   }[] = [];
   let anySuccess = false;
   for (const account of destinations) {
@@ -509,7 +510,7 @@ export async function publishPost(post: PostRow): Promise<void> {
       success: outcome.success,
       ...(outcome.success
         ? { share_url: outcome.share_url }
-        : { error: outcome.error_message }),
+        : { error: outcome.error_message, error_code: outcome.error_code }),
     });
   }
 
@@ -518,6 +519,9 @@ export async function publishPost(post: PostRow): Promise<void> {
     id: post.id,
     status: finalStatus,
     posted_at: now(),
+    succeeded: results.filter((result) => result.success).length,
+    total: results.length,
+    auth_expired: results.some((result) => result.error_code === "auth_expired"),
   });
 
   // Emails per user preferences

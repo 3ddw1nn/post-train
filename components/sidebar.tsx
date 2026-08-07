@@ -8,6 +8,7 @@ import { Icon } from "./icons";
 import { ActionButton, Dropdown, FormDialog } from "./interactive";
 import { UserFooter } from "./avatar-menu";
 import { DevModeButton } from "./dev-mode-button";
+import { Notifications } from "./notifications";
 
 type WorkspaceLite = { id: string; name: string };
 
@@ -503,7 +504,8 @@ export function Sidebar({
         </div>
         <WorkspaceSwitcher workspaces={workspaces} currentId={currentWorkspaceId} />
         {showDevMode && <DevModeButton />}
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-2">
+          <Notifications />
           <UserFooter name={displayName} planLabel={planLabel} isStaff={isStaff} />
         </div>
       </header>

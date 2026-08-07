@@ -6,7 +6,7 @@
 // "unknown never fails" and "the badge and the warning always agree".
 import { createRequire } from "module";
 const require = createRequire(import.meta.url);
-const A = require("../node_modules/.cache/checks/platform-aspect.js");
+const A = require("../node_modules/.cache/checks/lib/platform-aspect.js");
 
 let pass = 0, fail = 0;
 const ok = (label, cond, extra = "") => {

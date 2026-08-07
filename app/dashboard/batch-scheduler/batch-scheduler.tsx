@@ -425,6 +425,13 @@ export function BatchScheduler({
 
     setRunning(false);
     setSummary({ ok, failed });
+    // A 50-item batch is a sequential loop long enough to walk away from, so
+    // the outcome belongs in the inbox too, not only in this page's banner.
+    void fetch("/api/app/notifications", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ event: "batch_scheduled", scheduled: ok, failed }),
+    }).catch(() => undefined);
     router.refresh();
   }
 

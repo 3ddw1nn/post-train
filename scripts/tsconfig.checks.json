@@ -1,5 +1,5 @@
 {
-  "//": "Compiles the dependency-light lib/ modules that the check-*.mjs scripts assert against. Separate from the app tsconfig because these run through plain node with no bundler, so they need commonjs output and the @/ alias resolved.",
+  "//": "Compiles the dependency-light modules that the check-*.mjs scripts assert against. Separate from the app tsconfig because these run through plain node with no bundler, so they need commonjs output and the @/ alias resolved. rootDir is pinned so output paths stay <cache>/lib/... and <cache>/convex/... no matter which files are included.",
   "compilerOptions": {
     "module": "commonjs",
     "moduleResolution": "node",
@@ -7,8 +7,18 @@
     "skipLibCheck": true,
     "noEmitOnError": true,
     "baseUrl": "..",
-    "paths": { "@/*": ["./*"] },
-    "outDir": "../node_modules/.cache/checks"
+    "paths": {
+      "@/*": [
+        "./*"
+      ]
+    },
+    "outDir": "../node_modules/.cache/checks",
+    "rootDir": ".."
   },
-  "include": ["../lib/media-filters.ts", "../lib/analytics-shape.ts", "../lib/platform-aspect.ts"]
+  "include": [
+    "../lib/media-filters.ts",
+    "../lib/analytics-shape.ts",
+    "../lib/platform-aspect.ts",
+    "../convex/notificationRules.ts"
+  ]
 }

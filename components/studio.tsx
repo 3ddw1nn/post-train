@@ -949,8 +949,12 @@ type DraftSnapshot = Partial<{
   fadeInDuration: number;
   closingSeam: Seam;
   caption: string;
+  jobId: string | null;
+  jobIds: Record<string, string>;
+  jobStatus: JobStatus;
   platformOutputMediaIds: Record<string, string>;
   renderSignatures: Record<string, string>;
+  pendingRenderSignatures: Record<string, string>;
   captionLayers: TextLayer[];
   audioClips: AudioClip[];
   visualLayers: VisualLayer[];
@@ -2250,7 +2254,7 @@ function StudioWorkflow({
   transition, setTransition, transitionDuration, setTransitionDuration, closingSeam, setSegmentSeam, setSegmentGap, moveSegment,
   audioClips, setAudioClips, selectedAudioClipId, setSelectedAudioClipId, audioUploading, onAudioUpload, onAudioLibrary,
   caption, setCaption, uploading, uploadStage, onUpload, onLibrary, onCrop, fileInput, onFile, error, setError, rendering, outputMediaId, initialDraft, initialDraftId, initialDraftStatus,
-  platformOutputMediaIds, platformRenderStatuses, renderSignatures, rendersAreCurrent, dirtyRenderPlatforms, renderElapsedSeconds, renderStatusLabel, startRender,
+  jobId, jobIds, jobStatus, pendingRenderSignatures, platformOutputMediaIds, platformRenderStatuses, renderSignatures, rendersAreCurrent, dirtyRenderPlatforms, renderElapsedSeconds, renderStatusLabel, startRender,
   cancelling, cancelRender,
   renderScopeOpen, setRenderScopeOpen, previewOpen, setPreviewOpen,
   captionLayers, setCaptionLayers, selectedCaptionId, setSelectedCaptionId,
@@ -2269,6 +2273,7 @@ function StudioWorkflow({
   visualPickerOpen: boolean;
   onMemeSound: (id: string) => void;
   onPreviewMemeSound: (id: string) => void;
+  jobId: string | null; jobIds: Record<string, string>; jobStatus: JobStatus; pendingRenderSignatures: Record<string, string>;
   platformOutputMediaIds: Record<string, string>; platformRenderStatuses: Record<string, JobStatus>; renderSignatures: Record<string, string>; rendersAreCurrent: boolean; dirtyRenderPlatforms: string[]; renderElapsedSeconds: number; renderStatusLabel: (status: JobStatus | undefined) => string; startRender: (targets: string[]) => void;
   cancelling: boolean; cancelRender: () => void;
   renderScopeOpen: boolean; setRenderScopeOpen: (value: boolean) => void; previewOpen: boolean; setPreviewOpen: (value: boolean) => void;
@@ -2949,7 +2954,7 @@ function StudioWorkflow({
             mode: "custom",
             title: campaignName || UNTITLED_DRAFT_TITLE,
             cover_image_url: null,
-            state: { step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds: [...selectedAccountIds], activePlatform, platformFormatIds, platformOutputMediaIds, renderSignatures, captionLayers, audioClips, visualLayers, visualRowCounts, visualRowLocks, genericRowCount, platformCaptions, captionLength },
+            state: { step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds: [...selectedAccountIds], activePlatform, platformFormatIds, jobId, jobIds, jobStatus, platformOutputMediaIds, renderSignatures, pendingRenderSignatures, captionLayers, audioClips, visualLayers, visualRowCounts, visualRowLocks, genericRowCount, platformCaptions, captionLength },
           }),
         });
         if (!response.ok) throw new Error("Draft save failed.");
@@ -2959,7 +2964,7 @@ function StudioWorkflow({
       } catch { setDraftStatus("idle"); }
     }, 750);
     return () => window.clearTimeout(timer);
-  }, [step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds, activePlatform, platformFormatIds, platformOutputMediaIds, renderSignatures, captionLayers, audioClips, visualLayers, visualRowCounts, visualRowLocks, genericRowCount, platformCaptions, captionLength]);
+  }, [step, campaignName, segments, transition, transitionDuration, closingSeam, caption, publishDate, publishTime, selectedAccountIds, activePlatform, platformFormatIds, jobId, jobIds, jobStatus, platformOutputMediaIds, renderSignatures, pendingRenderSignatures, captionLayers, audioClips, visualLayers, visualRowCounts, visualRowLocks, genericRowCount, platformCaptions, captionLength]);
 
   if (step === 0) {
     const selectedCaptionLayer = captionLayers.find((layer) => layer.id === selectedCaptionId) ?? null;
@@ -5201,12 +5206,17 @@ function VideoEditor({ onExit, accounts, initialClip, initialCaption, initialDra
   const [libraryOpen, setLibraryOpen] = useState(false);
   // One job per destination platform, so Continue can require every platform
   // to have a current render instead of just whichever tab is active.
-  const [jobIds, setJobIds] = useState<Record<string, string>>({});
+  const [jobIds, setJobIds] = useState<Record<string, string>>(() => initialDraft?.jobIds ?? {});
   const [platformOutputMediaIds, setPlatformOutputMediaIds] = useState<Record<string, string>>(() => initialDraft?.platformOutputMediaIds ?? {});
-  const [platformRenderStatuses, setPlatformRenderStatuses] = useState<Record<string, JobStatus>>({});
+  const [platformRenderStatuses, setPlatformRenderStatuses] = useState<Record<string, JobStatus>>(() =>
+    Object.fromEntries(Object.keys(initialDraft?.jobIds ?? {}).map((platformId) => [platformId, initialDraft?.jobStatus ?? "queued"])),
+  );
   const [renderSignatures, setRenderSignatures] = useState<Record<string, string>>(() => initialDraft?.renderSignatures ?? {});
-  const [pendingRenderSignatures, setPendingRenderSignatures] = useState<Record<string, string>>({});
-  const [renderStartedAt, setRenderStartedAt] = useState<number | null>(null);
+  const [pendingRenderSignatures, setPendingRenderSignatures] = useState<Record<string, string>>(() => initialDraft?.pendingRenderSignatures ?? {});
+  const restoredJobStatus = initialDraft?.jobStatus ?? "idle";
+  const [renderStartedAt, setRenderStartedAt] = useState<number | null>(() =>
+    restoredJobStatus === "queued" || restoredJobStatus === "generating" || restoredJobStatus === "compositing" ? Date.now() : null,
+  );
   const [renderElapsedSeconds, setRenderElapsedSeconds] = useState(0);
   const [cancelling, setCancelling] = useState(false);
   const [renderScopeOpen, setRenderScopeOpen] = useState(false);
@@ -5214,8 +5224,8 @@ function VideoEditor({ onExit, accounts, initialClip, initialCaption, initialDra
   const [pollNonce, setPollNonce] = useState(0);
   // Scalars mirroring the maps' aggregate state — first/overall values, kept
   // for anything (autosave, back-compat) that just wants "the" job.
-  const [jobId, setJobId] = useState<string | null>(null);
-  const [status, setStatus] = useState<JobStatus>("idle");
+  const [jobId, setJobId] = useState<string | null>(() => initialDraft?.jobId ?? Object.values(initialDraft?.jobIds ?? {})[0] ?? null);
+  const [status, setStatus] = useState<JobStatus>(() => restoredJobStatus);
   // Unlike platformOutputMediaIds, this scalar was never itself saved to the
   // draft — so a draft reopened after every platform finished rendering in a
   // PREVIOUS session came back with this stuck at null (Finish gates on it)
@@ -5527,12 +5537,14 @@ function VideoEditor({ onExit, accounts, initialClip, initialCaption, initialDra
     setStatus("queued");
     try {
       const captionsPayload = await ensureCaptionUploads();
+      const renderBatchId = crypto.randomUUID();
       const started = await Promise.all(targets.map(async (platformId) => {
         const format = formatFor(platformId, platformFormatIds);
         const response = await fetch("/api/app/studio/jobs", {
           method: "POST", headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             template: "fade-in",
+            render_batch_id: renderBatchId,
             output_platform_id: platformId,
             media_ids: segments.map((segment) => segment.media.id),
             fade_segments: segments.map((segment) => ({ media_id: segment.media.id, start_s: segment.start, end_s: segment.end ?? undefined, gap_before_s: segment.gapBefore ?? 0, volume: segment.volume, crop: segment.crops[platformId] ?? segment.crops.default ?? { x: 0.5, y: 0.5 } })),
@@ -5647,7 +5659,7 @@ function VideoEditor({ onExit, accounts, initialClip, initialCaption, initialDra
   const cropFlowFormat = cropFlowKey === "default" ? { aspect: VIDEO_ASPECTS[0] } : formatFor(cropFlowKey, platformFormatIds);
   const scopeOpen = pendingScopeMedia !== null || cropTargetId !== null;
   return <><StudioWorkflow accounts={accounts} selectedAccountIds={selectedAccountIds} setSelectedAccountIds={setSelectedAccountIds} activePlatform={activePlatform} setActivePlatform={setActivePlatform} platformFormatIds={platformFormatIds} setPlatformFormatIds={setPlatformFormatIds} segments={segments} setSegments={setSegments} activeSegment={activeSegment} setActiveSegmentId={setActiveSegmentId} splitAt={splitAt} setSplitAt={setSplitAt} splitActive={splitActive} beginEditorEdit={rememberEditorState} setActiveTrim={(start, end) => { if (!activeSegment) return; setSegments((current) => current.map((segment) => segment.id === activeSegment.id ? { ...segment, start, end } : segment)); }} duplicateActive={duplicateActive} removeActive={() => { if (!activeSegment) return; rememberEditorState(); setSegments((current) => current.filter((segment) => segment.id !== activeSegment.id)); }} setActiveVolume={(volume) => { if (!activeSegment) return; rememberEditorState(); setSegments((current) => current.map((segment) => segment.id === activeSegment.id ? { ...segment, volume, audioRemoved: false } : segment)); }} muteSegmentAudio={(segmentId) => setSegments((current) => current.map((segment) => segment.id === segmentId ? { ...segment, volume: 0, audioRemoved: true } : segment))} pasteSegment={(segment, afterSegmentId) => { if (segments.length >= MAX_SEGMENTS) return; rememberEditorState(); const pasted = { ...segment, id: crypto.randomUUID(), gapBefore: 0, transitionIn: { type: "cut", duration: transitionDuration } }; setSegments((current) => { const afterIndex = afterSegmentId ? current.findIndex((s) => s.id === afterSegmentId) : -1; const next = [...current]; next.splice(afterIndex >= 0 ? afterIndex + 1 : current.length, 0, pasted); return next; }); setActiveSegmentId(pasted.id); }} undo={undoEdit} redo={redoEdit} canUndo={historyState.canUndo} canRedo={historyState.canRedo} transition={transition} setTransition={(value) => { rememberEditorState(); setTransition(value); }} transitionDuration={transitionDuration} setTransitionDuration={(value) => { rememberEditorState(); setTransitionDuration(value); }} closingSeam={closingSeam} setSegmentSeam={setSegmentSeam} setSegmentGap={setSegmentGap} moveSegment={moveSegment} audioClips={audioClips} setAudioClips={setAudioClips} selectedAudioClipId={selectedAudioClipId} setSelectedAudioClipId={setSelectedAudioClipId} audioUploading={audioUploading} onAudioUpload={() => audioInput.current?.click()} onAudioLibrary={() => setAudioLibraryOpen(true)} caption={caption} setCaption={setCaption} uploading={uploading} uploadStage={uploadStage} onUpload={() => input.current?.click()} onLibrary={() => setLibraryOpen(true)} onCrop={() => activeSegment && setCropTargetId(activeSegment.id)} fileInput={input} onFile={addFile} error={error} rendering={rendering} outputMediaId={outputMediaId} initialDraft={initialDraft} initialDraftId={initialDraftId} initialDraftStatus={initialDraftStatus}
-    platformOutputMediaIds={platformOutputMediaIds} platformRenderStatuses={platformRenderStatuses} renderSignatures={renderSignatures} rendersAreCurrent={rendersAreCurrent} dirtyRenderPlatforms={dirtyRenderPlatforms} renderElapsedSeconds={renderElapsedSeconds} renderStatusLabel={renderStatusLabel} startRender={(targets) => void startRender(targets)} cancelling={cancelling} cancelRender={() => void cancelRender()}
+    jobId={jobId} jobIds={jobIds} jobStatus={status} pendingRenderSignatures={pendingRenderSignatures} platformOutputMediaIds={platformOutputMediaIds} platformRenderStatuses={platformRenderStatuses} renderSignatures={renderSignatures} rendersAreCurrent={rendersAreCurrent} dirtyRenderPlatforms={dirtyRenderPlatforms} renderElapsedSeconds={renderElapsedSeconds} renderStatusLabel={renderStatusLabel} startRender={(targets) => void startRender(targets)} cancelling={cancelling} cancelRender={() => void cancelRender()}
     renderScopeOpen={renderScopeOpen} setRenderScopeOpen={setRenderScopeOpen} previewOpen={previewOpen} setPreviewOpen={setPreviewOpen}
     captionLayers={captionLayers} setCaptionLayers={setCaptionLayers} selectedCaptionId={selectedCaptionId} setSelectedCaptionId={setSelectedCaptionId}
     visualLayers={visualLayers} setVisualLayers={setVisualLayers} visualRowCounts={visualRowCounts} setVisualRowCounts={setVisualRowCounts} visualRowLocks={visualRowLocks} setVisualRowLocks={setVisualRowLocks} selectedVisualLayerId={selectedVisualLayerId} setSelectedVisualLayerId={setSelectedVisualLayerId} visualPickerOpen={giphyPickerType !== null} onAddVisual={(kind, row) => { visualUploadTarget.current = { kind, row }; if (kind === "gif" || kind === "sticker") { giphyReturnFocus.current = document.activeElement instanceof HTMLElement ? document.activeElement : null; setGiphyPickerType(kind === "sticker" ? "stickers" : "gifs"); return; } if (visualInput.current) { visualInput.current.accept = kind === "video" ? "video/*" : "image/*"; visualInput.current.click(); } }} onMemeSound={(id) => void addAudioFile(builtInMemeSoundFile(id))} onPreviewMemeSound={(id) => { const url = URL.createObjectURL(builtInMemeSoundFile(id)); const audio = new Audio(url); const release = () => URL.revokeObjectURL(url); audio.addEventListener("ended", release, { once: true }); audio.addEventListener("error", release, { once: true }); void audio.play().catch(release); }} />{giphyPickerType && <GiphyPicker initialType={giphyPickerType} importingId={giphyImportingId} onSelect={importGiphyVisual} onClose={closeGiphyPicker} />}{libraryOpen && <MediaLibraryModal kind="video" onClose={() => setLibraryOpen(false)} onPick={(media) => { setLibraryOpen(false); setPendingScopeMedia(media); }} />}{audioLibraryOpen && <MediaLibraryModal kind="audio" onClose={() => setAudioLibraryOpen(false)} onPick={(media) => { rememberEditorState(); const timelineDuration = computeTimelineDuration(segments); const sourceEnd = timelineDuration || 30; const id = crypto.randomUUID(); setAudioClips((current) => [...current, { id, kind: "soundtrack", mediaId: media.id, name: media.name, sourceStart: 0, sourceEnd, start: 0, end: sourceEnd, volume: 1, row: firstAvailableAudioRow(current, 0, sourceEnd) }]); setSelectedAudioClipId(id); setAudioLibraryOpen(false); }} />}<input ref={audioInput} type="file" accept="audio/*" className="hidden" onChange={(event) => { if (event.target.files?.[0]) void addAudioFile(event.target.files[0]); event.target.value = ""; }} /><input ref={visualInput} type="file" accept="image/*,video/*" className="hidden" onChange={(event) => { if (event.target.files?.[0]) void addVisualFile(event.target.files[0]); event.target.value = ""; }} />{scopeOpen && <UploadScopeDialog platformId={currentPlatform} platformCount={selectedPlatforms.length} onCurrent={() => beginCropFlow(false)} onAll={() => beginCropFlow(true)} onCancel={() => { setPendingScopeMedia(null); setCropTargetId(null); }} />}{cropFlow && <CropModal segment={cropFlow.segment} targetAspect={cropFlowFormat.aspect} initial={cropFlow.segment.crops[cropFlowKey] ?? { x: 0.5, y: 0.5 }} progressLabel={cropFlow.keys.length > 1 ? `Crop ${cropFlow.current + 1} of ${cropFlow.keys.length} · ${platformOf(cropFlowKey)?.name ?? cropFlowKey}` : undefined} actionLabel={cropFlow.current < cropFlow.keys.length - 1 ? "Next crop" : "Save"} onClose={() => setCropFlow(null)} onSave={(crop) => { const updated = { ...cropFlow.segment, crops: { ...cropFlow.segment.crops, [cropFlowKey]: crop } }; if (cropFlow.current < cropFlow.keys.length - 1) { setCropFlow({ ...cropFlow, segment: updated, current: cropFlow.current + 1 }); } else { rememberEditorState(); setSegments((current) => current.some((segment) => segment.id === updated.id) ? current.map((segment) => segment.id === updated.id ? updated : segment) : [...current, updated]); setActiveSegmentId(updated.id); setCropFlow(null); } }} />}</>;

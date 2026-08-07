@@ -2,6 +2,7 @@
 import { mutationGeneric as mutation, queryGeneric as query } from "convex/server";
 import { v } from "convex/values";
 import { byLegacyId, nextNumericId, now } from "./model";
+import { writeNotification } from "./notifications";
 
 export const duePosts = query({
   args: { now: v.string(), limit: v.number() },
@@ -65,11 +66,51 @@ export const recordPublishResult = mutation({
 });
 
 export const patchPostStatus = mutation({
-  args: { id: v.string(), status: v.string(), posted_at: v.union(v.string(), v.null()) },
+  args: {
+    id: v.string(),
+    status: v.string(),
+    posted_at: v.union(v.string(), v.null()),
+    succeeded: v.optional(v.number()),
+    total: v.optional(v.number()),
+    auth_expired: v.optional(v.boolean()),
+  },
   handler: async (ctx, args) => {
     const post = await byLegacyId(ctx, "posts", args.id);
     if (!post) return null;
     await ctx.db.patch(post._id, { status: args.status, posted_at: args.posted_at, updated_at: now() });
+    if (["processing", "posted", "failed"].includes(args.status)) {
+      const partial =
+        args.status === "posted" &&
+        typeof args.total === "number" &&
+        typeof args.succeeded === "number" &&
+        args.succeeded < args.total;
+      const excerpt = post.caption.trim().replace(/\s+/g, " ").slice(0, 90);
+      await writeNotification(ctx, {
+        user_id: post.created_by,
+        workspace_id: post.workspace_id,
+        dedupe_key: `post-publish:${post.id}`,
+        type: "post_publish",
+        status:
+          args.status === "failed" ? "error" : partial ? "warning" : args.status === "posted" ? "success" : "processing",
+        title:
+          args.status === "failed"
+            ? "Post could not be published"
+            : partial
+              ? "Post published with issues"
+              : args.status === "posted"
+                ? "Post published"
+                : "Publishing your post",
+        message:
+          args.status === "failed"
+            ? `${excerpt || "Your post"} failed on every destination. Open Posts for details.`
+            : partial
+              ? `${args.succeeded} of ${args.total} destinations succeeded.${args.auth_expired ? " Reconnect the affected account and try again." : " Open Posts for details."}`
+              : args.status === "posted"
+                ? `${excerpt || "Your post"} reached all ${args.total ?? "selected"} destinations.`
+                : `${excerpt || "Your post"} is being sent to its destinations.`,
+        href: "/dashboard/posts",
+      });
+    }
     return await ctx.db.get(post._id);
   },
 });

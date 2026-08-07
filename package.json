@@ -11,7 +11,8 @@
     "check:filters": "tsc -p scripts/tsconfig.checks.json && node scripts/check-media-filters.mjs",
     "check:analytics": "tsc -p scripts/tsconfig.checks.json && node scripts/check-analytics-shape.mjs",
     "check:aspect": "tsc -p scripts/tsconfig.checks.json && node scripts/check-platform-aspect.mjs",
-    "check": "npm run check:filters && npm run check:analytics && npm run check:aspect"
+    "check": "npm run check:filters && npm run check:analytics && npm run check:aspect && npm run check:notifications",
+    "check:notifications": "tsc -p scripts/tsconfig.checks.json && node scripts/check-notification-rules.mjs"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1089.0",

@@ -35,6 +35,7 @@ export type StudioJobRow = {
   id: string;
   workspace_id: string;
   created_by: string;
+  notification_group_id?: string;
   template: StudioTemplate;
   status: "queued" | "generating" | "compositing" | "done" | "failed";
   params: string;
@@ -53,6 +54,8 @@ export type StudioJobRow = {
 export type StudioParams = {
   /** Destination used for a friendly exported-media filename. */
   output_platform_id?: string;
+  /** Groups per-destination jobs from one Render click into one notification. */
+  render_batch_id?: string;
   media_ids?: string[];
   caption?: string;
   caption_media_id?: string;
@@ -373,10 +376,15 @@ export async function createStudioJob(
     }
   }
 
+  const id = `sjob_${randomBytes(8).toString("hex")}`;
+  const notificationGroupId = typeof input.render_batch_id === "string" && input.render_batch_id.trim()
+    ? input.render_batch_id.slice(0, 100)
+    : id;
   return await convexMutation<StudioJobRow>(api.studioJobs.createJob, {
-    id: `sjob_${randomBytes(8).toString("hex")}`,
+    id,
     workspace_id: workspaceId,
     created_by: userId,
+    notification_group_id: notificationGroupId,
     template,
     params: JSON.stringify(params),
   });

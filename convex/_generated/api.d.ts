@@ -17,6 +17,8 @@ import type * as explore from "../explore.js";
 import type * as imageGenKeys from "../imageGenKeys.js";
 import type * as media from "../media.js";
 import type * as model from "../model.js";
+import type * as notificationRules from "../notificationRules.js";
+import type * as notifications from "../notifications.js";
 import type * as oauth from "../oauth.js";
 import type * as posts from "../posts.js";
 import type * as publish from "../publish.js";
@@ -46,6 +48,8 @@ declare const fullApi: ApiFromModules<{
   imageGenKeys: typeof imageGenKeys;
   media: typeof media;
   model: typeof model;
+  notificationRules: typeof notificationRules;
+  notifications: typeof notifications;
   oauth: typeof oauth;
   posts: typeof posts;
   publish: typeof publish;
