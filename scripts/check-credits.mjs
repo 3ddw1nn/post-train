@@ -60,7 +60,8 @@ ok("no plan is as generous as the old unsustainable flat cap",
   ["creator", "growth", "pro"].every((p) => E.studioAiMonthlyCredits(sub(p)) < 240));
 
 // ── Credit top-up packs ────────────────────────────────────────────────────
-const { CREDIT_PACKS } = require("../node_modules/.cache/checks/lib/billing-data.js");
+const B = require("../node_modules/.cache/checks/lib/billing-data.js");
+const { CREDIT_PACKS, creditsForDollars, CREDIT_BASE_RATE, CREDIT_MIN_DOLLARS, CREDIT_MAX_DOLLARS } = B;
 ok("packs exist", Array.isArray(CREDIT_PACKS) && CREDIT_PACKS.length > 0);
 ok("pack ids are unique", new Set(CREDIT_PACKS.map((p) => p.id)).size === CREDIT_PACKS.length);
 
@@ -93,6 +94,42 @@ console.log(
   `NOTE  cheapest top-up $${cheapestPackRate.toFixed(3)}/credit vs $${MARGINAL_PLAN_RATE.toFixed(2)}/credit to upgrade` +
   ` — top-ups currently ${cheapestPackRate < MARGINAL_PLAN_RATE ? "UNDERCUT upgrading" : "cost more than upgrading"}`,
 );
+
+// ── Custom top-up amounts (creditsForDollars) ──────────────────────────────
+// This converts money to credits, so it gets the strictest assertions here.
+
+// Exact at every pack price, or a custom amount and the pack it matches would
+// disagree. This is why the conversion multiplies before dividing.
+for (const pack of CREDIT_PACKS) {
+  ok(`$${pack.price} custom == the ${pack.id} pack (${pack.credits}cr)`,
+    creditsForDollars(pack.price) === pack.credits,
+    `got ${creditsForDollars(pack.price)}`);
+}
+
+// The minimum must actually buy something — charging $2 for 0 credits is theft.
+ok(`the $${CREDIT_MIN_DOLLARS} minimum buys at least 1 credit`,
+  creditsForDollars(CREDIT_MIN_DOLLARS) >= 1, String(creditsForDollars(CREDIT_MIN_DOLLARS)));
+
+// More money must never buy fewer credits, and no amount may beat the best
+// pack's rate or the packs become a trap for the customers spending most.
+const bestPackRate = Math.max(...CREDIT_PACKS.map((p) => p.credits / p.price)); // credits per $
+let monotonic = true, arbitrage = null, everFree = null;
+for (let d = CREDIT_MIN_DOLLARS; d <= CREDIT_MAX_DOLLARS; d++) {
+  const c = creditsForDollars(d);
+  if (c < creditsForDollars(d - 1)) monotonic = false;
+  if (c / d > bestPackRate + 1e-9) arbitrage ??= d;
+  if (c < 1) everFree ??= d;
+}
+ok("more dollars never buys fewer credits", monotonic);
+ok("no custom amount beats the best pack rate", arbitrage === null, `first at $${arbitrage}`);
+ok("no allowed amount buys zero credits", everFree === null, `first at $${everFree}`);
+
+// Below the cheapest pack there's no volume discount, and that base rate still
+// has to clear provider cost.
+ok("base rate clears provider cost", CREDIT_BASE_RATE > USD_PER_CREDIT,
+  `$${CREDIT_BASE_RATE} vs $${USD_PER_CREDIT}`);
+ok("amounts under the cheapest pack use the base rate (no free discount)",
+  creditsForDollars(CREDIT_PACKS[0].price - 1) <= (CREDIT_PACKS[0].price - 1) / CREDIT_BASE_RATE + 1e-9);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

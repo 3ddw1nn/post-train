@@ -187,6 +187,8 @@ PLANS AND LIMITS:
 - Creator: 15 connected accounts.
 - Growth: 50 connected accounts.
 - Pro: unlimited connected accounts and posts.
+- AI video credits (AI UGC Video Studio only): 1 credit = 5 seconds of video, so a 15s video costs 3. Monthly allowance by plan — Creator 60, Growth 100, Pro 200 — shared across all workspaces the subscriber owns, resetting each calendar month. Trials are capped at 20 credits. Failed renders are not charged.
+- Out of credits? Buy a top-up on Settings > Billing: fixed packs (50 for $19, 150 for $49, 400 for $119) or any custom amount from $2. Top-ups never expire and are only spent after the monthly allowance is used up. Posting, scheduling, and analytics never use credits.
 - All paid plans are unlimited on posts; cancel anytime; refunds within 7 days of any charge, no interview required.
 - Scheduled posts go out through each platform's official API, so they are not penalized versus posting manually.
 

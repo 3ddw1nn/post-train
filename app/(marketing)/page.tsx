@@ -38,6 +38,10 @@ const FAQ: [string, string][] = [
     "Paid plans are unlimited. The free tier includes 5 posts, and each destination account counts as one — posting once to 4 platforms uses 4.",
   ],
   [
+    "How do AI video credits work?",
+    "The AI UGC Video Studio turns a script and an AI creator into a talking-head video, and those runs use credits. 1 credit renders 5 seconds, so a 15-second video costs 3. Every paid plan includes a monthly allowance — 60 credits on Creator, 100 on Growth, 200 on Pro — which resets each month. Need more? Top-ups start at $2, never expire, and are only spent once your monthly allowance runs out. Everything else on Post Train (posting, scheduling, analytics) is unlimited and uses no credits.",
+  ],
+  [
     "What content types can I post?",
     "Text, images (including carousels), video, and stories (Facebook & Instagram). Per-platform tweaks like YouTube titles or TikTok draft mode are built in.",
   ],

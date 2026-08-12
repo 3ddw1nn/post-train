@@ -26,6 +26,7 @@ export const PLANS: Record<
       "Carousels & bulk scheduling",
       "Content studio templates",
       "5 GB workspace storage",
+      "60 AI video credits/month",
       "Analytics",
       "API + MCP access (60 req/min)",
       "Human support",
@@ -42,6 +43,7 @@ export const PLANS: Record<
       "Everything in Creator",
       "Invite team members",
       "25 GB workspace storage",
+      "100 AI video credits/month",
       "API + MCP access (300 req/min)",
       "Viral growth consulting",
       "Priority human support",
@@ -59,6 +61,7 @@ export const PLANS: Record<
       "Everything in Growth",
       "Create & manage teams",
       "100 GB workspace storage",
+      "200 AI video credits/month",
       "API + MCP access (1,000 req/min)",
       "Priority human support",
     ],
@@ -96,3 +99,32 @@ export const CREDIT_PACKS: CreditPack[] = [
   { id: "medium", credits: 150, price: 49 },
   { id: "large", credits: 400, price: 119 },
 ];
+
+/** Custom top-up bounds. The floor keeps Stripe's per-transaction fee from
+ *  eating the sale; the ceiling is a fat-finger and fraud guard. */
+export const CREDIT_MIN_DOLLARS = 2;
+export const CREDIT_MAX_DOLLARS = 500;
+/** $/credit for amounts below the cheapest pack — no volume discount yet. */
+export const CREDIT_BASE_RATE = 0.45;
+
+/**
+ * Credits a custom dollar amount buys, on the same volume curve as the packs:
+ * the rate of the largest pack the spend reaches, or the base rate below that.
+ * Spending exactly a pack's price yields exactly that pack, so custom amounts
+ * and packs can never disagree and neither can be arbitraged against the other.
+ *
+ * Integer arithmetic on purpose. `dollars / (price / credits)` routes through
+ * an inexact intermediate (49/(49/150) is 150.00000000000003) and whether it
+ * floors correctly is a property of the specific numbers — a repricing could
+ * silently start selling 149 credits for the 150 pack. Multiplying first is
+ * exact at every pack price by construction.
+ *
+ * Always floors: rounding must never grant more than was paid for.
+ */
+export function creditsForDollars(dollars: number): number {
+  const tier = [...CREDIT_PACKS]
+    .sort((a, b) => b.price - a.price)
+    .find((pack) => dollars >= pack.price);
+  if (tier) return Math.floor((dollars * tier.credits) / tier.price);
+  return Math.floor((dollars * 100) / (CREDIT_BASE_RATE * 100));
+}

@@ -25,6 +25,28 @@ const ALL_PLATFORM_IDS = [
   "pinterest",
 ];
 
+/**
+ * Tooltip for a plan feature line, matched on substring. Ordered: the first
+ * match wins, so a new entry can't silently steal another's tooltip the way a
+ * bare `includes("accounts")` check would if a feature mentioned accounts in
+ * passing. Keep the keys distinctive.
+ */
+const FEATURE_TIPS: [needle: string, tip: string][] = [
+  [
+    "credits",
+    "AI video credits power the AI UGC Video Studio. 1 credit renders 5 seconds of video, so a longer script costs more. Unused credits don't roll over, and you can buy top-ups any time.",
+  ],
+  [
+    "accounts",
+    "A social account is one profile/page/channel on a platform. Connect multiple accounts per platform.",
+  ],
+];
+
+function featureTip(feature: string): string | null {
+  const lower = feature.toLowerCase();
+  return FEATURE_TIPS.find(([needle]) => lower.includes(needle))?.[1] ?? null;
+}
+
 export function PlanPicker({
   mode,
   currentPlan,
@@ -118,9 +140,7 @@ export function PlanPicker({
                     </span>
                     <span className="flex items-center gap-1.5">
                       {f}
-                      {f.includes("accounts") && (
-                        <InfoTip text="A social account is one profile/page/channel on a platform. Connect multiple accounts per platform." />
-                      )}
+                      {featureTip(f) && <InfoTip text={featureTip(f)!} />}
                     </span>
                   </li>
                 ))}

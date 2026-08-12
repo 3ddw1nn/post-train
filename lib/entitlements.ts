@@ -79,13 +79,20 @@ export function apiRateLimit(sub: Subscription | null): number {
 
 export const studioAccess = (sub: Subscription | null) => entitled(sub);
 
+/** Start of the current allowance period. Calendar month, UTC — simple and
+ *  independent of each subscriber's Stripe billing anchor. */
+export const monthStartIso = () => {
+  const d = new Date();
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01T00:00:00.000Z`;
+};
+
 /**
  * 1 credit = 5 seconds of avatar video (~$0.125 of Replicate spend).
  *
- * Lives here rather than in lib/studio.ts so the server, the wizard UI, and
- * scripts/check-credits.mjs all price a render from one definition — studio.ts
- * pulls in ffmpeg and node built-ins and can't be imported by a client
- * component or compiled standalone.
+ * The credit helpers live here rather than in lib/studio.ts so the server, the
+ * wizard UI, the billing page, and scripts/check-credits.mjs all price a render
+ * from one definition — studio.ts pulls in ffmpeg and node built-ins and can't
+ * be imported by a client component or compiled standalone.
  */
 export const SECONDS_PER_CREDIT = 5;
 export function creditsForSeconds(seconds: number): number {
@@ -101,8 +108,8 @@ export function creditsForSeconds(seconds: number): number {
  * Scoped to the account rather than the workspace on purpose — ownedWorkspaceCap
  * lets Pro hold 6 workspaces, so a per-workspace cap sold 6x what we priced.
  *
- * ponytail: allowance only, no top-up packs yet. Upgrade path is a credit
- * ledger plus one-time Stripe Checkout packs, consumed after the allowance.
+ * This is the included allowance only. Purchased top-ups live in the
+ * credit_ledger and are spent after it runs out — see convex/credits.ts.
  */
 export function studioAiMonthlyCredits(sub: Subscription | null): number {
   const base = { free: 0, creator: 60, growth: 100, pro: 200 }[planOf(sub)];

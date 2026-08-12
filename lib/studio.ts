@@ -25,7 +25,7 @@ import {
 } from "./ffmpeg";
 import { MOCK_OUTPUT_URL, studioMock, type ProviderJobState } from "./creatify";
 import { DEFAULT_VOICE, imageDataUri, pollAvatarJob, replicateEnabled, stockPersonaImage, submitAvatarJob, VOICES } from "./replicate-avatar";
-import { creditsForSeconds, studioAiMonthlyCredits } from "./entitlements";
+import { creditsForSeconds, monthStartIso, studioAiMonthlyCredits } from "./entitlements";
 import { getSubscription } from "./billing";
 import { VIDEO_PRESETS, normalizeVideoFps, videoAspectById, videoPresetById } from "./video-render-settings";
 import { DEFAULT_TRANSITION_DURATION, DEFAULT_TRANSITION_ID, clampTransitionDuration, isTransitionId } from "./transitions";
@@ -139,11 +139,6 @@ async function uploadedKinds(ids: string[]): Promise<Map<string, string>> {
   const rows = await convexQuery<{ id: string; kind: string }[]>(api.media.getUploadedKinds, { ids });
   return new Map(rows.map((r) => [r.id, r.kind]));
 }
-
-const monthStartIso = () => {
-  const d = new Date();
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01T00:00:00.000Z`;
-};
 
 /**
  * AI UGC credits used and included this month, in credits (not renders).

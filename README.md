@@ -25,7 +25,7 @@
 - **AI UGC Video Studio** — generate, tailor, and schedule talking-head videos
   - **Original stock personas** via Replicate P-Video Avatar
   - **Custom personas** via Replicate P-Video Avatar (upload a face → AI avatar)
-- Monthly generation cap per workspace; purchasable credits
+- Metered in credits (1 credit = 5s of video) with a monthly per-plan allowance, plus purchasable top-ups
 
 ### 📊 Analytics
 - Per-post engagement tracking
@@ -254,7 +254,11 @@ Output: 720p vertical talking-head video (up to 60s) + optional CTA clip
 Cost: ~$0.75 per 30s at 720p (pay-as-you-go)
 ```
 
-Monthly cap: **30 AI generations/month** per workspace (flat rate). Grid/fade-in uncapped.
+Metered in **credits**: 1 credit = 5s of video, so a render costs more the longer its script.
+Monthly allowance per **subscriber** (shared across every workspace they own, not per workspace):
+Creator 60, Growth 100, Pro 200; trials capped at 20. Out of allowance, purchased top-ups are
+spent next — fixed packs or any custom amount from $2. Grid/fade-in/slideshow are uncapped
+(they render locally with ffmpeg and cost nothing per run).
 
 ---
 

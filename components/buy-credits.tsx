@@ -5,21 +5,33 @@
 // Both POST to /api/billing/credits and hand off to Stripe Checkout — nothing
 // is granted client-side; the webhook credits the ledger once payment clears.
 import { useState } from "react";
-import { CREDIT_PACKS } from "@/lib/billing-data";
+import {
+  CREDIT_MAX_DOLLARS,
+  CREDIT_MIN_DOLLARS,
+  CREDIT_PACKS,
+  creditsForDollars,
+} from "@/lib/billing-data";
+import { SECONDS_PER_CREDIT } from "@/lib/entitlements";
 import { Icon } from "./icons";
+
+/** "~55s" / "~4 min" — credits mean nothing on their own. */
+function describeCredits(credits: number): string {
+  const seconds = credits * SECONDS_PER_CREDIT;
+  return seconds < 90 ? `~${seconds}s of video` : `~${Math.round(seconds / 60)} min of video`;
+}
 
 function useCheckout() {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  async function buy(packId: string) {
+  async function buy(packId: string, amount?: number) {
     setPending(packId);
     setError("");
     try {
       const response = await fetch("/api/billing/credits", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ pack: packId }),
+        body: JSON.stringify(amount === undefined ? { pack: packId } : { amount }),
       });
       const data = await response.json().catch(() => null);
       if (!response.ok || !data?.url) {
@@ -56,6 +68,107 @@ export function BuyCreditsButton() {
   );
 }
 
+/**
+ * Monthly allowance bar. Shared by the billing page and the AI UGC studio so
+ * the two can't drift in how a balance is presented.
+ */
+export function CreditAllowanceMeter({
+  used,
+  cap,
+  purchased,
+  surface = "page",
+}: {
+  used: number;
+  cap: number;
+  purchased: number;
+  /** Track colour, so the bar reads on both white cards and grey panels. */
+  surface?: "page" | "white";
+}) {
+  const left = Math.max(0, cap - used);
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-3">
+        <span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">
+          Left this month
+        </span>
+        <span className="text-sm font-bold tabular-nums text-ink">
+          {left} <span className="font-semibold text-muted">of {cap}</span>
+        </span>
+      </div>
+      <div
+        className={`mt-2 h-1.5 overflow-hidden rounded-full ${surface === "white" ? "bg-page" : "bg-white"}`}
+        role="progressbar"
+        aria-label="AI credits used this month"
+        aria-valuemin={0}
+        aria-valuemax={cap}
+        aria-valuenow={Math.min(used, cap)}
+      >
+        <div
+          className={`h-full rounded-full transition-[width] ${left === 0 ? "bg-danger" : "bg-primary"}`}
+          style={{ width: `${cap > 0 ? Math.min(100, (used / cap) * 100) : 100}%` }}
+        />
+      </div>
+      {purchased > 0 && (
+        <p className="mt-2 flex items-center justify-between gap-3 text-xs font-semibold text-muted">
+          <span>+ top-up credits</span>
+          <span className="tabular-nums text-ink">{purchased}</span>
+        </p>
+      )}
+    </div>
+  );
+}
+
+/** Amount box for buying an arbitrary top-up. */
+function CustomAmount({ pending, onBuy }: { pending: string | null; onBuy: (dollars: number) => void }) {
+  const [value, setValue] = useState("");
+  const dollars = Number(value);
+  const valid =
+    Number.isFinite(dollars) && dollars >= CREDIT_MIN_DOLLARS && dollars <= CREDIT_MAX_DOLLARS;
+  const credits = valid ? creditsForDollars(dollars) : 0;
+
+  return (
+    <div className="mt-3 rounded-xl border border-line p-4">
+      <div className="flex flex-wrap items-end gap-3">
+        <label className="block">
+          <span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">
+            Or enter an amount
+          </span>
+          <span className="mt-1.5 flex items-center gap-1.5">
+            <span className="text-sm font-bold text-muted">$</span>
+            <input
+              type="number"
+              inputMode="decimal"
+              min={CREDIT_MIN_DOLLARS}
+              max={CREDIT_MAX_DOLLARS}
+              step="1"
+              value={value}
+              onChange={(e) => setValue(e.target.value)}
+              placeholder={String(CREDIT_MIN_DOLLARS)}
+              aria-label="Custom top-up amount in dollars"
+              className="input !w-28 !py-1.5"
+            />
+          </span>
+        </label>
+        <button
+          type="button"
+          onClick={() => onBuy(dollars)}
+          disabled={!valid || !!pending}
+          className="btn-subtle !py-1.5 text-sm disabled:opacity-50"
+        >
+          {pending === "custom" ? "Starting…" : (<><Icon name="plus" size={14} /> Buy</>)}
+        </button>
+        <p className="text-xs font-semibold text-muted">
+          {value === ""
+            ? `Minimum $${CREDIT_MIN_DOLLARS}, maximum $${CREDIT_MAX_DOLLARS}.`
+            : valid
+              ? `${credits} credits · ${describeCredits(credits)}`
+              : `Enter $${CREDIT_MIN_DOLLARS}–$${CREDIT_MAX_DOLLARS}.`}
+        </p>
+      </div>
+    </div>
+  );
+}
+
 /** Full pack picker for the billing page. */
 export function CreditPackPicker({ purchased }: { purchased: number }) {
   const { pending, error, buy } = useCheckout();
@@ -69,7 +182,8 @@ export function CreditPackPicker({ purchased }: { purchased: number }) {
       </div>
       <p className="mt-1 text-xs leading-5 text-muted">
         Your plan includes a monthly AI allowance. Top-ups cover anything beyond it, never
-        expire, and are only spent once the monthly allowance runs out.
+        expire, and are only spent once the monthly allowance runs out. Bigger amounts get a
+        better rate.
       </p>
       <div className="mt-4 grid gap-3 sm:grid-cols-3">
         {CREDIT_PACKS.map((pack) => (
@@ -78,7 +192,7 @@ export function CreditPackPicker({ purchased }: { purchased: number }) {
               {pack.credits} <span className="text-sm font-bold text-muted">credits</span>
             </p>
             <p className="mt-0.5 text-xs font-semibold text-muted">
-              ${pack.price} · about {Math.round((pack.credits * 5) / 60)} min of video
+              ${pack.price} · {describeCredits(pack.credits)}
             </p>
             <button
               type="button"
@@ -91,6 +205,7 @@ export function CreditPackPicker({ purchased }: { purchased: number }) {
           </div>
         ))}
       </div>
+      <CustomAmount pending={pending} onBuy={(dollars) => void buy("custom", dollars)} />
       {error && <p className="mt-2 text-xs font-semibold text-danger">{error}</p>}
     </div>
   );

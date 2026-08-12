@@ -31,7 +31,7 @@ import { useEditGuard } from "./edit-guard";
 import { localDateInputValue, nextMinuteInputValue, isPastSchedule, isPastToday } from "@/lib/format";
 import { CaptionCopyButton } from "./caption-copy-button";
 import { SECONDS_PER_CREDIT, creditsForSeconds } from "@/lib/entitlements";
-import { BuyCreditsButton } from "./buy-credits";
+import { BuyCreditsButton, CreditAllowanceMeter } from "./buy-credits";
 
 export type AiUgcAccount = {
   id: number;
@@ -421,7 +421,9 @@ export function AiUgcStudio({
     selectedAccounts.length > 0 &&
     script.trim().length > 0 &&
     (personaTab === "stock" ? !!personaId : !!personaImage) &&
-    aiLeft > 0;
+    // Purchased top-ups fund a render too, so gating on the allowance alone
+    // would lock out someone who has credits banked but none left this month.
+    creditsAvailable >= videoCredits;
   const scheduledLabel = new Date(`${publishDate}T${publishTime || "00:00"}`).toLocaleString(
     undefined,
     { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" },
@@ -1281,33 +1283,7 @@ export function AiUgcStudio({
                   </p>
 
                   <div className="mt-3 border-t border-line pt-3">
-                    <div className="flex items-baseline justify-between gap-3">
-                      <span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">
-                        Left this month
-                      </span>
-                      <span className="text-sm font-bold tabular-nums text-ink">
-                        {aiLeft} <span className="font-semibold text-muted">of {aiCap}</span>
-                      </span>
-                    </div>
-                    <div
-                      className="mt-2 h-1.5 overflow-hidden rounded-full bg-white"
-                      role="progressbar"
-                      aria-label="AI credits used this month"
-                      aria-valuemin={0}
-                      aria-valuemax={aiCap}
-                      aria-valuenow={Math.min(aiUsed, aiCap)}
-                    >
-                      <div
-                        className={`h-full rounded-full transition-[width] ${aiLeft === 0 ? "bg-danger" : "bg-primary"}`}
-                        style={{ width: `${aiCap > 0 ? Math.min(100, (aiUsed / aiCap) * 100) : 100}%` }}
-                      />
-                    </div>
-                    {aiPurchased > 0 && (
-                      <p className="mt-2 flex items-center justify-between gap-3 text-xs font-semibold text-muted">
-                        <span>+ top-up credits</span>
-                        <span className="tabular-nums text-ink">{aiPurchased}</span>
-                      </p>
-                    )}
+                    <CreditAllowanceMeter used={aiUsed} cap={aiCap} purchased={aiPurchased} />
                   </div>
 
                   {notEnoughCredits && (
@@ -1654,8 +1630,8 @@ export function AiUgcStudio({
               {showValidationErrors && (!createReady || (!rendering && !outputIsCurrent)) && (
                 <p className="text-xs font-semibold text-danger" role="alert">
                   {!createReady
-                    ? aiLeft <= 0
-                      ? "This workspace has no AI generations left this month."
+                    ? creditsAvailable <= 0
+                      ? "You're out of AI credits — buy a top-up or upgrade to keep generating."
                       : "Fill in the highlighted fields above."
                     : "Generate a video before continuing."}
                 </p>

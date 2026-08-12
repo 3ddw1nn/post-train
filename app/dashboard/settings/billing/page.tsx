@@ -2,11 +2,11 @@ import Link from "next/link";
 import { requireOnboardedUser } from "@/lib/auth";
 import { getSubscription } from "@/lib/billing";
 import { PLANS, type PaidPlan } from "@/lib/billing-data";
-import { entitled, apiAccess, apiRateLimit } from "@/lib/entitlements";
+import { entitled, apiAccess, apiRateLimit, studioAiMonthlyCredits, monthStartIso } from "@/lib/entitlements";
 import { Pill } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { ActionButton } from "@/components/interactive";
-import { CreditPackPicker } from "@/components/buy-credits";
+import { CreditPackPicker, CreditAllowanceMeter } from "@/components/buy-credits";
 import { convexQuery } from "@/lib/db";
 import { api } from "@/convex/_generated/api";
 
@@ -18,15 +18,16 @@ export default async function BillingPage() {
   const plan = sub && sub.plan !== "free" ? PLANS[sub.plan as PaidPlan] : null;
   const live = entitled(sub);
   const price = plan ? (sub!.interval === "year" ? plan.yearly : plan.monthly) : 0;
-  // Balance is read with the plan allowance zeroed — only the purchased side
-  // is shown here; the monthly allowance is surfaced inside the studio.
-  const purchasedCredits = live
-    ? (await convexQuery<{ purchased: number }>(api.credits.balanceForOwner, {
+  // Account-scoped, matching how the allowance is enforced: one pool shared
+  // across every workspace this user owns.
+  const aiAllowance = studioAiMonthlyCredits(sub);
+  const credits = live
+    ? await convexQuery<{ allowance_used: number; purchased: number }>(api.credits.balanceForOwner, {
         owner_id: user.id,
-        allowance: 0,
-        since: new Date().toISOString(),
-      })).purchased
-    : 0;
+        allowance: aiAllowance,
+        since: monthStartIso(),
+      })
+    : { allowance_used: 0, purchased: 0 };
 
   if (user.is_staff) {
     return (
@@ -207,7 +208,26 @@ export default async function BillingPage() {
 
         {live && (
           <div className="border-t border-line p-5">
-            <CreditPackPicker purchased={purchasedCredits} />
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <h3 className="font-bold">AI video credits</h3>
+                <p className="mt-0.5 text-sm text-muted">
+                  Used by the AI UGC Video Studio. 1 credit renders 5 seconds of video, so a
+                  longer script costs more.
+                </p>
+              </div>
+              <div className="w-full max-w-xs">
+                <CreditAllowanceMeter
+                  used={credits.allowance_used}
+                  cap={aiAllowance}
+                  purchased={credits.purchased}
+                  surface="white"
+                />
+              </div>
+            </div>
+            <div className="mt-5 border-t border-line pt-5">
+              <CreditPackPicker purchased={credits.purchased} />
+            </div>
           </div>
         )}
       </section>

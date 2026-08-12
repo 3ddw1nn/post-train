@@ -3,7 +3,7 @@
 // this file only issues Stripe API calls and mirrors the immediate result
 // into Convex so the UI doesn't have to wait a round trip for the webhook.
 import { convexMutation, convexQuery, now } from "./db";
-import { PLANS, API_ADDON, TRIAL_DAYS, CREDIT_PACKS, type PaidPlan } from "./billing-data";
+import { PLANS, API_ADDON, TRIAL_DAYS, CREDIT_PACKS, creditsForDollars, type PaidPlan } from "./billing-data";
 import { stripe, planPriceId, addonPriceId, creditPackPriceId } from "./stripe";
 import { api } from "@/convex/_generated/api";
 
@@ -59,6 +59,51 @@ export async function createCreditPackCheckout(
     client_reference_id: userId,
     // Read back by the webhook — the price-id reverse lookup is the fallback.
     metadata: { user_id: userId, credit_pack: pack.id, credits: String(pack.credits) },
+    ...(existing?.stripe_customer_id
+      ? { customer: existing.stripe_customer_id }
+      : { customer_email: userEmail }),
+    success_url: `${origin}/dashboard/settings/billing?credits=success`,
+    cancel_url: `${origin}/dashboard/settings/billing`,
+  });
+  if (!session.url) throw new Error("Stripe did not return a checkout URL.");
+  return session.url;
+}
+
+/**
+ * Buy a custom-sized top-up. Same one-time `mode: "payment"` flow as a pack,
+ * but with an inline `price_data` line item, so an arbitrary amount needs no
+ * pre-created Stripe price.
+ *
+ * `dollars` must already be validated by the caller. Credits are derived here
+ * from the amount rather than accepted from anywhere — the number the customer
+ * is charged and the number they are granted come from the same input.
+ */
+export async function createCustomCreditCheckout(
+  userId: string,
+  userEmail: string,
+  dollars: number,
+  origin: string
+): Promise<string> {
+  const credits = creditsForDollars(dollars);
+  if (credits < 1) throw new Error("That amount does not buy any credits.");
+  const existing = await getSubscription(userId);
+  const session = await stripe().checkout.sessions.create({
+    mode: "payment",
+    line_items: [
+      {
+        price_data: {
+          currency: "usd",
+          unit_amount: Math.round(dollars * 100),
+          product_data: {
+            name: `${credits} AI credits`,
+            description: `One-time top-up of ${credits} AI UGC credits. Never expires.`,
+          },
+        },
+        quantity: 1,
+      },
+    ],
+    client_reference_id: userId,
+    metadata: { user_id: userId, credit_pack: "custom", credits: String(credits) },
     ...(existing?.stripe_customer_id
       ? { customer: existing.stripe_customer_id }
       : { customer_email: userEmail }),
