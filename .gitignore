@@ -8,3 +8,7 @@ next-env.d.ts
 .DS_Store
 .vercel
 .env*
+
+# Agent tooling — installed per-user, not project deps
+.claude/
+.agents/

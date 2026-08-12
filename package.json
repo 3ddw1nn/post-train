@@ -11,7 +11,8 @@
     "check:filters": "tsc -p scripts/tsconfig.checks.json && node scripts/check-media-filters.mjs",
     "check:analytics": "tsc -p scripts/tsconfig.checks.json && node scripts/check-analytics-shape.mjs",
     "check:aspect": "tsc -p scripts/tsconfig.checks.json && node scripts/check-platform-aspect.mjs",
-    "check": "npm run check:filters && npm run check:analytics && npm run check:aspect && npm run check:notifications",
+    "check:credits": "tsc -p scripts/tsconfig.checks.json && node scripts/check-credits.mjs",
+    "check": "npm run check:filters && npm run check:analytics && npm run check:aspect && npm run check:notifications && npm run check:credits",
     "check:notifications": "tsc -p scripts/tsconfig.checks.json && node scripts/check-notification-rules.mjs"
   },
   "dependencies": {

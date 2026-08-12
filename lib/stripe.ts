@@ -1,5 +1,5 @@
 import Stripe from "stripe";
-import type { PaidPlan } from "./billing-data";
+import { CREDIT_PACKS, type PaidPlan } from "./billing-data";
 
 let client: Stripe | null = null;
 
@@ -30,6 +30,19 @@ export function planPriceId(plan: PaidPlan, interval: "month" | "year"): string 
 
 export function addonPriceId(interval: "month" | "year"): string {
   return priceId(interval === "month" ? "STRIPE_PRICE_ADDON_MONTHLY" : "STRIPE_PRICE_ADDON_YEARLY");
+}
+
+/** One-time credit packs — env var per pack id, e.g. STRIPE_PRICE_CREDITS_SMALL. */
+export function creditPackPriceId(packId: string): string {
+  return priceId(`STRIPE_PRICE_CREDITS_${packId.toUpperCase()}`);
+}
+
+/** Reverse-lookup for the purchase webhook: Stripe price id -> our pack id. */
+export function creditPackFromPriceId(id: string): string | null {
+  for (const pack of CREDIT_PACKS) {
+    if (process.env[`STRIPE_PRICE_CREDITS_${pack.id.toUpperCase()}`] === id) return pack.id;
+  }
+  return null;
 }
 
 /** Reverse-lookup: Stripe price id -> our plan/interval, for webhook events. */

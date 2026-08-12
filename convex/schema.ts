@@ -76,6 +76,31 @@ export default defineSchema({
     .index("by_user", ["user_id"])
     .index("by_stripe_customer", ["stripe_customer_id"]),
 
+  // Append-only record of purchased AI credits and the spending of them.
+  // Scoped to the subscriber (user_id), matching studioAiMonthlyCredits.
+  //
+  // Only the PURCHASED side lives here. The monthly allowance is derived by
+  // summing studio_jobs.credits since the period start, so an allowance-only
+  // render writes no ledger row — that keeps pre-ledger job history counted
+  // (see studioJobs.creditsUsedSince) instead of silently refunding it.
+  credit_ledger: defineTable({
+    id: v.string(),
+    user_id: v.string(),
+    kind: v.string(), // purchase | spend | refund
+    // Always positive. `kind` carries the direction so a sum is never
+    // accidentally signed the wrong way.
+    credits: v.number(),
+    reason: v.string(), // top-up | ai-ugc | ...
+    ref_id: nullableString, // studio job id for spend, pack id for purchase
+    // Set on purchases only, and the idempotency key: Stripe retries webhooks,
+    // so a second delivery for the same session must not grant twice.
+    stripe_session_id: v.optional(nullableString),
+    created_at: v.string(),
+  })
+    .index("by_legacy_id", ["id"])
+    .index("by_user", ["user_id"])
+    .index("by_stripe_session", ["stripe_session_id"]),
+
   social_accounts: defineTable({
     id: v.number(),
     workspace_id: v.string(),
@@ -252,6 +277,10 @@ export default defineSchema({
     error_message: nullableString,
     attempts: v.number(),
     lease_until: nullableString,
+    // Metered cost of this render (ai-ugc only; 1 credit = 5s of video).
+    // Optional because rows created before metering carry no value — readers
+    // fall back to 1 rather than 0 so history can't be replayed for free.
+    credits: v.optional(v.number()),
     created_at: v.string(),
     updated_at: v.string(),
   })

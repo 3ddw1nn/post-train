@@ -49,9 +49,23 @@ Use this document for launch readiness. `TODO.md` holds product and platform wor
 - [ ] Do NOT recreate the API add-on prices — API + MCP access now ships with every
       paid plan (`lib/entitlements.ts` → `apiAccess`), so the add-on would grant nothing.
       Remove `STRIPE_PRICE_ADDON_*` from the live env once no subscriber holds it.
+- [ ] Create the AI credit top-up products in live mode as **one-time** prices (not
+      recurring — `createCreditPackCheckout` uses `mode: "payment"`). One per pack in
+      `lib/billing-data.ts` → `CREDIT_PACKS`, each exported as
+      `STRIPE_PRICE_CREDITS_<ID>` in upper case:
+      `STRIPE_PRICE_CREDITS_SMALL` (50 credits, $19),
+      `STRIPE_PRICE_CREDITS_MEDIUM` (150, $49),
+      `STRIPE_PRICE_CREDITS_LARGE` (400, $119).
+      Prices must match the pack table or customers are charged the Stripe amount
+      while being granted the local credit count.
 - [ ] Set live Stripe keys in Vercel production
 - [ ] Register `https://posttrain.app/api/webhooks/stripe` as the live Stripe webhook
 - [ ] Send a real-card checkout through each critical path: start trial, change plan, cancel, resume, and webhook sync
+- [ ] Buy one credit pack end to end and confirm the balance rises on
+      `/dashboard/settings/billing`. Then **replay the same webhook event** from the
+      Stripe dashboard and confirm the balance does NOT rise twice — the grant is
+      idempotent on `stripe_session_id`, and that guard is the only thing between a
+      Stripe retry and free credits.
 - [ ] Verify a plan change updates the workspace storage allowance correctly
 
 ### 4. Production email identity

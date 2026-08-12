@@ -26,7 +26,12 @@ export async function GET() {
     const user = await requireUser();
     const ws = await currentWorkspace(user);
     const [jobs, usage] = await Promise.all([listStudioJobs(ws.id), aiUsageThisMonth(ws.id)]);
-    return Response.json({ data: jobs, ai_used: usage.used, ai_cap: usage.cap });
+    return Response.json({
+      data: jobs,
+      ai_used: usage.used,
+      ai_cap: usage.cap,
+      ai_purchased: usage.purchased,
+    });
   } catch (e) {
     return jsonError(e);
   }

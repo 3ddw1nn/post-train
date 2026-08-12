@@ -1,5 +1,6 @@
 import Stripe from "stripe";
-import { stripe, planFromPriceId, isAddonPriceId } from "@/lib/stripe";
+import { stripe, planFromPriceId, isAddonPriceId, creditPackFromPriceId } from "@/lib/stripe";
+import { CREDIT_PACKS } from "@/lib/billing-data";
 import { convexMutation, convexQuery, now, uid } from "@/lib/db";
 import { api } from "@/convex/_generated/api";
 
@@ -22,6 +23,12 @@ export async function POST(req: Request) {
     case "checkout.session.completed": {
       const session = event.data.object as Stripe.Checkout.Session;
       const userId = session.client_reference_id;
+      // One-time AI credit pack. Granted here rather than at checkout creation
+      // so an abandoned or failed payment can't mint credits.
+      if (session.mode === "payment") {
+        if (userId && session.payment_status === "paid") await grantCreditsFromSession(userId, session);
+        break;
+      }
       if (!userId || session.mode !== "subscription" || !session.subscription) break;
       const stripeSub = await stripe().subscriptions.retrieve(session.subscription as string);
       await upsertFromStripeSubscription(userId, stripeSub);
@@ -54,6 +61,34 @@ export async function POST(req: Request) {
   }
 
   return Response.json({ ok: true });
+}
+
+/**
+ * Credit a paid top-up to the ledger.
+ *
+ * Idempotent on the session id inside the Convex mutation, which matters:
+ * Stripe retries deliveries, and a duplicate here would be free credits.
+ * Session metadata is the primary source for how many credits were bought;
+ * the line item's price id is the fallback if metadata is ever missing.
+ */
+async function grantCreditsFromSession(userId: string, session: Stripe.Checkout.Session) {
+  let packId = session.metadata?.credit_pack ?? null;
+  let credits = Number(session.metadata?.credits ?? 0);
+  if (!packId || !Number.isFinite(credits) || credits <= 0) {
+    const items = await stripe().checkout.sessions.listLineItems(session.id, { limit: 1 });
+    const priceId = items.data[0]?.price?.id;
+    packId = priceId ? creditPackFromPriceId(priceId) : null;
+    credits = CREDIT_PACKS.find((p) => p.id === packId)?.credits ?? 0;
+  }
+  if (!packId || credits <= 0) return; // not a pack we recognise — leave it alone
+  await convexMutation(api.credits.grantPurchase, {
+    id: uid(),
+    user_id: userId,
+    credits,
+    reason: "top-up",
+    ref_id: packId,
+    stripe_session_id: session.id,
+  });
 }
 
 async function resolveUserId(stripeSub: Stripe.Subscription): Promise<string | null> {

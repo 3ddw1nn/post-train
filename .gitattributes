@@ -1,0 +1,7 @@
+# Keep GitHub's language stats reflecting our code, not tooling.
+# Agent skill bundles are third-party payloads, not app source.
+.claude/** linguist-vendored
+.agents/** linguist-vendored
+
+# Convex codegen output.
+convex/_generated/** linguist-generated

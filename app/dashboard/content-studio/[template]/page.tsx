@@ -69,9 +69,9 @@ export default async function StudioTemplatePage({
           username: account.username,
           avatar_url: account.avatar_url,
         }))}
-        avatarPerSecond={0.025}
         aiUsed={usage.used}
         aiCap={usage.cap}
+        aiPurchased={usage.purchased}
       />
     );
   }

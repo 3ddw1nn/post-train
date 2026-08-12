@@ -13,6 +13,7 @@ import type * as analytics from "../analytics.js";
 import type * as apiKeys from "../apiKeys.js";
 import type * as auth from "../auth.js";
 import type * as billing from "../billing.js";
+import type * as credits from "../credits.js";
 import type * as explore from "../explore.js";
 import type * as imageGenKeys from "../imageGenKeys.js";
 import type * as media from "../media.js";
@@ -44,6 +45,7 @@ declare const fullApi: ApiFromModules<{
   apiKeys: typeof apiKeys;
   auth: typeof auth;
   billing: typeof billing;
+  credits: typeof credits;
   explore: typeof explore;
   imageGenKeys: typeof imageGenKeys;
   media: typeof media;

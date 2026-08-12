@@ -3,11 +3,11 @@
 // this file only issues Stripe API calls and mirrors the immediate result
 // into Convex so the UI doesn't have to wait a round trip for the webhook.
 import { convexMutation, convexQuery, now } from "./db";
-import { PLANS, API_ADDON, TRIAL_DAYS, type PaidPlan } from "./billing-data";
-import { stripe, planPriceId, addonPriceId } from "./stripe";
+import { PLANS, API_ADDON, TRIAL_DAYS, CREDIT_PACKS, type PaidPlan } from "./billing-data";
+import { stripe, planPriceId, addonPriceId, creditPackPriceId } from "./stripe";
 import { api } from "@/convex/_generated/api";
 
-export { PLANS, API_ADDON, TRIAL_DAYS };
+export { PLANS, API_ADDON, TRIAL_DAYS, CREDIT_PACKS };
 
 export type Plan = "free" | "creator" | "growth" | "pro";
 export type Subscription = {
@@ -34,6 +34,39 @@ export async function getSubscription(userId: string): Promise<Subscription | nu
 function requireStripeSubscriptionId(sub: Subscription | null): string {
   if (!sub?.stripe_subscription_id) throw new Error("No active subscription found.");
   return sub.stripe_subscription_id;
+}
+
+/**
+ * Buy a one-time AI credit pack. `mode: "payment"`, not a subscription item —
+ * credits are a one-off purchase that never renews, so adding them to the
+ * subscription (the setApiAddon shape) would bill them again every period.
+ *
+ * Nothing is granted here. The webhook credits the ledger once Stripe confirms
+ * payment, so an abandoned checkout can't mint credits.
+ */
+export async function createCreditPackCheckout(
+  userId: string,
+  userEmail: string,
+  packId: string,
+  origin: string
+): Promise<string> {
+  const pack = CREDIT_PACKS.find((p) => p.id === packId);
+  if (!pack) throw new Error("Unknown credit pack.");
+  const existing = await getSubscription(userId);
+  const session = await stripe().checkout.sessions.create({
+    mode: "payment",
+    line_items: [{ price: creditPackPriceId(pack.id), quantity: 1 }],
+    client_reference_id: userId,
+    // Read back by the webhook — the price-id reverse lookup is the fallback.
+    metadata: { user_id: userId, credit_pack: pack.id, credits: String(pack.credits) },
+    ...(existing?.stripe_customer_id
+      ? { customer: existing.stripe_customer_id }
+      : { customer_email: userEmail }),
+    success_url: `${origin}/dashboard/settings/billing?credits=success`,
+    cancel_url: `${origin}/dashboard/settings/billing`,
+  });
+  if (!session.url) throw new Error("Stripe did not return a checkout URL.");
+  return session.url;
 }
 
 /** New subscriber: real Stripe Checkout Session (hosted page), 7-day trial. */

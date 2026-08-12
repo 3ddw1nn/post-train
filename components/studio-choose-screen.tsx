@@ -22,6 +22,36 @@ import { Icon } from "./icons";
 import { relativeTime } from "@/lib/format";
 import type { StudioDraftRow } from "@/lib/studio-drafts";
 
+/** Grid, Video Editor, and AI UGC all save `jobStatus` into their draft's
+ *  opaque `state` blob under this same name — Slideshow and Thumbnail Maker
+ *  render synchronously in the browser and never write it, so this returns
+ *  null for those. */
+const RENDER_STATUS_LABEL = {
+  queued: "Queued…",
+  generating: "Generating…",
+  compositing: "Rendering…",
+  failed: "Render failed",
+} as const;
+type RenderStatus = keyof typeof RENDER_STATUS_LABEL;
+
+export function draftRenderStatus(draft: StudioDraftRow): RenderStatus | null {
+  try {
+    const status = (JSON.parse(draft.state) as { jobStatus?: string }).jobStatus;
+    return status && status in RENDER_STATUS_LABEL ? (status as RenderStatus) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function RenderStatusBadge({ status }: { status: RenderStatus }) {
+  return (
+    <span className={`pill ${status === "failed" ? "bg-danger/10 text-danger" : "bg-primary-soft text-primary-deep"}`}>
+      {status !== "failed" && <span className="h-1.5 w-1.5 shrink-0 animate-pulse rounded-full bg-current" />}
+      {RENDER_STATUS_LABEL[status]}
+    </span>
+  );
+}
+
 /** The single-CTA-card shape three of the four studios use. */
 export function StudioCtaCard({
   title,
@@ -110,6 +140,7 @@ export function StudioChooseScreen({
 
   const draftRow = (draft: StudioDraftRow) => {
     const publishable = draft.status === "finished" && !!onPublish;
+    const renderStatus = draftRenderStatus(draft);
     return (
       <div key={draft.id} className="group">
         <div className="rounded-xl border border-line bg-white p-3 transition-colors hover:border-primary hover:bg-primary-soft/30">
@@ -120,6 +151,7 @@ export function StudioChooseScreen({
               <span className="block truncate text-sm font-bold text-ink">{draft.title}</span>
               <span className="mt-1 flex items-center gap-2">
                 {renderBadge?.(draft)}
+                {renderStatus && <RenderStatusBadge status={renderStatus} />}
                 <span className="text-xs font-semibold text-muted">{relativeTime(draft.updated_at)}</span>
               </span>
             </span>

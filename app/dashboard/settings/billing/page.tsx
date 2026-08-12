@@ -6,6 +6,9 @@ import { entitled, apiAccess, apiRateLimit } from "@/lib/entitlements";
 import { Pill } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { ActionButton } from "@/components/interactive";
+import { CreditPackPicker } from "@/components/buy-credits";
+import { convexQuery } from "@/lib/db";
+import { api } from "@/convex/_generated/api";
 
 export const metadata = { title: "Billing" };
 
@@ -15,6 +18,15 @@ export default async function BillingPage() {
   const plan = sub && sub.plan !== "free" ? PLANS[sub.plan as PaidPlan] : null;
   const live = entitled(sub);
   const price = plan ? (sub!.interval === "year" ? plan.yearly : plan.monthly) : 0;
+  // Balance is read with the plan allowance zeroed — only the purchased side
+  // is shown here; the monthly allowance is surfaced inside the studio.
+  const purchasedCredits = live
+    ? (await convexQuery<{ purchased: number }>(api.credits.balanceForOwner, {
+        owner_id: user.id,
+        allowance: 0,
+        since: new Date().toISOString(),
+      })).purchased
+    : 0;
 
   if (user.is_staff) {
     return (
@@ -192,6 +204,12 @@ export default async function BillingPage() {
             </Link>
           </div>
         </div>
+
+        {live && (
+          <div className="border-t border-line p-5">
+            <CreditPackPicker purchased={purchasedCredits} />
+          </div>
+        )}
       </section>
 
       <div className="flex flex-wrap items-center gap-2">

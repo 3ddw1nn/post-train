@@ -78,7 +78,7 @@ const CAPTION_LENGTHS = [
   ["long", "Long"],
 ] as const;
 
-/** Mirrors estimateAiUgcCost in lib/studio.ts (speech ≈ 15 chars/second). */
+/** Mirrors estimateAiUgcSeconds in lib/studio.ts (speech ≈ 15 chars/second). */
 function estimateSeconds(chars: number) {
   return Math.min(60, Math.max(5, Math.round(chars / 15)));
 }
@@ -858,7 +858,7 @@ export function StudioWizard({
                 </>
               )}
               <p className="mt-1">
-                {aiLeft} of {aiCap} AI generations left this month.
+                {aiLeft} of {aiCap} AI credits left this month.
               </p>
             </div>
           </>

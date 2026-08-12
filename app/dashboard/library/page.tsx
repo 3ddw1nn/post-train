@@ -64,7 +64,12 @@ export default async function LibraryPage() {
       ? draft.finished_media_ids
       : legacyFinishedMediaIdsInState(draft.state);
     for (const mediaId of finishedMediaIds) projectBytesByFinishedMediaId.set(mediaId, projectBytes);
-    if (draft.status !== "finished") {
+    // AI UGC is exempt: its renders auto-file into the Library as soon as they
+    // finish (see finishJob in lib/studio.ts), so claiming them here would hide
+    // the very rows that auto-filing exists to surface — and they're already
+    // out of Uploads by then, leaving them nowhere at all. Its project shows in
+    // Drafts and its output in Finished until Finish closes the draft.
+    if (draft.status !== "finished" && draft.template !== "ai-ugc") {
       for (const mediaId of finishedMediaIds) draftingOutputMediaIds.add(mediaId);
       draftingProjectNames.add(`${draft.template}:${draft.title.trim().toLocaleLowerCase()}`);
     }

@@ -17,6 +17,18 @@ export const listForUser = query({
   },
 });
 
+/** Workspaces this user OWNS — the scope an account-level quota spans. Distinct
+ *  from listForUser, which is membership and includes workspaces owned by others. */
+export const listForOwner = query({
+  args: { owner_id: v.string() },
+  handler: async (ctx, args) => {
+    return await ctx.db
+      .query("workspaces")
+      .withIndex("by_owner", (q) => q.eq("owner_id", args.owner_id))
+      .collect();
+  },
+});
+
 export const isMember = query({
   args: { workspace_id: v.string(), user_id: v.string() },
   handler: async (ctx, args) => {

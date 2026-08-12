@@ -73,3 +73,26 @@ export const PLANS: Record<
  */
 export const API_ADDON = { monthly: 5, yearly: 50 };
 export const TRIAL_DAYS = 7;
+
+/**
+ * One-time AI credit top-ups, for when a plan's monthly allowance runs out.
+ * Bought outright (Stripe `mode: "payment"`), never expire, and are only spent
+ * after the allowance is exhausted.
+ *
+ * 1 credit = 5s of avatar video ~= $0.125 of provider spend, so the price
+ * floor is credits * 0.125. These sit at roughly 2.4-3x that, easing off with
+ * volume. scripts/check-credits.mjs asserts the markup and the volume
+ * discount, so adjust these numbers freely and let it fail if one drifts too
+ * close to cost.
+ *
+ * Note the deliberate tradeoff: at $0.30-0.38/credit these are CHEAPER per
+ * credit than upgrading a plan (marginal ~$0.50/credit), so a heavy user can
+ * top up rather than move up a tier. That favours the customer and still
+ * clears cost; raise these if recurring upgrade revenue matters more.
+ */
+export type CreditPack = { id: string; credits: number; price: number };
+export const CREDIT_PACKS: CreditPack[] = [
+  { id: "small", credits: 50, price: 19 },
+  { id: "medium", credits: 150, price: 49 },
+  { id: "large", credits: 400, price: 119 },
+];

@@ -3,6 +3,7 @@
 // Composite templates render locally with ffmpeg; ai-ugc generates through
 // Replicate P-Video Avatar (stock personas or a custom persona image), then optionally
 // concats a CTA clip.
+import { ConvexError } from "convex/values";
 import { randomBytes } from "node:crypto";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import os from "node:os";
@@ -10,7 +11,7 @@ import path from "node:path";
 import { api } from "@/convex/_generated/api";
 import { convexMutation, convexQuery, patchRecord, now } from "./db";
 import { DomainError } from "./posts";
-import { importFromFile, readMediaBytes, type MediaRow } from "./media";
+import { importFromFile, markMediaFinished, readMediaBytes, type MediaRow } from "./media";
 import {
   assertFfmpeg,
   compositeImageOverlay,
@@ -23,8 +24,9 @@ import {
   renderPlaceholder,
 } from "./ffmpeg";
 import { MOCK_OUTPUT_URL, studioMock, type ProviderJobState } from "./creatify";
-import { imageDataUri, pollAvatarJob, replicateEnabled, stockPersonaImage, submitAvatarJob } from "./replicate-avatar";
-import { STUDIO_AI_MONTHLY_CAP } from "./entitlements";
+import { DEFAULT_VOICE, imageDataUri, pollAvatarJob, replicateEnabled, stockPersonaImage, submitAvatarJob, VOICES } from "./replicate-avatar";
+import { creditsForSeconds, studioAiMonthlyCredits } from "./entitlements";
+import { getSubscription } from "./billing";
 import { VIDEO_PRESETS, normalizeVideoFps, videoAspectById, videoPresetById } from "./video-render-settings";
 import { DEFAULT_TRANSITION_DURATION, DEFAULT_TRANSITION_ID, clampTransitionDuration, isTransitionId } from "./transitions";
 
@@ -61,6 +63,9 @@ export type StudioParams = {
   caption_media_id?: string;
   persona?: { source: "stock" | "custom"; id?: string; image_media_id?: string; name?: string };
   script?: string;
+  voice?: string;
+  /** Titles the Library card when an ai-ugc render auto-files itself (see finishJob). */
+  campaign_name?: string;
   cta_media_id?: string;
   video_preset_id?: string;
   aspect_ratio?: string;
@@ -112,15 +117,22 @@ const SLIDE_MIN = 1;
 const SLIDE_MAX = 10;
 
 /**
- * Pay-as-you-go price transparency for the wizard. Speech averages ~15 chars/s,
- * so estimated video seconds ≈ script length / 15 (clamped 5–60s).
+ * Rendered length of a script. Speech averages ~15 chars/s, clamped 5–60s.
+ * Mirrored client-side by estimateSeconds in components/studio.tsx and
+ * components/ai-ugc-studio.tsx — keep the three in step.
  */
-export function estimateAiUgcCost(scriptChars: number, _source: "stock" | "custom") {
-  const seconds = Math.min(60, Math.max(5, Math.round(scriptChars / 15)));
-  return {
-    seconds,
-    replicate_usd: Math.round(seconds * 0.025 * 100) / 100,
-  };
+export function estimateAiUgcSeconds(scriptChars: number): number {
+  return Math.min(60, Math.max(5, Math.round(scriptChars / 15)));
+}
+
+/**
+ * Credits this script will cost to render. Charging per render instead would
+ * price a 5s clip and a 600-char script the same despite an 8x cost gap, which
+ * rewards writing max-length scripts. Conversion lives in lib/entitlements.ts
+ * so the wizard prices a render identically before submitting it.
+ */
+export function creditsForScript(scriptChars: number): number {
+  return creditsForSeconds(estimateAiUgcSeconds(scriptChars));
 }
 
 async function uploadedKinds(ids: string[]): Promise<Map<string, string>> {
@@ -133,13 +145,36 @@ const monthStartIso = () => {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}-01T00:00:00.000Z`;
 };
 
-export async function aiUsageThisMonth(workspaceId: string): Promise<{ used: number; cap: number }> {
-  const used = await convexQuery<number>(api.studioJobs.countMonthlySince, {
-    workspace_id: workspaceId,
-    template: "ai-ugc",
-    since: monthStartIso(),
-  });
-  return { used, cap: STUDIO_AI_MONTHLY_CAP };
+/**
+ * AI UGC credits used and included this month, in credits (not renders).
+ *
+ * Scoped to whoever owns the workspace, not the workspace itself: the plan is
+ * sold per subscriber, but ownedWorkspaceCap lets Pro hold 6 workspaces, so a
+ * per-workspace quota handed out 6x what was priced. Every workspace the owner
+ * holds draws on one shared pool.
+ */
+export type AiUsage = {
+  /** Allowance credits consumed this month. */
+  used: number;
+  /** Allowance included with the plan. */
+  cap: number;
+  /** Purchased top-up credits still banked; spent only after the allowance. */
+  purchased: number;
+};
+
+export async function aiUsageThisMonth(workspaceId: string): Promise<AiUsage> {
+  const workspace = await convexQuery<{ owner_id: string } | null>(api.workspaces.getById, { id: workspaceId });
+  if (!workspace) return { used: 0, cap: 0, purchased: 0 };
+  const subscription = await getSubscription(workspace.owner_id);
+  const cap = studioAiMonthlyCredits(subscription);
+  // One query resolves the owner's workspaces, their allowance usage, and
+  // their purchased balance — all inside Convex, so the numbers can't be
+  // stitched together from separate snapshots.
+  const balance = await convexQuery<{ allowance_used: number; purchased: number }>(
+    api.credits.balanceForOwner,
+    { owner_id: workspace.owner_id, allowance: cap, since: monthStartIso() },
+  );
+  return { used: balance.allowance_used, cap, purchased: balance.purchased };
 }
 
 export async function createStudioJob(
@@ -153,6 +188,10 @@ export async function createStudioJob(
   }
 
   const params: StudioParams = { aspect_ratio: "9:16" };
+  // Metered templates set these; the ffmpeg-only ones cost us nothing per run.
+  let jobCredits: number | undefined;
+  let creditOwnerId: string | undefined;
+  let creditAllowance: number | undefined;
   if (typeof input.output_platform_id === "string") {
     params.output_platform_id = input.output_platform_id.slice(0, 64);
   }
@@ -366,28 +405,63 @@ export async function createStudioJob(
       params.cta_media_id = String(input.cta_media_id);
     }
     params.script = script;
-    const { used, cap } = await aiUsageThisMonth(workspaceId);
-    if (used >= cap) {
-      throw new DomainError(
-        403,
-        `You've used all ${cap} AI generations for this month.`,
-        "studio_limit"
-      );
-    }
+    params.voice = VOICES.includes(input.voice as (typeof VOICES)[number]) ? input.voice : DEFAULT_VOICE;
+    // Same 160-char clamp app/api/app/studio/finish/route.ts applies.
+    params.campaign_name = String(input.campaign_name ?? "").trim().slice(0, 160);
+    // Charged on length, so a 40s script costs 8x a 5s one instead of both
+    // spending "one render" of a flat quota. Affordability is NOT checked here
+    // — createJob does it inside the same transaction as the insert, so two
+    // concurrent renders can't both pass a check before either is recorded.
+    jobCredits = creditsForScript(script.length);
+    const workspace = await convexQuery<{ owner_id: string } | null>(api.workspaces.getById, { id: workspaceId });
+    creditOwnerId = workspace?.owner_id;
+    creditAllowance = studioAiMonthlyCredits(await getSubscription(workspace?.owner_id ?? ""));
   }
 
   const id = `sjob_${randomBytes(8).toString("hex")}`;
   const notificationGroupId = typeof input.render_batch_id === "string" && input.render_batch_id.trim()
     ? input.render_batch_id.slice(0, 100)
     : id;
-  return await convexMutation<StudioJobRow>(api.studioJobs.createJob, {
-    id,
-    workspace_id: workspaceId,
-    created_by: userId,
-    notification_group_id: notificationGroupId,
-    template,
-    params: JSON.stringify(params),
-  });
+  try {
+    return await convexMutation<StudioJobRow>(api.studioJobs.createJob, {
+      id,
+      workspace_id: workspaceId,
+      created_by: userId,
+      notification_group_id: notificationGroupId,
+      template,
+      params: JSON.stringify(params),
+      ...(jobCredits === undefined
+        ? {}
+        : {
+            credits: jobCredits,
+            owner_id: creditOwnerId,
+            allowance: creditAllowance,
+            period_start: monthStartIso(),
+          }),
+    });
+  } catch (e) {
+    throw asStudioLimitError(e);
+  }
+}
+
+/**
+ * createJob rejects an unaffordable render from inside its transaction, as a
+ * ConvexError carrying the shortfall. Translate it into the DomainError shape
+ * the API layer already speaks, so the client sees a `studio_limit` code and
+ * can offer credits instead of a generic 500.
+ */
+function asStudioLimitError(e: unknown): unknown {
+  const data = e instanceof ConvexError ? (e.data as Record<string, unknown> | undefined) : undefined;
+  if (!data || data.code !== "studio_limit") return e;
+  const needed = Number(data.needed ?? 0);
+  const available = Number(data.allowance_left ?? 0) + Number(data.purchased ?? 0);
+  return new DomainError(
+    403,
+    available === 0
+      ? `You're out of AI credits. Buy a top-up or upgrade your plan to keep generating.`
+      : `This video needs ${needed} AI credits and you have ${available} left. Shorten the script, buy a top-up, or upgrade your plan.`,
+    "studio_limit",
+  );
 }
 
 export async function listStudioJobs(workspaceId: string): Promise<StudioJobRow[]> {
@@ -425,8 +499,11 @@ export async function processStudioJobs(): Promise<number> {
       advanced++;
     } catch (e) {
       const message = e instanceof Error ? e.message : "Render failed.";
-      // Transient provider-poll errors get retried; everything else is fatal.
-      if (job.status === "generating" && job.attempts + 1 < MAX_POLL_ATTEMPTS) {
+      // Transient network errors get retried whether they happen submitting
+      // the job ("queued") or polling it ("generating") — a one-off "fetch
+      // failed" talking to the provider shouldn't permanently kill a render
+      // that a retry a few seconds later would have submitted fine.
+      if ((job.status === "queued" || job.status === "generating") && job.attempts + 1 < MAX_POLL_ATTEMPTS) {
         await patchJob(job.id, { attempts: job.attempts + 1, lease_until: null });
       } else {
         await patchJob(job.id, { status: "failed", error_message: message, lease_until: null });
@@ -535,13 +612,14 @@ async function submitGeneration(job: StudioJobRow, params: StudioParams): Promis
   const provider = "replicate";
   let jobId: string;
   if (persona.source === "stock") {
-    ({ jobId } = await submitAvatarJob({ image: stockPersonaImage(persona.id!), script: params.script! }));
+    ({ jobId } = await submitAvatarJob({ image: stockPersonaImage(persona.id!), script: params.script!, voice: params.voice }));
   } else {
     const image = await readMediaBytes(persona.image_media_id!);
     if (!image) throw new Error("Persona image is missing from storage.");
     ({ jobId } = await submitAvatarJob({
       image: imageDataUri(image.bytes, image.row.mime_type),
       script: params.script!,
+      voice: params.voice,
     }));
   }
   await patchJob(job.id, {
@@ -611,6 +689,17 @@ async function finishJob(job: StudioJobRow, filePath: string): Promise<void> {
     width: meta.width,
     height: meta.height,
   });
+  // AI UGC files itself into the Library the moment it renders, rather than
+  // waiting for the wizard's Finish button — a render the user never clicked
+  // through would otherwise sit in Uploads as an anonymous file. Deliberately
+  // no draftId: leaving studio_draft_id null is what keeps the row visible
+  // while its draft is still open (see app/dashboard/library/page.tsx). Finish
+  // later re-patches this same row with platforms and captions.
+  if (job.template === "ai-ugc") {
+    await markMediaFinished(job.workspace_id, [row.id], "ai-ugc", {
+      campaignName: params.campaign_name,
+    });
+  }
   await patchJob(job.id, {
     status: "done",
     output_media_id: row.id,

@@ -22,6 +22,8 @@ import { Icon } from "./icons";
 import { MediaThumb } from "./media";
 import { PlatformIcon, PlatformIconRow } from "./platform-icon";
 import { MediaFilterBar } from "./media-filter-bar";
+import { SERIES } from "./charts";
+import { draftRenderStatus, RenderStatusBadge } from "./studio-choose-screen";
 import {
   EMPTY_FILTER,
   applyMediaFilter,
@@ -184,6 +186,7 @@ function LibraryCard({ group, template, onRemoved }: { group: MediaRow[]; templa
 function DraftCard({ draft, template, onDeleted }: { draft: StudioDraftRow; template?: LibraryTemplate; onDeleted: (id: string) => void }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const renderStatus = draftRenderStatus(draft);
 
   async function remove() {
     setDeleting(true);
@@ -213,7 +216,8 @@ function DraftCard({ draft, template, onDeleted }: { draft: StudioDraftRow; temp
       <div className="flex flex-1 flex-col gap-3 p-4">
         <div>
           <p className="truncate text-sm font-bold text-ink" title={draft.title}>{draft.title}</p>
-          <p className="mt-1 text-xs font-semibold text-muted">
+          <p className="mt-1 flex flex-wrap items-center gap-2 text-xs font-semibold text-muted">
+            {renderStatus && <RenderStatusBadge status={renderStatus} />}
             Updated {relativeTime(draft.updated_at)} · {formatStorage(draft.media_size_bytes ?? 0)}
           </p>
         </div>
@@ -383,6 +387,13 @@ export function LibraryView({
   const draftsTotal = draftItems.length;
   const uploadsTotal = uploadItems.length;
 
+  const finishedBytes = groupByBatch(allFinished).reduce(
+    (total, group) => total + (group[0].project_size_bytes ?? group.reduce((sum, m) => sum + Math.max(0, m.size_bytes), 0)),
+    0,
+  );
+  const draftsBytes = draftItems.reduce((total, d) => total + (d.media_size_bytes ?? 0), 0);
+  const uploadsBytes = uploadItems.reduce((total, m) => total + Math.max(0, m.size_bytes), 0);
+
   const finishedGroups = groupByBatch(applyMediaFilter(allFinished, filter));
   const activeDrafts = filter.template
     ? draftItems.filter((d) => d.template === filter.template)
@@ -427,8 +438,13 @@ export function LibraryView({
     router.refresh();
   }
 
-  const storagePercent = Math.min(100, (usedBytes / storage.limitBytes) * 100);
   const storageFull = usedBytes >= storage.limitBytes;
+
+  const STORAGE_CATEGORIES = [
+    { key: "finished", label: "Finished", bytes: finishedBytes, color: SERIES[0] },
+    { key: "drafts", label: "Drafts", bytes: draftsBytes, color: SERIES[1] },
+    { key: "uploads", label: "Uploads", bytes: uploadsBytes, color: SERIES[2] },
+  ];
 
   /** Count behind the studio row's "All" tab — whichever mode is showing. */
   const activeTotal =
@@ -497,8 +513,32 @@ export function LibraryView({
             Auto cleanup {storage.autoCleanup ? "on" : "off"}
           </span>
         </div>
-        <div className="mt-4 h-2.5 overflow-hidden rounded-full bg-page" role="progressbar" aria-label="Workspace storage used" aria-valuemin={0} aria-valuemax={storage.limitBytes} aria-valuenow={Math.min(usedBytes, storage.limitBytes)}>
-          <div className={`h-full rounded-full transition-[width] ${storageFull ? "bg-danger" : "bg-primary"}`} style={{ width: `${storagePercent}%` }} />
+        <ul className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-1.5">
+          {STORAGE_CATEGORIES.map((c) => (
+            <li key={c.key} className="flex items-center gap-1.5">
+              <span className="h-2 w-2 rounded-full" style={{ background: c.color }} />
+              <span className="text-[11px] font-semibold text-muted">{c.label}</span>
+            </li>
+          ))}
+        </ul>
+        <div className="mt-2 flex h-2.5 overflow-hidden rounded-full bg-page" role="progressbar" aria-label="Workspace storage used" aria-valuemin={0} aria-valuemax={storage.limitBytes} aria-valuenow={Math.min(usedBytes, storage.limitBytes)}>
+          {STORAGE_CATEGORIES.map((c) => {
+            const pct = (c.bytes / storage.limitBytes) * 100;
+            if (pct <= 0) return null;
+            return (
+              <div
+                key={c.key}
+                className="h-full transition-[width]"
+                style={{ width: `${pct}%`, background: c.color }}
+                title={`${c.label}: ${formatStorage(c.bytes)}`}
+              />
+            );
+          })}
+        </div>
+        <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-muted">
+          {STORAGE_CATEGORIES.map((c) => (
+            <span key={c.key}>{c.label} {formatStorage(c.bytes)}</span>
+          ))}
         </div>
         <div className="mt-3 flex flex-wrap items-center justify-between gap-3">
           <p className="max-w-2xl text-xs leading-5 text-muted">

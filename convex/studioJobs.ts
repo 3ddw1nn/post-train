@@ -1,7 +1,8 @@
 // @ts-nocheck
 import { mutationGeneric as mutation, queryGeneric as query } from "convex/server";
-import { v } from "convex/values";
+import { ConvexError, v } from "convex/values";
 import { byLegacyId, now } from "./model";
+import { allowanceUsedSince, purchasedBalance, workspaceIdsForOwner } from "./credits";
 import { writeNotification } from "./notifications";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
@@ -63,10 +64,41 @@ export const createJob = mutation({
     notification_group_id: v.string(),
     template: v.string(),
     params: v.string(),
+    credits: v.optional(v.number()),
+    // Metered templates pass these so the affordability check and the debit
+    // happen in THIS transaction. Checking in the caller first would let two
+    // concurrent renders both pass before either was recorded.
+    owner_id: v.optional(v.string()),
+    allowance: v.optional(v.number()),
+    period_start: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const { owner_id, allowance, period_start, ...jobFields } = args;
+    const cost = args.credits ?? 0;
+
+    let overflow = 0;
+    if (cost > 0 && owner_id && period_start) {
+      const cap = allowance ?? 0;
+      const workspaceIds = await workspaceIdsForOwner(ctx, owner_id);
+      // The workspace always counts, even if the owner lookup missed it, so a
+      // stale membership can't hand out an unmetered render.
+      if (!workspaceIds.includes(args.workspace_id)) workspaceIds.push(args.workspace_id);
+      const allowanceUsed = await allowanceUsedSince(ctx, workspaceIds, period_start);
+      const allowanceLeft = Math.max(0, cap - allowanceUsed);
+      const purchased = await purchasedBalance(ctx, owner_id);
+      if (cost > allowanceLeft + purchased) {
+        throw new ConvexError({
+          code: "studio_limit",
+          needed: cost,
+          allowance_left: allowanceLeft,
+          purchased,
+        });
+      }
+      overflow = Math.max(0, cost - allowanceLeft);
+    }
+
     await ctx.db.insert("studio_jobs", {
-      ...args,
+      ...jobFields,
       status: "queued",
       provider: null,
       provider_job_id: null,
@@ -78,6 +110,20 @@ export const createJob = mutation({
       created_at: now(),
       updated_at: now(),
     });
+    // Only the part the allowance couldn't cover is charged to purchased
+    // credits; the allowance side is derived from the job row just inserted.
+    if (overflow > 0 && owner_id) {
+      await ctx.db.insert("credit_ledger", {
+        id: `cled_${args.id}`,
+        user_id: owner_id,
+        kind: "spend",
+        credits: overflow,
+        reason: "ai-ugc",
+        ref_id: args.id,
+        stripe_session_id: null,
+        created_at: now(),
+      });
+    }
     const job = await byLegacyId(ctx, "studio_jobs", args.id);
     if (job) await updateRenderNotification(ctx, job);
     return job;
@@ -170,17 +216,10 @@ export const claimRunnable = mutation({
   },
 });
 
-/** AI generations used this month (failed jobs don't count against the cap). */
-export const countMonthlySince = query({
-  args: { workspace_id: v.string(), template: v.string(), since: v.string() },
-  handler: async (ctx, args) => {
-    const rows = await ctx.db
-      .query("studio_jobs")
-      .withIndex("by_workspace", (q) => q.eq("workspace_id", args.workspace_id))
-      .order("desc")
-      .take(500);
-    return rows.filter(
-      (r) => r.template === args.template && r.created_at >= args.since && r.status !== "failed"
-    ).length;
-  },
+/** Allowance credits spent this period across a set of workspaces. Thin
+ *  wrapper so the read path and createJob's atomic check share one definition
+ *  — see convex/credits.ts. */
+export const creditsUsedSince = query({
+  args: { workspace_ids: v.array(v.string()), template: v.string(), since: v.string() },
+  handler: async (ctx, args) => allowanceUsedSince(ctx, args.workspace_ids, args.since),
 });

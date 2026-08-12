@@ -17,6 +17,8 @@
   },
   "include": [
     "../lib/media-filters.ts",
+    "../lib/entitlements.ts",
+    "../lib/billing-data.ts",
     "../lib/analytics-shape.ts",
     "../lib/platform-aspect.ts",
     "../convex/notificationRules.ts"

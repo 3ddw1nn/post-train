@@ -12,6 +12,7 @@
 import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Icon } from "./icons";
+import { Select } from "./interactive";
 import { AccountAvatar, PlatformIcon } from "./platform-icon";
 import {
   MediaLibraryModal,
@@ -29,6 +30,8 @@ import { StudioChooseScreen, StudioCtaCard } from "./studio-choose-screen";
 import { useEditGuard } from "./edit-guard";
 import { localDateInputValue, nextMinuteInputValue, isPastSchedule, isPastToday } from "@/lib/format";
 import { CaptionCopyButton } from "./caption-copy-button";
+import { SECONDS_PER_CREDIT, creditsForSeconds } from "@/lib/entitlements";
+import { BuyCreditsButton } from "./buy-credits";
 
 export type AiUgcAccount = {
   id: number;
@@ -43,6 +46,7 @@ type Persona = {
   preview_image_url: string;
   source: "stock";
   is_demo?: boolean;
+  default_voice?: string;
 };
 
 type JobStatus = "idle" | "queued" | "generating" | "compositing" | "done" | "failed";
@@ -57,6 +61,7 @@ type UgcDraftSnapshot = {
   personaId?: string | null;
   personaImage?: ComposerMedia | null;
   script?: string;
+  voice?: string;
   cta?: ComposerMedia | null;
   platformCaptions?: Record<string, string>;
   activePlatform?: string;
@@ -84,6 +89,11 @@ function defaultPublishing() {
 
 function estimateSeconds(chars: number) {
   return Math.min(60, Math.max(5, Math.round(chars / 15)));
+}
+
+function formatTime(seconds: number) {
+  const s = Math.max(0, Math.floor(seconds));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
 function WizardStepper({
@@ -277,14 +287,14 @@ function DraftPreview({ draft }: { draft: StudioDraftRow }) {
 
 export function AiUgcStudio({
   accounts = [],
-  avatarPerSecond,
   aiUsed,
   aiCap,
+  aiPurchased = 0,
 }: {
   accounts?: AiUgcAccount[];
-  avatarPerSecond: number;
   aiUsed: number;
   aiCap: number;
+  aiPurchased?: number;
 }) {
   const initialPublishing = useMemo(defaultPublishing, []);
   const [mode, setMode] = useState<"choose" | "wizard">("choose");
@@ -309,10 +319,16 @@ export function AiUgcStudio({
   const [selectedAccountIds, setSelectedAccountIds] = useState<Set<number>>(new Set());
 
   const [personas, setPersonas] = useState<Persona[] | null>(null);
+  const [voices, setVoices] = useState<string[]>([]);
   const [personaTab, setPersonaTab] = useState<"stock" | "custom">("stock");
   const [personaId, setPersonaId] = useState<string | null>(null);
   const [personaImage, setPersonaImage] = useState<ComposerMedia | null>(null);
   const [script, setScript] = useState("");
+  const [voice, setVoice] = useState("");
+  const [voicePreviewStatus, setVoicePreviewStatus] = useState<"idle" | "loading" | "playing">("idle");
+  const [voicePreviewError, setVoicePreviewError] = useState("");
+  const voicePreviewAudioRef = useRef<HTMLAudioElement | null>(null);
+  const voicePreviewUrlRef = useRef<string | null>(null);
   const [cta, setCta] = useState<ComposerMedia | null>(null);
 
   const [platformCaptions, setPlatformCaptions] = useState<Record<string, string>>({});
@@ -328,10 +344,16 @@ export function AiUgcStudio({
   const [generationError, setGenerationError] = useState("");
   const [startingGeneration, setStartingGeneration] = useState(false);
   const [pollNonce, setPollNonce] = useState(0);
+  const [showValidationErrors, setShowValidationErrors] = useState(false);
+  const [renderStartedAt, setRenderStartedAt] = useState<number | null>(null);
+  const [renderElapsedSeconds, setRenderElapsedSeconds] = useState(0);
 
   const [drafts, setDrafts] = useState<StudioDraftRow[]>([]);
   const [draftsLoading, setDraftsLoading] = useState(true);
   const draftIdRef = useRef<string | undefined>(undefined);
+  /** True once the user (or a resumed draft) has made an explicit voice
+   *  choice — after that, switching personas stops overwriting it. */
+  const voiceTouchedRef = useRef(false);
   const [draftStatus, setDraftStatus] = useState<"idle" | "saving" | "saved">("idle");
 
   const [launching, setLaunching] = useState(false);
@@ -364,8 +386,19 @@ export function AiUgcStudio({
   const activeCaptionMax =
     CAPTION_MAX_BY_PLATFORM[currentPlatform as keyof typeof CAPTION_MAX_BY_PLATFORM] ?? CAPTION_MAX;
   const selectedPersona = personas?.find((persona) => persona.id === personaId) ?? null;
+  // Derived from the selection itself, so the toggle and the menu can never
+  // disagree about which gender is showing.
+  const voiceGender: "Male" | "Female" = voice.endsWith("(Female)") ? "Female" : "Male";
+  const genderVoices = voices.filter((v) => v.endsWith(`(${voiceGender})`));
   const aiLeft = Math.max(0, aiCap - aiUsed);
   const seconds = estimateSeconds(script.length);
+  // Priced with the same helper the server charges with, so the number shown
+  // here can't drift from the one enforced by createStudioJob.
+  const videoCredits = creditsForSeconds(seconds);
+  // Purchased top-ups are spent only after the allowance, but both fund a
+  // render — affordability is the sum, matching createJob's check.
+  const creditsAvailable = aiLeft + aiPurchased;
+  const notEnoughCredits = videoCredits > creditsAvailable;
   const rendering = ["queued", "generating", "compositing"].includes(jobStatus);
   const mockMode = personas?.some((persona) => persona.is_demo) ?? false;
 
@@ -376,6 +409,7 @@ export function AiUgcStudio({
           ? { source: "stock", id: personaId }
           : { source: "custom", id: personaImage?.id ?? null },
       script: script.trim(),
+      voice,
       cta: cta?.id ?? null,
     });
   }
@@ -388,20 +422,6 @@ export function AiUgcStudio({
     script.trim().length > 0 &&
     (personaTab === "stock" ? !!personaId : !!personaImage) &&
     aiLeft > 0;
-  const createHint = !campaignName.trim()
-    ? "Add a campaign name to continue."
-    : selectedAccounts.length === 0
-      ? "Choose at least one destination under Post To."
-      : personaTab === "stock" && !personaId
-        ? "Choose an AI creator."
-        : personaTab === "custom" && !personaImage
-          ? "Upload a creator image."
-          : !script.trim()
-            ? "Write the creator's script."
-            : aiLeft <= 0
-              ? "This workspace has no AI generations left this month."
-              : "";
-
   const scheduledLabel = new Date(`${publishDate}T${publishTime || "00:00"}`).toLocaleString(
     undefined,
     { month: "short", day: "numeric", year: "numeric", hour: "numeric", minute: "2-digit" },
@@ -415,12 +435,26 @@ export function AiUgcStudio({
         if (cancelled) return;
         const next = (data?.data ?? []) as Persona[];
         setPersonas(next);
+        setVoices((data?.voices ?? []) as string[]);
       })
       .catch(() => !cancelled && setPersonas([]));
     return () => {
       cancelled = true;
     };
   }, []);
+
+  // Each stock creator has a gender-matched default so switching creators
+  // doesn't silently leave a mismatched voice selected. Skipped once the
+  // user (or a resumed draft) has made an explicit choice.
+  useEffect(() => {
+    if (voiceTouchedRef.current || personaTab !== "stock" || !personaId) return;
+    const persona = personas?.find((p) => p.id === personaId);
+    if (persona?.default_voice) setVoice(persona.default_voice);
+  }, [personaId, personaTab, personas]);
+
+  useEffect(() => {
+    if (!voice && voices.length > 0) setVoice(voices[0]);
+  }, [voice, voices]);
 
   useEffect(() => {
     let cancelled = false;
@@ -457,6 +491,7 @@ export function AiUgcStudio({
           return;
         }
         setJobStatus(job.status);
+        if (job.created_at) setRenderStartedAt(new Date(job.created_at).getTime());
         if (job.status === "done") {
           setOutputMediaId(job.output_media_id ?? null);
         } else if (job.status === "failed") {
@@ -472,6 +507,14 @@ export function AiUgcStudio({
   }, [jobId, jobStatus, outputMediaId, pollNonce]);
 
   useEffect(() => {
+    if (!rendering || !renderStartedAt) return;
+    const update = () => setRenderElapsedSeconds(Math.max(0, Math.floor((Date.now() - renderStartedAt) / 1000)));
+    update();
+    const timer = window.setInterval(update, 1000);
+    return () => window.clearInterval(timer);
+  }, [rendering, renderStartedAt]);
+
+  useEffect(() => {
     if (mode !== "wizard" || (!campaignName.trim() && !script.trim())) return;
     const timer = window.setTimeout(async () => {
       setDraftStatus("saving");
@@ -485,6 +528,7 @@ export function AiUgcStudio({
         personaId,
         personaImage,
         script,
+        voice,
         cta,
         platformCaptions,
         activePlatform,
@@ -533,6 +577,7 @@ export function AiUgcStudio({
     personaId,
     personaImage,
     script,
+    voice,
     cta,
     platformCaptions,
     activePlatform,
@@ -555,6 +600,8 @@ export function AiUgcStudio({
     setPersonaId(null);
     setPersonaImage(null);
     setScript("");
+    setVoice("");
+    voiceTouchedRef.current = false;
     setCta(null);
     setPlatformCaptions({});
     setActivePlatform("");
@@ -567,6 +614,8 @@ export function AiUgcStudio({
     setLaunchError("");
     setFinishedMediaId(null);
     setDraftLocked(false);
+    setRenderStartedAt(null);
+    setShowValidationErrors(false);
     draftIdRef.current = undefined;
     setDraftStatus("idle");
   }
@@ -587,6 +636,8 @@ export function AiUgcStudio({
       setPersonaId(state.personaId ?? null);
       setPersonaImage(state.personaImage ?? null);
       setScript(state.script ?? "");
+      setVoice(state.voice ?? "");
+      voiceTouchedRef.current = !!state.voice;
       setCta(state.cta ?? null);
       setPlatformCaptions(state.platformCaptions ?? {});
       setActivePlatform(state.activePlatform ?? "");
@@ -595,6 +646,11 @@ export function AiUgcStudio({
       setJobStatus(state.jobStatus ?? "idle");
       setOutputMediaId(state.outputMediaId ?? null);
       setGeneratedSignature(state.generatedSignature ?? null);
+      // The draft snapshot doesn't carry the job's created_at — the poll
+      // effect fills renderStartedAt in from the job row itself once jobId
+      // is set below, so the elapsed clock reflects the real start time
+      // instead of resetting to 0 on resume.
+      setRenderStartedAt(null);
       setGenerationError("");
       setLaunchError("");
       setDraftStatus("saved");
@@ -619,8 +675,48 @@ export function AiUgcStudio({
     }
   }
 
+  useEffect(() => {
+    return () => {
+      if (voicePreviewUrlRef.current) URL.revokeObjectURL(voicePreviewUrlRef.current);
+    };
+  }, []);
+
+  async function toggleVoicePreview() {
+    const audio = voicePreviewAudioRef.current;
+    if (!audio || !voice) return;
+    if (voicePreviewStatus === "playing") {
+      audio.pause();
+      return;
+    }
+    setVoicePreviewError("");
+    setVoicePreviewStatus("loading");
+    try {
+      // Fetched as a blob rather than set directly as audio.src so a
+      // non-200 (e.g. the TTS provider's rate limit) surfaces its real
+      // message instead of a generic "media could not be loaded" failure.
+      const response = await fetch(`/api/app/studio/voice-preview?voice=${encodeURIComponent(voice)}`);
+      if (!response.ok) {
+        const data = await response.json().catch(() => null);
+        throw new Error(data?.error?.message ?? "Could not load preview.");
+      }
+      const blob = await response.blob();
+      if (voicePreviewUrlRef.current) URL.revokeObjectURL(voicePreviewUrlRef.current);
+      const url = URL.createObjectURL(blob);
+      voicePreviewUrlRef.current = url;
+      audio.src = url;
+      await audio.play();
+    } catch (error) {
+      setVoicePreviewStatus("idle");
+      setVoicePreviewError(error instanceof Error ? error.message : "Could not play preview.");
+    }
+  }
+
   async function startGeneration() {
-    if (!createReady || startingGeneration || rendering) return false;
+    if (!createReady) {
+      setShowValidationErrors(true);
+      return false;
+    }
+    if (startingGeneration || rendering) return false;
     setStartingGeneration(true);
     setGenerationError("");
     const signature = generationSignature();
@@ -628,6 +724,8 @@ export function AiUgcStudio({
       const body: Record<string, unknown> = {
         template: "ai-ugc",
         script: script.trim(),
+        voice,
+        campaign_name: campaignName.trim(),
       };
       if (personaTab === "stock") {
         body.persona = {
@@ -652,6 +750,7 @@ export function AiUgcStudio({
       setJobStatus(data.status ?? "queued");
       setOutputMediaId(null);
       setGeneratedSignature(signature);
+      setRenderStartedAt(data.created_at ? new Date(data.created_at).getTime() : Date.now());
       return true;
     } catch (error) {
       setJobStatus("failed");
@@ -695,12 +794,19 @@ export function AiUgcStudio({
     }
   }
 
-  async function goNext() {
+  function handleGenerateClick() {
+    if (!createReady) {
+      setShowValidationErrors(true);
+      return;
+    }
+    void startGeneration();
+  }
+
+  function goNext() {
     if (step === 0) {
-      if (!createReady) return;
-      if (!outputIsCurrent && !rendering) {
-        const started = await startGeneration();
-        if (!started) return;
+      if (!createReady || (!rendering && !outputIsCurrent)) {
+        setShowValidationErrors(true);
+        return;
       }
       setStep(1);
       return;
@@ -851,6 +957,7 @@ export function AiUgcStudio({
             <span className="inline-flex items-center gap-2 rounded-lg bg-primary-soft px-3 py-2 text-xs font-bold text-primary-deep">
               <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary/25 border-t-primary" />
               Generating video in the background
+              {renderStartedAt && <span className="tabular-nums">· {formatTime(renderElapsedSeconds)}</span>}
             </span>
           )}
         </div>
@@ -868,6 +975,9 @@ export function AiUgcStudio({
                   onChange={(event) => setCampaignName(event.target.value)}
                   placeholder="Summer product demo"
                 />
+                {showValidationErrors && !campaignName.trim() && (
+                  <span className="mt-1.5 block text-xs font-semibold text-danger" role="alert">Add a campaign name.</span>
+                )}
               </label>
               <div>
                 <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">
@@ -931,6 +1041,9 @@ export function AiUgcStudio({
                     </button>
                   ))}
                 </div>
+              )}
+              {showValidationErrors && accounts.length > 0 && selectedAccountIds.size === 0 && (
+                <p className="mt-2 text-xs font-semibold text-danger" role="alert">Choose at least one destination.</p>
               )}
             </section>
 
@@ -1018,6 +1131,87 @@ export function AiUgcStudio({
                     />
                   </div>
                 )}
+                {showValidationErrors && (personaTab === "stock" ? !personaId : !personaImage) && (
+                  <p className="mt-2 text-xs font-semibold text-danger" role="alert">
+                    {personaTab === "stock" ? "Choose an AI creator." : "Upload a creator image."}
+                  </p>
+                )}
+
+                {voices.length > 0 && (
+                  <div className="mt-5">
+                    <span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Voice</span>
+                    <div className="mt-2 flex flex-wrap items-center gap-2">
+                      {/* Gender first, then the voice — 30 options in one
+                          scrolling menu made most of them easy to miss. */}
+                      <div className="inline-flex rounded-lg border border-line p-0.5">
+                        {(["Male", "Female"] as const).map((gender) => (
+                          <button
+                            key={gender}
+                            type="button"
+                            aria-pressed={voiceGender === gender}
+                            onClick={() => {
+                              const first = voices.find((v) => v.endsWith(`(${gender})`));
+                              if (!first) return;
+                              voiceTouchedRef.current = true;
+                              setVoice(first);
+                              voicePreviewAudioRef.current?.pause();
+                              setVoicePreviewStatus("idle");
+                              setVoicePreviewError("");
+                            }}
+                            className={`rounded-md px-3 py-1.5 text-xs font-bold transition-colors ${
+                              voiceGender === gender ? "bg-primary-soft text-primary-deep" : "text-muted hover:text-ink"
+                            }`}
+                          >
+                            {gender}
+                          </button>
+                        ))}
+                      </div>
+                      <Select
+                        value={voice}
+                        onChange={(value) => {
+                          voiceTouchedRef.current = true;
+                          setVoice(value);
+                          voicePreviewAudioRef.current?.pause();
+                          setVoicePreviewStatus("idle");
+                          setVoicePreviewError("");
+                        }}
+                        options={genderVoices.map((v) => ({ value: v, label: v.replace(/\s*\([^)]*\)$/, "") }))}
+                        ariaLabel="Voice"
+                        width={200}
+                      />
+                      <button
+                        type="button"
+                        onClick={() => void toggleVoicePreview()}
+                        disabled={!voice || voicePreviewStatus === "loading"}
+                        aria-label={voicePreviewStatus === "playing" ? "Pause voice preview" : "Play voice preview"}
+                        className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line text-muted transition-colors hover:border-primary/45 hover:text-primary-deep disabled:opacity-50"
+                      >
+                        {voicePreviewStatus === "loading" ? (
+                          <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-muted/30 border-t-primary-deep" />
+                        ) : (
+                          <Icon name={voicePreviewStatus === "playing" ? "pause" : "play"} size={14} />
+                        )}
+                      </button>
+                    </div>
+                    <p className="mt-1.5 text-xs text-muted">
+                      {genderVoices.length} {voiceGender.toLowerCase()} voices. Previews use the same voice as the final video.
+                    </p>
+                    {voicePreviewError && (
+                      <p className="mt-1.5 text-xs font-semibold text-danger" role="alert">{voicePreviewError}</p>
+                    )}
+                    <audio
+                      ref={voicePreviewAudioRef}
+                      className="hidden"
+                      onPlaying={() => setVoicePreviewStatus("playing")}
+                      onPause={() => setVoicePreviewStatus((current) => (current === "loading" ? current : "idle"))}
+                      onEnded={() => setVoicePreviewStatus("idle")}
+                      onError={() => {
+                        setVoicePreviewStatus("idle");
+                        setVoicePreviewError("Could not load preview.");
+                      }}
+                    />
+                  </div>
+                )}
 
                 <label className="mt-6 block">
                   <span className="flex items-center justify-between gap-3">
@@ -1036,10 +1230,33 @@ export function AiUgcStudio({
                   <span className="mt-1.5 block text-xs text-muted">
                     Write for spoken delivery: short sentences, one clear hook, and a natural CTA.
                   </span>
+                  {showValidationErrors && !script.trim() && (
+                    <span className="mt-1.5 block text-xs font-semibold text-danger" role="alert">Write the creator's script.</span>
+                  )}
                 </label>
               </div>
 
               <aside className="min-w-0 xl:border-l xl:border-line xl:pl-6">
+                {outputIsCurrent ? (
+                  <div className="mb-4 overflow-hidden rounded-xl bg-ink">
+                    <video
+                      src={`/api/media-file/${outputMediaId}`}
+                      className="mx-auto max-h-64 w-full object-contain"
+                      controls
+                      playsInline
+                    />
+                  </div>
+                ) : rendering ? (
+                  <div className="mb-4 flex min-h-40 flex-col items-center justify-center gap-1.5 rounded-xl bg-ink p-4 text-center">
+                    <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/25 border-t-white" />
+                    <p className="text-xs font-bold text-white">Your AI creator is rendering</p>
+                    {renderStartedAt && (
+                      <p className="text-[11px] font-semibold text-white/70 tabular-nums">
+                        {formatTime(renderElapsedSeconds)} elapsed
+                      </p>
+                    )}
+                  </div>
+                ) : null}
                 <MediaSlot
                   label="Product or CTA clip"
                   hint="Optional. This clip is appended after the creator finishes speaking."
@@ -1049,23 +1266,66 @@ export function AiUgcStudio({
                   onChange={setCta}
                 />
                 <div className="mt-4 rounded-xl bg-page p-4">
-                  <p className="text-sm font-bold text-ink">Generation estimate</p>
-                  <dl className="mt-3 space-y-2 text-sm">
-                    <div className="flex items-center justify-between gap-3">
-                      <dt className="text-muted">Video length</dt>
-                      <dd className="font-bold">~{seconds}s</dd>
+                  <p className="text-sm font-bold text-ink">This video costs</p>
+                  <p className="mt-1 flex items-baseline gap-1.5">
+                    <span className={`text-2xl font-black tabular-nums ${notEnoughCredits ? "text-danger" : "text-primary-deep"}`}>
+                      {videoCredits}
+                    </span>
+                    <span className="text-sm font-bold text-muted">
+                      {videoCredits === 1 ? "credit" : "credits"}
+                    </span>
+                    <span className="ml-auto text-xs font-semibold text-muted">~{seconds}s long</span>
+                  </p>
+                  <p className="mt-1.5 text-xs leading-5 text-muted">
+                    Longer scripts cost more — 1 credit covers {SECONDS_PER_CREDIT} seconds of video.
+                  </p>
+
+                  <div className="mt-3 border-t border-line pt-3">
+                    <div className="flex items-baseline justify-between gap-3">
+                      <span className="text-xs font-bold uppercase tracking-[0.1em] text-muted">
+                        Left this month
+                      </span>
+                      <span className="text-sm font-bold tabular-nums text-ink">
+                        {aiLeft} <span className="font-semibold text-muted">of {aiCap}</span>
+                      </span>
                     </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <dt className="text-muted">Provider cost</dt>
-                      <dd className="font-bold">≈ ${(seconds * avatarPerSecond).toFixed(2)}</dd>
+                    <div
+                      className="mt-2 h-1.5 overflow-hidden rounded-full bg-white"
+                      role="progressbar"
+                      aria-label="AI credits used this month"
+                      aria-valuemin={0}
+                      aria-valuemax={aiCap}
+                      aria-valuenow={Math.min(aiUsed, aiCap)}
+                    >
+                      <div
+                        className={`h-full rounded-full transition-[width] ${aiLeft === 0 ? "bg-danger" : "bg-primary"}`}
+                        style={{ width: `${aiCap > 0 ? Math.min(100, (aiUsed / aiCap) * 100) : 100}%` }}
+                      />
                     </div>
-                    <div className="flex items-center justify-between gap-3">
-                      <dt className="text-muted">Monthly balance</dt>
-                      <dd className="font-bold">
-                        {aiLeft}/{aiCap}
-                      </dd>
+                    {aiPurchased > 0 && (
+                      <p className="mt-2 flex items-center justify-between gap-3 text-xs font-semibold text-muted">
+                        <span>+ top-up credits</span>
+                        <span className="tabular-nums text-ink">{aiPurchased}</span>
+                      </p>
+                    )}
+                  </div>
+
+                  {notEnoughCredits && (
+                    <div className="mt-3 rounded-lg bg-danger/5 px-3 py-2" role="alert">
+                      <p className="text-xs font-semibold leading-5 text-danger">
+                        {creditsAvailable === 0
+                          ? "You're out of AI credits."
+                          : `This video needs ${videoCredits} credits and you have ${creditsAvailable}.`}{" "}
+                        Shorten the script, or:
+                      </p>
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <BuyCreditsButton />
+                        <Link href="/dashboard/settings/plans" className="btn-subtle !py-1.5 text-xs">
+                          Upgrade plan
+                        </Link>
+                      </div>
                     </div>
-                  </dl>
+                  )}
                   {mockMode && (
                     <p className="mt-3 rounded-lg bg-white px-3 py-2 text-xs font-semibold text-muted">
                       Demo mode is active. Configure the avatar provider to create a real video.
@@ -1179,6 +1439,33 @@ export function AiUgcStudio({
                   )}
                 </div>
                 <aside className="rounded-xl bg-page p-4">
+                  {outputIsCurrent ? (
+                    <div className="-mx-4 -mt-4 mb-4 overflow-hidden rounded-t-xl bg-ink">
+                      <video
+                        src={`/api/media-file/${outputMediaId}`}
+                        className="mx-auto max-h-56 w-full object-contain"
+                        controls
+                        playsInline
+                      />
+                    </div>
+                  ) : rendering ? (
+                    <div className="-mx-4 -mt-4 mb-4 flex min-h-40 flex-col items-center justify-center gap-1.5 rounded-t-xl bg-ink p-4 text-center">
+                      <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/25 border-t-white" />
+                      <p className="text-xs font-bold text-white">Your AI creator is rendering</p>
+                      {renderStartedAt && (
+                        <p className="text-[11px] font-semibold text-white/70 tabular-nums">
+                          {formatTime(renderElapsedSeconds)} elapsed
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    generationError && (
+                      <div className="-mx-4 -mt-4 mb-4 flex min-h-24 flex-col items-center justify-center gap-1 rounded-t-xl bg-red-50 p-4 text-center">
+                        <Icon name="warningTriangle" size={18} className="text-danger" />
+                        <p className="text-xs font-bold text-danger">Generation failed</p>
+                      </div>
+                    )
+                  )}
                   <p className="text-xs font-black uppercase tracking-[0.1em] text-muted">
                     Destinations
                   </p>
@@ -1274,6 +1561,11 @@ export function AiUgcStudio({
                 <div className="flex min-h-80 flex-col items-center justify-center bg-page/35 p-6 text-center">
                   <span className="h-10 w-10 animate-spin rounded-full border-[3px] border-primary/25 border-t-primary" />
                   <p className="mt-4 font-bold text-ink">Your AI creator is rendering</p>
+                  {renderStartedAt && (
+                    <p className="mt-1 text-xs font-bold uppercase tracking-[0.08em] text-primary-deep tabular-nums">
+                      {formatTime(renderElapsedSeconds)} elapsed
+                    </p>
+                  )}
                   <p className="mt-1 max-w-sm text-sm text-muted">
                     Keep this page open or come back from Drafts. The finished video will be attached automatically.
                   </p>
@@ -1297,7 +1589,7 @@ export function AiUgcStudio({
                   <button
                     type="button"
                     onClick={() => void startGeneration()}
-                    disabled={!createReady || startingGeneration}
+                    disabled={startingGeneration}
                     className="btn-primary mt-4 disabled:opacity-50"
                   >
                     <Icon name="sparkles" size={15} />
@@ -1358,22 +1650,41 @@ export function AiUgcStudio({
             <Icon name="chevronLeft" size={15} /> Back
           </button>
           {step === 0 ? (
-            <button
-              type="button"
-              onClick={() => void goNext()}
-              disabled={!createReady || startingGeneration}
-              title={createHint || undefined}
-              className="btn-primary !py-1.5 text-sm disabled:opacity-50"
-            >
-              {startingGeneration
-                ? "Starting generation…"
-                : rendering
-                  ? "Continue while generating"
-                  : outputIsCurrent
-                    ? "Continue"
-                    : "Generate & continue"}
-              <Icon name="chevronRight" size={15} />
-            </button>
+            <div className="flex items-center gap-3">
+              {showValidationErrors && (!createReady || (!rendering && !outputIsCurrent)) && (
+                <p className="text-xs font-semibold text-danger" role="alert">
+                  {!createReady
+                    ? aiLeft <= 0
+                      ? "This workspace has no AI generations left this month."
+                      : "Fill in the highlighted fields above."
+                    : "Generate a video before continuing."}
+                </p>
+              )}
+              <button
+                type="button"
+                onClick={handleGenerateClick}
+                disabled={startingGeneration || rendering}
+                className="btn-subtle !py-1.5 text-sm disabled:opacity-50"
+              >
+                {startingGeneration ? (
+                  "Starting…"
+                ) : rendering ? (
+                  <>
+                    <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-primary/25 border-t-primary" />
+                    Generating…
+                  </>
+                ) : outputIsCurrent ? (
+                  "Regenerate"
+                ) : (
+                  <>
+                    <Icon name="sparkles" size={15} /> Generate video
+                  </>
+                )}
+              </button>
+              <button type="button" onClick={goNext} className="btn-primary !py-1.5 text-sm">
+                Continue <Icon name="chevronRight" size={15} />
+              </button>
+            </div>
           ) : step === 1 ? (
             <button type="button" onClick={() => void goNext()} className="btn-primary !py-1.5 text-sm">
               Review <Icon name="chevronRight" size={15} />
