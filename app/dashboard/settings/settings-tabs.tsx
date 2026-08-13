@@ -11,9 +11,11 @@ export function SettingsTabs() {
       ? "workspace"
       : path.endsWith("/billing")
         ? "billing"
-        : path.endsWith("/plans")
-          ? "plans"
-          : "settings";
+        : path.endsWith("/usage")
+          ? "usage"
+          : path.endsWith("/plans")
+            ? "plans"
+            : "settings";
   return (
     <Tabs
       active={active}
@@ -22,6 +24,7 @@ export function SettingsTabs() {
         { key: "queue", label: "Queue", href: "/dashboard/settings/queue" },
         { key: "workspace", label: "Workspace", href: "/dashboard/settings/workspace" },
         { key: "billing", label: "Billing", href: "/dashboard/settings/billing" },
+        { key: "usage", label: "Usage", href: "/dashboard/settings/usage" },
         { key: "plans", label: "Plans", href: "/dashboard/settings/plans" },
       ]}
     />

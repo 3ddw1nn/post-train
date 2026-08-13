@@ -2,16 +2,10 @@
 
 import { useState } from "react";
 import Link from "next/link";
-import { PLANS } from "@/lib/billing-data";
+import { PLANS, PLAN_ICON } from "@/lib/billing-data";
 import { Icon } from "./icons";
 import { InfoTip } from "./ui";
 import { PlatformIconRow } from "./platform-icon";
-
-const PLAN_ICON: Record<string, string> = {
-  creator: "sparkles",
-  growth: "chart",
-  pro: "stack",
-};
 
 const ALL_PLATFORM_IDS = [
   "twitter",

@@ -45,6 +45,7 @@ const sections: LegalSection[] = [
     content: <>
       <p>Paid plans, trials, usage limits, and pricing are presented at checkout or in the product. Payments are processed by Stripe and may be subject to Stripe’s terms. Unless stated otherwise at checkout, subscriptions renew automatically until cancelled. You are responsible for applicable taxes and for keeping billing details current.</p>
       <p>You can cancel a subscription through the available billing controls. Cancellation normally takes effect at the end of the current billing period. Where a refund is offered, it is handled according to the refund terms presented at the time of purchase and any non-waivable consumer rights that apply to you.</p>
+      <p>Subscription charges may be refunded within 7 days of the charge, no questions asked; refunding a subscription charge cancels it immediately. AI credit top-ups are a separate, one-time purchase and follow their own rule: only the single most recent top-up is refundable, only within 48 hours of that purchase, and only if none of the credits it added have been spent — once you&apos;ve used any of them, or the window has passed, that purchase can no longer be refunded. A top-up refund removes the corresponding credits from your balance.</p>
     </>,
   },
   {

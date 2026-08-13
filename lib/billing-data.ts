@@ -1,5 +1,15 @@
-// Pure pricing data — safe to import from client components.
+// Pure pricing data — safe to import from client AND server components. Keep
+// it that way: components/plan-picker.tsx is "use client", and every export
+// of a "use client" file becomes a client-only reference on import, so shared
+// constants like PLAN_ICON below have to live outside it to be usable from a
+// server component (e.g. the marketing page).
 export type PaidPlan = "creator" | "growth" | "pro";
+
+export const PLAN_ICON: Record<PaidPlan, string> = {
+  creator: "sparkles",
+  growth: "chart",
+  pro: "stack",
+};
 
 export const PLANS: Record<
   PaidPlan,

@@ -6,11 +6,23 @@ import { entitled, apiAccess, apiRateLimit, studioAiMonthlyCredits, monthStartIs
 import { Pill } from "@/components/ui";
 import { Icon } from "@/components/icons";
 import { ActionButton } from "@/components/interactive";
-import { CreditPackPicker, CreditAllowanceMeter } from "@/components/buy-credits";
+import { CreditPackPicker, CreditAllowanceMeter, TopUpRefundBlock, type LastTopUp } from "@/components/buy-credits";
 import { convexQuery } from "@/lib/db";
 import { api } from "@/convex/_generated/api";
 
 export const metadata = { title: "Billing" };
+
+function SectionHeader({ icon, title, right }: { icon: string; title: string; right?: React.ReactNode }) {
+  return (
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-page/50 px-5 py-3">
+      <div className="flex items-center gap-2">
+        <Icon name={icon} size={14} className="text-muted" />
+        <h2 className="text-sm font-bold">{title}</h2>
+      </div>
+      {right}
+    </div>
+  );
+}
 
 export default async function BillingPage() {
   const user = await requireOnboardedUser();
@@ -21,21 +33,21 @@ export default async function BillingPage() {
   // Account-scoped, matching how the allowance is enforced: one pool shared
   // across every workspace this user owns.
   const aiAllowance = studioAiMonthlyCredits(sub);
-  const credits = live
-    ? await convexQuery<{ allowance_used: number; purchased: number }>(api.credits.balanceForOwner, {
-        owner_id: user.id,
-        allowance: aiAllowance,
-        since: monthStartIso(),
-      })
-    : { allowance_used: 0, purchased: 0 };
+  const [credits, lastTopUp] = live
+    ? await Promise.all([
+        convexQuery<{ allowance_used: number; purchased: number }>(api.credits.balanceForOwner, {
+          owner_id: user.id,
+          allowance: aiAllowance,
+          since: monthStartIso(),
+        }),
+        convexQuery<LastTopUp>(api.credits.lastRefundableTopUp, { user_id: user.id }),
+      ])
+    : [{ allowance_used: 0, purchased: 0 }, null];
 
   if (user.is_staff) {
     return (
       <section className="card overflow-hidden">
-        <div className="flex items-center gap-2 border-b border-line bg-page/50 px-5 py-3">
-          <Icon name="card" size={14} className="text-muted" />
-          <h2 className="text-sm font-bold">Current plan</h2>
-        </div>
+        <SectionHeader icon="card" title="Current plan" />
         <div className="p-5">
           <h3 className="text-xl font-bold">Staff Account</h3>
           <p className="mt-1 text-sm text-muted">
@@ -48,22 +60,23 @@ export default async function BillingPage() {
 
   return (
     <div className="flex flex-col gap-4">
+      {/* Plan — subscription lifecycle and the only place its own portal/refund live. */}
       <section className="card overflow-hidden">
-        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line bg-page/50 px-5 py-3">
-          <div className="flex items-center gap-2">
-            <Icon name="card" size={14} className="text-muted" />
-            <h2 className="text-sm font-bold">Current plan</h2>
-          </div>
-          {sub && sub.status !== "canceled" && (
-            <div className="flex items-center gap-1.5">
-              {sub.status === "trialing" && !sub.cancel_at_period_end && (
-                <Pill tone="warning">Trial</Pill>
-              )}
-              {sub.status === "paused" && <Pill tone="neutral">Paused</Pill>}
-              {!!sub.cancel_at_period_end && <Pill tone="neutral">Cancelling</Pill>}
-            </div>
-          )}
-        </div>
+        <SectionHeader
+          icon="card"
+          title="Current plan"
+          right={
+            sub && sub.status !== "canceled" ? (
+              <div className="flex items-center gap-1.5">
+                {sub.status === "trialing" && !sub.cancel_at_period_end && (
+                  <Pill tone="warning">Trial</Pill>
+                )}
+                {sub.status === "paused" && <Pill tone="neutral">Paused</Pill>}
+                {!!sub.cancel_at_period_end && <Pill tone="neutral">Cancelling</Pill>}
+              </div>
+            ) : undefined
+          }
+        />
 
         {!sub || sub.status === "canceled" ? (
           <div className="flex flex-wrap items-center justify-between gap-4 p-5">
@@ -177,16 +190,37 @@ export default async function BillingPage() {
                 </>
               )}
             </div>
+
+            <div className="mt-4 flex flex-wrap items-center gap-2 border-t border-line pt-4">
+              <button
+                className="btn-subtle cursor-not-allowed opacity-70"
+                title="Simulated build — connect Stripe to enable the customer portal"
+              >
+                Stripe Billing Portal <Icon name="external" size={13} />
+              </button>
+              <ActionButton
+                endpoint="/api/billing/refund"
+                className="btn-subtle"
+                confirmText="Request a refund? Your subscription ends immediately."
+              >
+                Request Refund
+              </ActionButton>
+              <p className="w-full text-xs text-muted">
+                Refunds are honored within 7 days of any charge — no questions asked.
+              </p>
+            </div>
           </div>
         )}
+      </section>
 
-        {/* The API used to be a paid add-on. It now ships with every paid plan,
-            so this is a status panel — selling it again would charge for
-            something the subscription already grants. */}
-        <div className="flex flex-wrap items-center justify-between gap-3 border-t border-line p-5">
+      {/* API & MCP — bundled into every paid plan, so this is a status panel,
+          not a purchase. Key management lives at /dashboard/api-keys; usage
+          alongside every other quota lives on the Usage page. */}
+      <section className="card overflow-hidden">
+        <SectionHeader icon="key" title="API & MCP" />
+        <div className="flex flex-wrap items-center justify-between gap-3 p-5">
           <div>
-            <h3 className="font-bold">API &amp; MCP</h3>
-            <p className="mt-0.5 text-sm text-muted">
+            <p className="text-sm text-muted">
               Programmatic posting via the REST API, signed webhooks, and the MCP server for
               Claude and other AI agents.
             </p>
@@ -200,22 +234,24 @@ export default async function BillingPage() {
             <Pill tone={apiAccess(sub) ? "success" : "neutral"}>
               {apiAccess(sub) ? "Included" : "Upgrade to unlock"}
             </Pill>
-            <Link href="/dashboard/api-keys" className="btn-subtle">
+            <Link href="/dashboard/settings/usage" className="btn-subtle">
               Manage
             </Link>
           </div>
         </div>
+      </section>
 
-        {live && (
-          <div className="border-t border-line p-5">
+      {/* AI credits — its own purchase (top-ups) and its own refund, scoped
+          to the last top-up rather than the subscription. */}
+      {live && (
+        <section className="card overflow-hidden">
+          <SectionHeader icon="sparkles" title="AI video credits" />
+          <div className="p-5">
             <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <h3 className="font-bold">AI video credits</h3>
-                <p className="mt-0.5 text-sm text-muted">
-                  Used by the AI UGC Video Studio. 1 credit renders 5 seconds of video, so a
-                  longer script costs more.
-                </p>
-              </div>
+              <p className="max-w-md text-sm text-muted">
+                Used by the AI UGC Video Studio. 1 credit renders 5 seconds of video, so a
+                longer script costs more.
+              </p>
               <div className="w-full max-w-xs">
                 <CreditAllowanceMeter
                   used={credits.allowance_used}
@@ -228,28 +264,14 @@ export default async function BillingPage() {
             <div className="mt-5 border-t border-line pt-5">
               <CreditPackPicker purchased={credits.purchased} />
             </div>
+            <TopUpRefundBlock info={lastTopUp} />
+            <p className="mt-2 text-xs text-muted">
+              Top-up refunds are honored within 48 hours of purchase, and only while none of
+              that purchase&apos;s credits have been spent.
+            </p>
           </div>
-        )}
-      </section>
-
-      <div className="flex flex-wrap items-center gap-2">
-        <button
-          className="btn-subtle cursor-not-allowed opacity-70"
-          title="Simulated build — connect Stripe to enable the customer portal"
-        >
-          Stripe Billing Portal <Icon name="external" size={13} />
-        </button>
-        <ActionButton
-          endpoint="/api/billing/refund"
-          className="btn-subtle"
-          confirmText="Request a refund? Your subscription ends immediately."
-        >
-          Request Refund
-        </ActionButton>
-        <p className="w-full text-xs text-muted">
-          Refunds are honored within 7 days of any charge — no questions asked.
-        </p>
-      </div>
+        </section>
+      )}
     </div>
   );
 }

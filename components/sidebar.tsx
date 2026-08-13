@@ -56,10 +56,16 @@ const SECTIONS: { label: string; items: NavItem[] }[] = [
         href: "/dashboard/settings",
         icon: "gear",
         match: ["/dashboard/settings", "/dashboard/settings/queue"],
-        exclude: ["/dashboard/settings/billing", "/dashboard/settings/plans", "/dashboard/settings/workspace"],
+        exclude: [
+          "/dashboard/settings/billing",
+          "/dashboard/settings/plans",
+          "/dashboard/settings/workspace",
+          "/dashboard/settings/usage",
+        ],
       },
       { label: "API Keys", href: "/dashboard/api-keys", icon: "key" },
       { label: "AI Image Keys", href: "/dashboard/ai-image-keys", icon: "image" },
+      { label: "Usage", href: "/dashboard/settings/usage", icon: "chart" },
       {
         label: "Billing",
         href: "/dashboard/settings/billing",

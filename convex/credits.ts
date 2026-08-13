@@ -35,7 +35,9 @@ export async function allowanceUsedSince(ctx, workspaceIds: string[], since: str
 }
 
 /** Purchased credits still available: everything bought, less the overflow
- *  spends already charged against it. Never expires. */
+ *  spends already charged against it and any purchases since refunded to the
+ *  customer (a refund claws credits back the same way a spend does — the
+ *  money left, so the credits it bought have to leave too). Never expires. */
 export async function purchasedBalance(ctx, userId: string) {
   const rows = await ctx.db
     .query("credit_ledger")
@@ -43,8 +45,8 @@ export async function purchasedBalance(ctx, userId: string) {
     .collect();
   let balance = 0;
   for (const row of rows) {
-    if (row.kind === "purchase" || row.kind === "refund") balance += row.credits;
-    else if (row.kind === "spend") balance -= row.credits;
+    if (row.kind === "purchase") balance += row.credits;
+    else if (row.kind === "spend" || row.kind === "refund") balance -= row.credits;
   }
   return Math.max(0, balance);
 }
@@ -118,5 +120,85 @@ export const listForUser = query({
       .order("desc")
       .take(Math.min(100, Math.max(1, args.limit ?? 25)));
     return rows;
+  },
+});
+
+/** Only the single most recent top-up is ever refundable — not "any purchase
+ *  in the last 48h". If it's already been refunded, there's nothing else to
+ *  offer; we don't fall back to an older purchase. */
+const REFUND_WINDOW_MS = 48 * 60 * 60 * 1000;
+
+/** Read-only eligibility snapshot for the Billing page's refund button. The
+ *  refund route re-derives this itself right before calling Stripe — this
+ *  copy is for display only and must never be trusted as authorization. */
+export const lastRefundableTopUp = query({
+  args: { user_id: v.string() },
+  handler: async (ctx, args) => {
+    const lastPurchase = await ctx.db
+      .query("credit_ledger")
+      .withIndex("by_user", (q) => q.eq("user_id", args.user_id))
+      .filter((q) => q.eq(q.field("kind"), "purchase"))
+      .order("desc")
+      .first();
+    if (!lastPurchase) return null;
+
+    const alreadyRefunded = await ctx.db
+      .query("credit_ledger")
+      .withIndex("by_user", (q) => q.eq("user_id", args.user_id))
+      .filter((q) => q.and(q.eq(q.field("kind"), "refund"), q.eq(q.field("ref_id"), lastPurchase.id)))
+      .first();
+
+    const balance = await purchasedBalance(ctx, args.user_id);
+    const ageMs = Date.now() - new Date(lastPurchase.created_at).getTime();
+
+    return {
+      id: lastPurchase.id,
+      credits: lastPurchase.credits,
+      pack: lastPurchase.ref_id, // pack id, or "custom"
+      created_at: lastPurchase.created_at,
+      expires_at: new Date(new Date(lastPurchase.created_at).getTime() + REFUND_WINDOW_MS).toISOString(),
+      stripe_session_id: lastPurchase.stripe_session_id ?? null,
+      already_refunded: !!alreadyRefunded,
+      within_window: ageMs <= REFUND_WINDOW_MS,
+      // Blocks a refund once any of THIS purchase's credits could plausibly
+      // have been spent. Credits are pooled, not tracked per-purchase, so the
+      // conservative proxy is: current balance still covers what this
+      // purchase alone granted — if spending has eaten into that, refuse.
+      balance_sufficient: balance >= lastPurchase.credits,
+    };
+  },
+});
+
+/**
+ * Records a top-up refund and claws back its credits. Called AFTER the
+ * Stripe refund succeeds (lib/billing.ts) — mirrors grantPurchase's ordering,
+ * money first, ledger second — and is idempotent on purchase_id so a retry
+ * can't claw back the same purchase twice.
+ */
+export const recordRefund = mutation({
+  args: {
+    id: v.string(),
+    user_id: v.string(),
+    purchase_id: v.string(),
+    credits: v.number(),
+  },
+  handler: async (ctx, args) => {
+    const existing = await ctx.db
+      .query("credit_ledger")
+      .withIndex("by_user", (q) => q.eq("user_id", args.user_id))
+      .filter((q) => q.and(q.eq(q.field("kind"), "refund"), q.eq(q.field("ref_id"), args.purchase_id)))
+      .first();
+    if (existing) return { recorded: false, duplicate: true };
+    await ctx.db.insert("credit_ledger", {
+      id: args.id,
+      user_id: args.user_id,
+      kind: "refund",
+      credits: args.credits,
+      reason: "top-up-refund",
+      ref_id: args.purchase_id,
+      stripe_session_id: null,
+      created_at: now(),
+    });
+    return { recorded: true, duplicate: false };
   },
 });

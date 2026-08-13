@@ -141,7 +141,17 @@ export function DevModeButton() {
                         className="mt-1 !py-1.5"
                         value={state.subscription.plan}
                         disabled={busy}
-                        onChange={(v) => patch({ plan: v })}
+                        onChange={(v) =>
+                          patch({
+                            plan: v,
+                            status:
+                              STATUS_OPTIONS.includes(state.subscription.status as never)
+                                ? state.subscription.status
+                                : "active",
+                            api_addon: state.subscription.api_addon,
+                            interval: state.subscription.interval,
+                          })
+                        }
                         options={PLAN_OPTIONS.map((plan) => ({ value: plan, label: plan }))}
                       />
                     </div>

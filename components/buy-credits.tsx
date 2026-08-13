@@ -11,14 +11,9 @@ import {
   CREDIT_PACKS,
   creditsForDollars,
 } from "@/lib/billing-data";
-import { SECONDS_PER_CREDIT } from "@/lib/entitlements";
+import { describeCredits } from "@/lib/entitlements";
 import { Icon } from "./icons";
-
-/** "~55s" / "~4 min" — credits mean nothing on their own. */
-function describeCredits(credits: number): string {
-  const seconds = credits * SECONDS_PER_CREDIT;
-  return seconds < 90 ? `~${seconds}s of video` : `~${Math.round(seconds / 60)} min of video`;
-}
+import { ActionButton } from "./interactive";
 
 function useCheckout() {
   const [pending, setPending] = useState<string | null>(null);
@@ -207,6 +202,83 @@ export function CreditPackPicker({ purchased }: { purchased: number }) {
       </div>
       <CustomAmount pending={pending} onBuy={(dollars) => void buy("custom", dollars)} />
       {error && <p className="mt-2 text-xs font-semibold text-danger">{error}</p>}
+    </div>
+  );
+}
+
+export type LastTopUp = {
+  credits: number;
+  pack: string;
+  created_at: string;
+  expires_at: string;
+  already_refunded: boolean;
+  within_window: boolean;
+  balance_sufficient: boolean;
+} | null;
+
+/**
+ * Only the single most recent top-up is ever refundable — see
+ * convex/credits.ts's lastRefundableTopUp for why. This renders that one
+ * purchase plus either a refund button or the specific reason it can't be
+ * refunded right now, so "why is this greyed out" is never a mystery.
+ */
+export function TopUpRefundBlock({ info }: { info: LastTopUp }) {
+  if (!info) {
+    return <p className="mt-4 border-t border-line pt-4 text-xs text-muted">No top-up purchases yet.</p>;
+  }
+  const pack = CREDIT_PACKS.find((p) => p.id === info.pack);
+  const purchaseLabel = pack
+    ? `${info.credits} credits ($${pack.price})`
+    : `${info.credits} credits (custom top-up)`;
+  const eligible = !info.already_refunded && info.within_window && info.balance_sufficient;
+  const reason = info.already_refunded
+    ? "Already refunded."
+    : !info.within_window
+      ? "The 48-hour refund window has passed."
+      : !info.balance_sufficient
+        ? "Some of these credits have already been used."
+        : null;
+
+  return (
+    <div className="mt-4 border-t border-line pt-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div>
+          <p className="text-xs font-bold uppercase tracking-[0.1em] text-muted">Last purchase</p>
+          <p className="mt-0.5 text-sm font-semibold text-ink">
+            {purchaseLabel}
+            <span className="font-medium text-muted">
+              {" "}
+              ·{" "}
+              {new Date(info.created_at).toLocaleDateString(undefined, { month: "short", day: "numeric" })}
+            </span>
+          </p>
+        </div>
+        {eligible ? (
+          <ActionButton
+            endpoint="/api/billing/credits/refund"
+            className="btn-subtle"
+            confirmTitle="Refund this top-up?"
+            confirmText={`This refunds the purchase and removes ${info.credits} credits from your balance. It can't be undone.`}
+            confirmLabel="Refund"
+          >
+            Request refund
+          </ActionButton>
+        ) : (
+          <p className="text-xs font-semibold text-muted">{reason}</p>
+        )}
+      </div>
+      {eligible && (
+        <p className="mt-1.5 text-xs text-muted">
+          Refundable until{" "}
+          {new Date(info.expires_at).toLocaleString(undefined, {
+            month: "short",
+            day: "numeric",
+            hour: "numeric",
+            minute: "2-digit",
+          })}
+          .
+        </p>
+      )}
     </div>
   );
 }

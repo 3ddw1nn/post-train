@@ -5,6 +5,8 @@ import { PlanPicker } from "@/components/plan-picker";
 import { Icon } from "@/components/icons";
 import { UserAvatar } from "@/components/avatar-menu";
 import { ShaderGradientBg, StaticGradientBg } from "@/components/shader-gradient-bg";
+import { PLANS, PLAN_ICON, CREDIT_PACKS, CREDIT_MIN_DOLLARS } from "@/lib/billing-data";
+import { studioAiMonthlyCredits, describeCredits } from "@/lib/entitlements";
 
 export const metadata = {
   title: "Post Train — schedule and cross-post to 11 platforms",
@@ -40,6 +42,10 @@ const FAQ: [string, string][] = [
   [
     "How do AI video credits work?",
     "The AI UGC Video Studio turns a script and an AI creator into a talking-head video, and those runs use credits. 1 credit renders 5 seconds, so a 15-second video costs 3. Every paid plan includes a monthly allowance — 60 credits on Creator, 100 on Growth, 200 on Pro — which resets each month. Need more? Top-ups start at $2, never expire, and are only spent once your monthly allowance runs out. Everything else on Post Train (posting, scheduling, analytics) is unlimited and uses no credits.",
+  ],
+  [
+    "Can I get a refund on AI credit top-ups?",
+    "Yes, with two conditions: only the single most recent top-up is refundable, and only within 48 hours of buying it. It also has to be unused — once any of those credits have been spent on a render, that purchase can no longer be refunded. A refund removes the corresponding credits from your balance. This is separate from subscription refunds, which are honored within 7 days of any charge, no questions asked.",
   ],
   [
     "What content types can I post?",
@@ -361,6 +367,8 @@ export default function LandingPage() {
           <div className="mt-10">
             <PlanPicker mode="marketing" />
           </div>
+
+          <AiCreditsPanel />
         </div>
       </section>
 
@@ -465,6 +473,105 @@ function CapabilityCard({
               <Icon name="check" size={13} className="text-primary-deep" /> {t}
             </span>
           ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const AI_CREDIT_TIERS = (Object.keys(PLANS) as (keyof typeof PLANS)[]).map((key) => ({
+  key,
+  name: PLANS[key].name,
+  // Real allowance, not a mirrored constant — studioAiMonthlyCredits is the
+  // one function that decides this, so the marketing page can't drift from
+  // what a subscriber actually gets.
+  credits: studioAiMonthlyCredits({ plan: key, status: "active", cancel_at_period_end: 0 }),
+}));
+const MAX_TIER_CREDITS = Math.max(...AI_CREDIT_TIERS.map((t) => t.credits));
+const BEST_VALUE_PACK = CREDIT_PACKS.reduce((best, pack) =>
+  pack.credits / pack.price > best.credits / best.price ? pack : best
+);
+
+function AiCreditsPanel() {
+  return (
+    <div className="card mt-16 p-8 sm:p-10">
+      <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_1px_minmax(0,1fr)]">
+        <div>
+          <p className="flex items-center gap-2 text-sm font-semibold text-muted">
+            <Icon name="sparkles" size={15} strokeWidth={1.8} className="text-primary-deep" />
+            AI UGC Video Studio
+          </p>
+          <h3 className="mt-2 text-2xl font-extrabold">Metered in credits, not surprises</h3>
+          <p className="mt-2.5 max-w-md text-sm leading-relaxed text-muted">
+            Turn a script and an AI creator into a talking video. Every paid plan includes a
+            monthly credit allowance — 1 credit renders 5 seconds, so a short hook costs less
+            than a full pitch.
+          </p>
+
+          <div className="mt-7 flex flex-col gap-3">
+            {AI_CREDIT_TIERS.map((tier) => (
+              <div key={tier.key} className="flex items-center gap-3">
+                <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-lg border border-line bg-page text-primary-deep">
+                  <Icon name={PLAN_ICON[tier.key]} size={15} strokeWidth={1.8} />
+                </span>
+                <span className="w-16 shrink-0 text-sm font-bold">{tier.name}</span>
+                <span className="h-1.5 flex-1 overflow-hidden rounded-full bg-page">
+                  <span
+                    className="block h-full rounded-full bg-primary"
+                    style={{ width: `${(tier.credits / MAX_TIER_CREDITS) * 100}%` }}
+                  />
+                </span>
+                <span className="w-24 shrink-0 text-right text-sm font-bold tabular-nums text-ink">
+                  {tier.credits}<span className="font-semibold text-muted">/mo</span>
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+
+        <div className="hidden bg-line lg:block" aria-hidden />
+
+        <div>
+          <p className="text-sm font-bold">Need more this month? Top up any time.</p>
+          <p className="mt-1 text-xs leading-relaxed text-muted">
+            Top-ups never expire and are only spent once your monthly allowance runs out —
+            bigger amounts cost less per credit.
+          </p>
+
+          <div className="mt-6 grid grid-cols-3 gap-2.5">
+            {CREDIT_PACKS.map((pack) => {
+              const isBestValue = pack.id === BEST_VALUE_PACK.id;
+              return (
+                <div
+                  key={pack.id}
+                  className={`relative rounded-lg border p-3 pt-4 text-center ${
+                    isBestValue ? "border-ink/15 bg-page" : "border-line bg-page/60"
+                  }`}
+                >
+                  {isBestValue && (
+                    <span className="pill absolute -top-3 left-1/2 -translate-x-1/2 whitespace-nowrap bg-ink text-white shadow-sm">
+                      Best value
+                    </span>
+                  )}
+                  <p className="text-lg font-black tabular-nums">{pack.credits}</p>
+                  <p className="text-[11px] font-bold text-muted">credits</p>
+                  <p className="mt-1.5 text-sm font-bold text-primary-deep">${pack.price}</p>
+                  <p className="mt-0.5 text-[11px] text-muted">{describeCredits(pack.credits)}</p>
+                </div>
+              );
+            })}
+          </div>
+          <p className="mt-3 text-center text-xs text-muted">
+            Or pay for exactly what you need — any custom amount from ${CREDIT_MIN_DOLLARS}.
+          </p>
+          <p className="mt-1.5 text-center text-[11px] text-muted">
+            Top-ups are refundable within 48 hours of purchase, as long as those credits are
+            still unused.
+          </p>
+
+          <Link href="/create-account" className="btn-primary mt-6 w-full justify-center">
+            Start your free trial <Icon name="chevronRight" size={15} />
+          </Link>
         </div>
       </div>
     </div>

@@ -1,5 +1,5 @@
 import { requireUser } from "@/lib/auth";
-import { getSubscription, type Plan, type Subscription } from "@/lib/billing";
+import { type Plan, type Subscription } from "@/lib/billing";
 import { convexMutation, deleteRecords, findRecord, now, patchRecord, patchRecords, uid } from "@/lib/db";
 import { currentWorkspace } from "@/lib/workspaces";
 import { api } from "@/convex/_generated/api";
@@ -17,10 +17,26 @@ function disabled() {
   return Response.json({ error: { message: "Dev controls are disabled in production." } }, { status: 404 });
 }
 
+/**
+ * The real subscriptions-table row, bypassing lib/billing's getSubscription —
+ * that function returns a synthetic { id: "staff-override", plan: "pro", ... }
+ * for any staff account, which is exactly right for entitlement checks but
+ * wrong here: this panel exists to inspect and edit the real row, and every
+ * staff account (including this dev tool's own user) has is_staff on. Reading
+ * through the masked helper meant every field in the modal always echoed back
+ * "pro / active" regardless of what was actually stored or just written,
+ * making every control here look broken. (upsertSubscription itself was
+ * always safe — it keys off user_id and never trusted the passed id on
+ * update — so this was purely a read-side bug, not data corruption.)
+ */
+async function rawSubscription(userId: string) {
+  return await findRecord<Subscription>("subscriptions", { user_id: userId });
+}
+
 async function state() {
   const user = await requireUser();
   const ws = await currentWorkspace(user);
-  const sub = await getSubscription(user.id);
+  const sub = await rawSubscription(user.id);
   const member = await findRecord<{ role: string }>("workspace_members", {
     workspace_id: ws.id,
     user_id: user.id,
@@ -76,10 +92,10 @@ export async function PATCH(req: Request) {
     if (body.plan === "none") {
       await deleteRecords("subscriptions", { user_id: user.id });
     } else {
-      const existing = await getSubscription(user.id);
+      const existing = await rawSubscription(user.id);
       const status = isOneOf(body.status, STATUSES) ? body.status : "active";
       await convexMutation<Subscription>(api.billing.upsertSubscription, {
-        id: existing?.id && existing.id !== "staff-override" ? existing.id : `dev-${uid()}`,
+        id: existing?.id ?? `dev-${uid()}`,
         user_id: user.id,
         plan: body.plan as Exclude<Plan, "free">,
         interval: body.interval === "year" ? "year" : "month",
@@ -100,8 +116,8 @@ export async function PATCH(req: Request) {
       });
     }
   } else if (typeof body.api_addon === "boolean") {
-    const existing = await getSubscription(user.id);
-    if (existing && existing.id !== "staff-override") {
+    const existing = await rawSubscription(user.id);
+    if (existing) {
       await convexMutation(api.billing.patchByUser, {
         user_id: user.id,
         patch: {

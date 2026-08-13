@@ -81,9 +81,6 @@ export function MarketingNav({ user }: { user: NavUser | null }) {
             <Link href="/docs/api" className="text-ink/80 hover:text-ink">
               Docs
             </Link>
-            <Link href="/dashboard/settings/billing" className="text-ink/80 hover:text-ink">
-              Billing
-            </Link>
             {user ? (
               <>
                 <Link href="/dashboard/create" className="btn-primary !py-1.5">
@@ -138,7 +135,6 @@ export function MarketingNav({ user }: { user: NavUser | null }) {
             <Link href="/docs/api" onClick={() => setOpen(false)}>Docs</Link>
             {user ? (
               <>
-                <Link href="/dashboard/settings/billing" onClick={() => setOpen(false)}>Billing</Link>
                 {user.isStaff && (
                   <Link href="/staff" onClick={() => setOpen(false)}>Staff Dashboard</Link>
                 )}

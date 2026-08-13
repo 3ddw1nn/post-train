@@ -100,6 +100,17 @@ export function creditsForSeconds(seconds: number): number {
 }
 
 /**
+ * "~55s" / "~4 min" — credits mean nothing on their own. Lives here rather
+ * than on a "use client" component: every export of a "use client" file
+ * becomes a client-only reference, including plain functions, so a server
+ * component (the marketing page) could not have called it from there.
+ */
+export function describeCredits(credits: number): string {
+  const seconds = credits * SECONDS_PER_CREDIT;
+  return seconds < 90 ? `~${seconds}s of video` : `~${Math.round(seconds / 60)} min of video`;
+}
+
+/**
  * Monthly AI UGC credits included with a plan, counted across every workspace
  * the subscriber owns (see aiUsageThisMonth). 1 credit = 5s of avatar video
  * ~= $0.125 of provider spend, so these budget AI cost at roughly 25% of plan

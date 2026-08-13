@@ -2,7 +2,7 @@
 // cancellation) is driven by webhooks (app/api/webhooks/stripe/route.ts) —
 // this file only issues Stripe API calls and mirrors the immediate result
 // into Convex so the UI doesn't have to wait a round trip for the webhook.
-import { convexMutation, convexQuery, now } from "./db";
+import { convexMutation, convexQuery, now, uid } from "./db";
 import { PLANS, API_ADDON, TRIAL_DAYS, CREDIT_PACKS, creditsForDollars, type PaidPlan } from "./billing-data";
 import { stripe, planPriceId, addonPriceId, creditPackPriceId } from "./stripe";
 import { api } from "@/convex/_generated/api";
@@ -221,6 +221,40 @@ export async function setApiAddon(userId: string, on: boolean, interval: "month"
     user_id: userId,
     patch: { api_addon: on ? 1 : 0, api_addon_interval: on ? interval : null, updated_at: now() },
   });
+}
+
+/**
+ * Refund one AI credit top-up purchase and claw its credits back.
+ *
+ * Eligibility (48-hour window, not already refunded, unspent balance) is the
+ * caller's job — app/api/billing/credits/refund/route.ts checks it against a
+ * fresh read of convex/credits.ts's lastRefundableTopUp right before calling
+ * this, the same split refundLatestCharge/api/billing/refund uses. This
+ * function only ever does the Stripe call and records it.
+ *
+ * Order matters: Stripe first, ledger second. If the ledger write fails after
+ * a successful Stripe refund, the customer keeps a few credits they were
+ * refunded for — an accepted, narrow risk, not a silent double-refund (Stripe
+ * itself refuses to refund the same payment_intent twice).
+ */
+export async function refundTopUpPurchase(
+  userId: string,
+  purchaseId: string,
+  stripeSessionId: string,
+  credits: number
+): Promise<void> {
+  const session = await stripe().checkout.sessions.retrieve(stripeSessionId);
+  const paymentIntentId =
+    typeof session.payment_intent === "string" ? session.payment_intent : session.payment_intent?.id;
+  if (!paymentIntentId) throw new Error("No payment found for this purchase.");
+  await stripe().refunds.create({ payment_intent: paymentIntentId });
+  const result = await convexMutation<{ recorded: boolean; duplicate: boolean }>(api.credits.recordRefund, {
+    id: uid(),
+    user_id: userId,
+    purchase_id: purchaseId,
+    credits,
+  });
+  if (!result.recorded && !result.duplicate) throw new Error("Could not record the refund.");
 }
 
 /** Refund-on-request within 7 days of a charge (spec FAQ) — refunds the latest invoice's charge. */
