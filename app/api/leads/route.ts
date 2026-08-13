@@ -1,5 +1,7 @@
 import { insertRecord, findRecord, patchRecord, now, uid } from "@/lib/db";
 import { resolveChatSessionKey } from "@/lib/chat-session";
+import { queueEmailToAddress } from "@/lib/emails";
+import { waitlistConfirmationEmail } from "@/lib/email-templates";
 
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
@@ -54,6 +56,13 @@ export async function POST(req: Request) {
       created_at: timestamp,
       updated_at: timestamp,
     });
+    // Confirmation only on a genuinely new waitlist signup — not on a
+    // resubmit (handled above as a patch) and not for other lead sources
+    // (the marketing chat's contact form), which don't promise a reply here.
+    if (source === "waitlist") {
+      const { subject, body: emailBody } = waitlistConfirmationEmail();
+      await queueEmailToAddress(email, "waitlist_confirmation", subject, emailBody);
+    }
   }
 
   return Response.json({ ok: true });

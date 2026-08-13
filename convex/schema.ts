@@ -504,7 +504,11 @@ export default defineSchema({
 
   emails_outbox: defineTable({
     id: v.string(),
-    user_id: v.string(),
+    // Registered-user sends look up the address from user_id; sends to a
+    // non-user (e.g. a waitlist signup, which has no account) go straight to
+    // to_email instead. Exactly one of the two is set.
+    user_id: v.optional(v.string()),
+    to_email: v.optional(v.string()),
     kind: v.string(),
     subject: v.string(),
     body: v.string(),

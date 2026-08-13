@@ -33,10 +33,10 @@ const STATUS_TONE: Record<string, "success" | "neutral" | "warning" | "locked" |
 export default async function StaffLeadsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string; leadId?: string }>;
+  searchParams: Promise<{ q?: string; status?: string; source?: string; leadId?: string }>;
 }) {
   await requireStaffUser();
-  const { q, status, leadId } = await searchParams;
+  const { q, status, source, leadId } = await searchParams;
   const allLeads = await listRecords<LeadRow>("leads");
   const query = (q ?? "").trim().toLowerCase();
 
@@ -44,6 +44,7 @@ export default async function StaffLeadsPage({
   // Convex search index (or paginate) once leads grow past a few hundred.
   const results = allLeads
     .filter((l) => !status || l.status === status)
+    .filter((l) => !source || l.source === source)
     .filter(
       (l) =>
         !query ||
@@ -54,11 +55,13 @@ export default async function StaffLeadsPage({
     )
     .sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
 
+  const waitlistCount = allLeads.filter((l) => l.source === "waitlist").length;
   const detail = leadId ? results.find((l) => l.id === leadId) ?? allLeads.find((l) => l.id === leadId) : null;
   const qs = (extra: Record<string, string | undefined>) => {
     const params = new URLSearchParams();
     if (q) params.set("q", q);
     if (status) params.set("status", status);
+    if (source) params.set("source", source);
     Object.entries(extra).forEach(([k, v]) => (v ? params.set(k, v) : params.delete(k)));
     return `?${params.toString()}`;
   };
@@ -70,11 +73,18 @@ export default async function StaffLeadsPage({
       <div className="mt-4 flex flex-wrap items-center gap-2">
         <form className="flex gap-2" action="/staff/leads">
           {status && <input type="hidden" name="status" value={status} />}
+          {source && <input type="hidden" name="source" value={source} />}
           <input type="text" name="q" defaultValue={q} placeholder="Search name, email, company…" className="input" />
           <button className="btn-primary" type="submit">
             Search
           </button>
         </form>
+        <Link
+          href={qs({ source: source === "waitlist" ? undefined : "waitlist" })}
+          className={`pill ${source === "waitlist" ? "bg-primary-soft text-primary-deep" : "bg-gray-100 text-gray-600"}`}
+        >
+          Waitlist ({waitlistCount})
+        </Link>
         <div className="ml-auto flex flex-wrap gap-1.5">
           <Link href={qs({ status: undefined })} className={`pill ${!status ? "bg-primary-soft text-primary-deep" : "bg-gray-100 text-gray-600"}`}>
             All

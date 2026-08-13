@@ -93,7 +93,14 @@ export const nextNumberId = query({
 });
 
 export const enqueueEmail = mutation({
-  args: { id: v.string(), user_id: v.string(), kind: v.string(), subject: v.string(), body: v.string() },
+  args: {
+    id: v.string(),
+    user_id: v.optional(v.string()),
+    to_email: v.optional(v.string()),
+    kind: v.string(),
+    subject: v.string(),
+    body: v.string(),
+  },
   handler: async (ctx, args) => {
     await ctx.db.insert("emails_outbox", { ...args, created_at: now() });
   },
