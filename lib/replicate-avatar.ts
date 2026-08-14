@@ -115,6 +115,16 @@ export async function submitAvatarJob(opts: {
   return { jobId: result.id };
 }
 
+/** Best-effort upstream cancel so a canceled render stops billing us. */
+export async function cancelAvatarJob(jobId: string): Promise<void> {
+  if (jobId.startsWith("mock_") || !replicateEnabled()) return;
+  await replicateFetch(`/predictions/${jobId}/cancel`, { method: "POST" }).catch((error) => {
+    // Already finished or already canceled — the local state is what the user
+    // sees, so never fail their cancel over this.
+    console.warn("[replicate] cancel failed", error);
+  });
+}
+
 export async function pollAvatarJob(jobId: string): Promise<ProviderJobState> {
   if (jobId.startsWith("mock_")) return { status: "done", outputUrl: MOCK_OUTPUT_URL };
   const result = (await replicateFetch(`/predictions/${jobId}`)) as {

@@ -2,7 +2,7 @@
 import { mutationGeneric as mutation, queryGeneric as query } from "convex/server";
 import { ConvexError, v } from "convex/values";
 import { byLegacyId, now } from "./model";
-import { allowanceUsedSince, purchasedBalance, workspaceIdsForOwner } from "./credits";
+import { allowanceUsedSince, purchasedBalance, reverseJobSpend, workspaceIdsForOwner } from "./credits";
 import { writeNotification } from "./notifications";
 import type { Doc } from "./_generated/dataModel";
 import type { MutationCtx } from "./_generated/server";
@@ -155,8 +155,76 @@ export const patchJob = mutation({
     await ctx.db.patch(job._id, { ...args.patch, updated_at: now() });
     const updated = await ctx.db.get(job._id);
     const nextStatus = typeof args.patch.status === "string" ? args.patch.status : job.status;
+    // Every failure path funnels through here — provider error, stale reap,
+    // user cancel — so this is the one place that has to give back credits
+    // charged for a video that will never exist. reverseJobSpend is
+    // idempotent, so re-failing an already-failed job is harmless.
+    if (nextStatus === "failed" && job.status !== "failed") await reverseJobSpend(ctx, args.id);
     if (updated && (nextStatus === "done" || nextStatus === "failed")) await updateRenderNotification(ctx, updated);
     return updated;
+  },
+});
+
+/**
+ * User-initiated cancel. Terminal states are left alone so cancelling a race
+ * winner can't discard a video that already rendered (and can't reverse
+ * credits for one that did). Returns the provider job id so the caller can
+ * also cancel it upstream and stop paying for the render.
+ */
+export const cancelJob = mutation({
+  args: { id: v.string(), workspace_id: v.string() },
+  handler: async (ctx, args) => {
+    const job = await byLegacyId(ctx, "studio_jobs", args.id);
+    if (!job || job.workspace_id !== args.workspace_id) return null;
+    if (job.status === "done" || job.status === "failed") {
+      return { canceled: false, status: job.status, provider_job_id: null };
+    }
+    await ctx.db.patch(job._id, {
+      status: "failed",
+      error_message: "Canceled.",
+      lease_until: null,
+      updated_at: now(),
+    });
+    await reverseJobSpend(ctx, args.id);
+    const updated = await ctx.db.get(job._id);
+    if (updated) await updateRenderNotification(ctx, updated);
+    return { canceled: true, status: "failed", provider_job_id: job.provider_job_id ?? null };
+  },
+});
+
+/**
+ * Fails renders that have outlived any plausible run.
+ *
+ * A job polls the provider indefinitely while it reports "running", and
+ * `attempts` only counts *errors*, so nothing bounded a render whose provider
+ * job was lost — or one queued while no worker was running at all. Without
+ * this the UI spins forever and the credits stay spent.
+ */
+export const failStale = mutation({
+  args: { before: v.string(), limit: v.number() },
+  handler: async (ctx, args) => {
+    let failed = 0;
+    for (const status of ["queued", "generating", "compositing"]) {
+      const rows = await ctx.db
+        .query("studio_jobs")
+        .withIndex("by_status", (q) => q.eq("status", status))
+        .take(50);
+      for (const row of rows) {
+        if (failed >= args.limit) break;
+        if (row.created_at >= args.before) continue;
+        await ctx.db.patch(row._id, {
+          status: "failed",
+          error_message: "Timed out — the render never finished. You weren't charged.",
+          lease_until: null,
+          updated_at: now(),
+        });
+        await reverseJobSpend(ctx, row.id);
+        const updated = await ctx.db.get(row._id);
+        if (updated) await updateRenderNotification(ctx, updated);
+        failed++;
+      }
+    }
+    return failed;
   },
 });
 

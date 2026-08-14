@@ -45,10 +45,49 @@ export async function purchasedBalance(ctx, userId: string) {
     .collect();
   let balance = 0;
   for (const row of rows) {
-    if (row.kind === "purchase") balance += row.credits;
+    // "reversal" gives credits back for a render that never produced a video
+    // (failed, timed out, or canceled) — the opposite direction to "refund",
+    // which claws credits back because the customer's money was returned.
+    if (row.kind === "purchase" || row.kind === "reversal") balance += row.credits;
     else if (row.kind === "spend" || row.kind === "refund") balance -= row.credits;
   }
   return Math.max(0, balance);
+}
+
+/**
+ * Gives back the purchased credits a render was charged, when that render
+ * ends without producing a video.
+ *
+ * Only the *overflow* is ledgered at spend time — the allowance-funded part is
+ * derived from the job row and already self-corrects, because
+ * allowanceUsedSince skips failed jobs. So without this, a render that dipped
+ * into paid top-ups and then failed silently kept the user's money.
+ *
+ * Idempotent on the job id: replaying a failure (a retried tick, a cancel
+ * racing the worker) must not mint credits.
+ */
+export async function reverseJobSpend(ctx, jobId: string) {
+  const spend = await ctx.db
+    .query("credit_ledger")
+    .withIndex("by_legacy_id", (q) => q.eq("id", `cled_${jobId}`))
+    .unique();
+  if (!spend || spend.kind !== "spend") return 0;
+  const existing = await ctx.db
+    .query("credit_ledger")
+    .withIndex("by_legacy_id", (q) => q.eq("id", `clrev_${jobId}`))
+    .unique();
+  if (existing) return 0;
+  await ctx.db.insert("credit_ledger", {
+    id: `clrev_${jobId}`,
+    user_id: spend.user_id,
+    kind: "reversal",
+    credits: spend.credits,
+    reason: "render-not-delivered",
+    ref_id: jobId,
+    stripe_session_id: null,
+    created_at: now(),
+  });
+  return spend.credits;
 }
 
 export async function workspaceIdsForOwner(ctx, ownerId: string) {

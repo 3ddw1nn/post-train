@@ -24,7 +24,7 @@ import {
   renderPlaceholder,
 } from "./ffmpeg";
 import { MOCK_OUTPUT_URL, studioMock, type ProviderJobState } from "./creatify";
-import { DEFAULT_VOICE, imageDataUri, pollAvatarJob, replicateEnabled, stockPersonaImage, submitAvatarJob, VOICES } from "./replicate-avatar";
+import { cancelAvatarJob, DEFAULT_VOICE, imageDataUri, pollAvatarJob, replicateEnabled, stockPersonaImage, submitAvatarJob, VOICES } from "./replicate-avatar";
 import { creditsForSeconds, monthStartIso, studioAiMonthlyCredits } from "./entitlements";
 import { getSubscription } from "./billing";
 import { VIDEO_PRESETS, normalizeVideoFps, videoAspectById, videoPresetById } from "./video-render-settings";
@@ -476,13 +476,46 @@ export async function deleteStudioJob(id: string, workspaceId: string): Promise<
   return await convexMutation<boolean>(api.studioJobs.deleteForWorkspace, { id, workspace_id: workspaceId });
 }
 
+/**
+ * Stops a render and refunds it. The Convex mutation owns the state change and
+ * the credit reversal atomically; cancelling upstream afterwards is best-effort
+ * cleanup so we stop paying for a video nobody will watch.
+ */
+export async function cancelStudioJob(id: string, workspaceId: string) {
+  const result = await convexMutation<{
+    canceled: boolean;
+    status: string;
+    provider_job_id: string | null;
+  } | null>(api.studioJobs.cancelJob, { id, workspace_id: workspaceId });
+  if (!result) throw new DomainError(404, "Render not found.");
+  if (result.canceled && result.provider_job_id) {
+    await cancelAvatarJob(result.provider_job_id);
+  }
+  return result;
+}
+
 const patchJob = (id: string, patch: Record<string, unknown>) =>
   convexMutation<StudioJobRow | null>(api.studioJobs.patchJob, { id, patch });
 
 const MAX_POLL_ATTEMPTS = 5;
 
 /** Worker tick entry: claim runnable jobs and advance each one step. */
+/**
+ * How long a render may sit unfinished before the worker gives up on it.
+ * Generous next to a real render (ffmpeg self-kills at 10 minutes) so this
+ * only ever catches genuinely stuck work, never a slow-but-live job.
+ */
+export const STUDIO_JOB_TIMEOUT_MS = 30 * 60_000;
+
 export async function processStudioJobs(): Promise<number> {
+  // Reap first, so a stuck job frees its credits (and stops spinning in the
+  // UI) even while the queue behind it is still busy.
+  const reaped = await convexMutation<number>(api.studioJobs.failStale, {
+    before: new Date(Date.now() - STUDIO_JOB_TIMEOUT_MS).toISOString(),
+    limit: 20,
+  });
+  if (reaped > 0) console.warn(`[studio] timed out ${reaped} stale job(s)`);
+
   const jobs = await convexMutation<StudioJobRow[]>(api.studioJobs.claimRunnable, {
     now: now(),
     limit: 3,
