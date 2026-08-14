@@ -1,9 +1,11 @@
-// Speech synthesis for AI UGC, used in two places:
-//   - the voice picker's preview button (synthesizeVoicePreview)
-//   - the real render's audio track (synthesizeSpeech, via submitAvatarJob)
+// Speech synthesis for AI UGC renders (lib/replicate-avatar.ts's
+// submitAvatarJob), and the on-demand fallback behind the voice picker.
 //
-// Both go through the same Gemini voices the avatar model itself wraps, so a
-// preview is a truthful sample of the final video rather than a lookalike.
+// Previews are normally pre-generated static files (see
+// scripts/generate-voice-previews.mjs and public/voice-previews/), so a click
+// just plays a file. Gemini's free tier allows only ~10 TTS calls per *day*,
+// so that set is being filled in over several runs; until it's complete,
+// voices without a file fall back to synthesizeVoicePreview below.
 //
 // We generate the audio ourselves rather than letting the avatar model do its
 // own TTS because prunaai/p-video-avatar accepts its `voice` enum and then
@@ -15,15 +17,6 @@
 import { DomainError } from "./posts";
 
 const MODEL = "gemini-2.5-flash-preview-tts";
-// Every voice reads this same line — a shorter or longer sample would make
-// voices feel faster or slower than they actually are, not a fair comparison.
-const SAMPLE_SCRIPT = "Hey! This is a quick preview of how I sound.";
-
-// ponytail: in-memory cache, per process — same idiom as lib/creatify.ts's
-// persona cache. Fine at 30 fixed voices; never expires since the sample
-// script never changes.
-const g = globalThis as unknown as { __ptVoicePreviews?: Map<string, Buffer> };
-const cache = (g.__ptVoicePreviews ??= new Map<string, Buffer>());
 
 function pcmToWav(pcm: Buffer, sampleRate: number, channels: number, bitsPerSample: number): Buffer {
   const blockAlign = channels * (bitsPerSample / 8);
@@ -49,29 +42,37 @@ function bareVoiceName(voice: string): string {
   return voice.replace(/\s*\([^)]*\)\s*$/, "").trim();
 }
 
+async function callGemini(apiKey: string, voiceName: string, text: string): Promise<Response> {
+  return fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
+    method: "POST",
+    headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      contents: [{ parts: [{ text }] }],
+      generationConfig: {
+        responseModalities: ["AUDIO"],
+        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+      },
+    }),
+  });
+}
+
 /** Spoken `text` in `voice`, as a browser/ffmpeg-playable WAV. */
 export async function synthesizeSpeech(voice: string, text: string): Promise<Buffer> {
   const apiKey = process.env.GEMINI_API_KEY;
   if (!apiKey) throw new DomainError(503, "Voice generation is not configured. Add GEMINI_API_KEY.");
+  const voiceName = bareVoiceName(voice);
 
-  const res = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`,
-    {
-      method: "POST",
-      headers: { "x-goog-api-key": apiKey, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text }] }],
-        generationConfig: {
-          responseModalities: ["AUDIO"],
-          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: bareVoiceName(voice) } } },
-        },
-      }),
-    },
-  );
+  let res = await callGemini(apiKey, voiceName, text);
+  // Gemini TTS occasionally decides to respond to the text conversationally
+  // instead of just reading it aloud, and refuses with 400 INVALID_ARGUMENT.
+  // Confirmed non-deterministic against the same request (2 of 3 identical
+  // calls succeeded in testing) — one retry clears it almost every time.
+  for (let attempt = 0; !res.ok && res.status === 400 && attempt < 2; attempt++) {
+    res = await callGemini(apiKey, voiceName, text);
+  }
+
   if (res.status === 429) {
-    // Free-tier keys cap this model at 10 requests/minute — easy to hit when
-    // auditioning several voices back to back. Previews are cached per voice,
-    // so this only bites on a first listen (or a render, which is far rarer).
+    // Free-tier keys cap this model at 10 requests/minute.
     const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
     const retryMatch = body?.error?.message?.match(/retry in ([\d.]+)s/i);
     const retrySeconds = retryMatch ? Math.ceil(Number(retryMatch[1])) : null;
@@ -93,6 +94,17 @@ export async function synthesizeSpeech(voice: string, text: string): Promise<Buf
 
   return pcmToWav(Buffer.from(b64, "base64"), 24000, 1, 16);
 }
+
+/** The line every pre-generated preview reads — kept identical to
+ *  scripts/generate-voice-previews.mjs so the on-demand fallback and the
+ *  static files are indistinguishable to a listener. */
+const SAMPLE_SCRIPT = "Hey! This is a quick preview of how I sound.";
+
+// ponytail: in-process cache, so auditioning a not-yet-generated voice twice
+// only spends one of the day's ~10 free TTS calls. Ceiling is process
+// lifetime; it disappears entirely once every voice has a static file.
+const g = globalThis as unknown as { __ptVoicePreviews?: Map<string, Buffer> };
+const cache = (g.__ptVoicePreviews ??= new Map<string, Buffer>());
 
 export async function synthesizeVoicePreview(voice: string): Promise<Buffer> {
   const cached = cache.get(voice);

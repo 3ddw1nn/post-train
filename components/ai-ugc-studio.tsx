@@ -96,6 +96,12 @@ function formatTime(seconds: number) {
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
 }
 
+/** "Kore (Female)" -> "kore" — matches scripts/generate-voice-previews.mjs's
+ *  filenames under public/voice-previews/. */
+function voiceSlug(voice: string) {
+  return voice.replace(/\s*\([^)]*\)\s*$/, "").trim().toLowerCase();
+}
+
 function WizardStepper({
   current,
   onNavigate,
@@ -258,6 +264,39 @@ function MediaSlot({
   );
 }
 
+/** The dark "rendering" tile shared by the Create and Captions sidebars. */
+function RenderingTile({
+  className,
+  elapsed,
+  slow,
+  canceling,
+  onCancel,
+}: {
+  className: string;
+  elapsed: string | null;
+  slow: boolean;
+  canceling: boolean;
+  onCancel: () => void;
+}) {
+  return (
+    <div className={`flex min-h-40 flex-col items-center justify-center gap-1.5 bg-ink p-4 text-center ${className}`}>
+      <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/25 border-t-white" />
+      <p className="text-xs font-bold text-white">
+        {slow ? "Taking longer than usual" : "Your AI creator is rendering"}
+      </p>
+      {elapsed && <p className="text-[11px] font-semibold text-white/70 tabular-nums">{elapsed} elapsed</p>}
+      <button
+        type="button"
+        onClick={onCancel}
+        disabled={canceling}
+        className="mt-1 rounded-md px-2 py-1 text-[11px] font-bold text-white/80 underline underline-offset-2 hover:bg-white/10 hover:text-white disabled:opacity-50"
+      >
+        {canceling ? "Canceling…" : "Cancel render"}
+      </button>
+    </div>
+  );
+}
+
 function DraftPreview({ draft }: { draft: StudioDraftRow }) {
   try {
     const state = JSON.parse(draft.state) as UgcDraftSnapshot;
@@ -328,7 +367,6 @@ export function AiUgcStudio({
   const [voicePreviewStatus, setVoicePreviewStatus] = useState<"idle" | "loading" | "playing">("idle");
   const [voicePreviewError, setVoicePreviewError] = useState("");
   const voicePreviewAudioRef = useRef<HTMLAudioElement | null>(null);
-  const voicePreviewUrlRef = useRef<string | null>(null);
   const [cta, setCta] = useState<ComposerMedia | null>(null);
 
   const [platformCaptions, setPlatformCaptions] = useState<Record<string, string>>({});
@@ -347,6 +385,7 @@ export function AiUgcStudio({
   const [showValidationErrors, setShowValidationErrors] = useState(false);
   const [renderStartedAt, setRenderStartedAt] = useState<number | null>(null);
   const [renderElapsedSeconds, setRenderElapsedSeconds] = useState(0);
+  const [canceling, setCanceling] = useState(false);
 
   const [drafts, setDrafts] = useState<StudioDraftRow[]>([]);
   const [draftsLoading, setDraftsLoading] = useState(true);
@@ -400,6 +439,11 @@ export function AiUgcStudio({
   const creditsAvailable = aiLeft + aiPurchased;
   const notEnoughCredits = videoCredits > creditsAvailable;
   const rendering = ["queued", "generating", "compositing"].includes(jobStatus);
+  // A normal render lands in ~1-3 minutes. Past this the odds are the render
+  // is stuck rather than slow, so say so and offer a way out instead of
+  // spinning silently — the server's own timeout is the backstop, but that
+  // only fires when a worker is actually running to fire it.
+  const renderIsSlow = rendering && renderElapsedSeconds > 5 * 60;
   const mockMode = personas?.some((persona) => persona.is_demo) ?? false;
 
   function generationSignature() {
@@ -515,6 +559,27 @@ export function AiUgcStudio({
     const timer = window.setInterval(update, 1000);
     return () => window.clearInterval(timer);
   }, [rendering, renderStartedAt]);
+
+  async function cancelRender() {
+    if (!jobId || canceling) return;
+    setCanceling(true);
+    try {
+      const response = await fetch(`/api/app/studio/jobs/${jobId}/cancel`, { method: "POST" });
+      const data = await response.json().catch(() => null);
+      if (!response.ok) throw new Error(data?.error?.message ?? "Could not cancel the render.");
+      setJobStatus("failed");
+      setGenerationError(
+        data?.canceled === false
+          ? "That render already finished — reload to see it."
+          : "Render canceled. Your credits were returned.",
+      );
+      setRenderStartedAt(null);
+    } catch (error) {
+      setGenerationError(error instanceof Error ? error.message : "Could not cancel the render.");
+    } finally {
+      setCanceling(false);
+    }
+  }
 
   useEffect(() => {
     if (mode !== "wizard" || (!campaignName.trim() && !script.trim())) return;
@@ -677,13 +742,7 @@ export function AiUgcStudio({
     }
   }
 
-  useEffect(() => {
-    return () => {
-      if (voicePreviewUrlRef.current) URL.revokeObjectURL(voicePreviewUrlRef.current);
-    };
-  }, []);
-
-  async function toggleVoicePreview() {
+  function toggleVoicePreview() {
     const audio = voicePreviewAudioRef.current;
     if (!audio || !voice) return;
     if (voicePreviewStatus === "playing") {
@@ -692,25 +751,16 @@ export function AiUgcStudio({
     }
     setVoicePreviewError("");
     setVoicePreviewStatus("loading");
-    try {
-      // Fetched as a blob rather than set directly as audio.src so a
-      // non-200 (e.g. the TTS provider's rate limit) surfaces its real
-      // message instead of a generic "media could not be loaded" failure.
-      const response = await fetch(`/api/app/studio/voice-preview?voice=${encodeURIComponent(voice)}`);
-      if (!response.ok) {
-        const data = await response.json().catch(() => null);
-        throw new Error(data?.error?.message ?? "Could not load preview.");
-      }
-      const blob = await response.blob();
-      if (voicePreviewUrlRef.current) URL.revokeObjectURL(voicePreviewUrlRef.current);
-      const url = URL.createObjectURL(blob);
-      voicePreviewUrlRef.current = url;
-      audio.src = url;
-      await audio.play();
-    } catch (error) {
+    // Pre-generated static file (scripts/generate-voice-previews.mjs) — no
+    // round trip to Gemini, so no rate limit and near-instant playback. Not
+    // every voice has one yet (Gemini's free tier allows only ~10 TTS calls a
+    // day, so the set is being filled in over time), and the <audio> onError
+    // handler falls back to synthesizing on demand for the stragglers.
+    audio.src = `/voice-previews/${voiceSlug(voice)}.wav`;
+    audio.play().catch(() => {
       setVoicePreviewStatus("idle");
-      setVoicePreviewError(error instanceof Error ? error.message : "Could not play preview.");
-    }
+      setVoicePreviewError("Could not play preview.");
+    });
   }
 
   async function startGeneration() {
@@ -956,10 +1006,26 @@ export function AiUgcStudio({
             <h2 className="text-lg font-bold text-ink">{STEPS[step]}</h2>
           </div>
           {rendering && (
-            <span className="inline-flex items-center gap-2 rounded-lg bg-primary-soft px-3 py-2 text-xs font-bold text-primary-deep">
-              <span className="h-3.5 w-3.5 animate-spin rounded-full border-2 border-primary/25 border-t-primary" />
-              Generating video in the background
+            <span
+              className={`inline-flex items-center gap-2 rounded-lg px-3 py-2 text-xs font-bold ${
+                renderIsSlow ? "bg-warning-bg text-warning-ink" : "bg-primary-soft text-primary-deep"
+              }`}
+            >
+              <span
+                className={`h-3.5 w-3.5 animate-spin rounded-full border-2 ${
+                  renderIsSlow ? "border-warning-ink/25 border-t-warning-ink" : "border-primary/25 border-t-primary"
+                }`}
+              />
+              {renderIsSlow ? "Still working — this is taking longer than usual" : "Generating video in the background"}
               {renderStartedAt && <span className="tabular-nums">· {formatTime(renderElapsedSeconds)}</span>}
+              <button
+                type="button"
+                onClick={() => void cancelRender()}
+                disabled={canceling}
+                className="ml-1 rounded-md px-1.5 py-0.5 underline underline-offset-2 hover:bg-black/5 disabled:opacity-50"
+              >
+                {canceling ? "Canceling…" : "Cancel"}
+              </button>
             </span>
           )}
         </div>
@@ -1183,7 +1249,7 @@ export function AiUgcStudio({
                       />
                       <button
                         type="button"
-                        onClick={() => void toggleVoicePreview()}
+                        onClick={toggleVoicePreview}
                         disabled={!voice || voicePreviewStatus === "loading"}
                         aria-label={voicePreviewStatus === "playing" ? "Pause voice preview" : "Play voice preview"}
                         className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg border border-line text-muted transition-colors hover:border-primary/45 hover:text-primary-deep disabled:opacity-50"
@@ -1208,6 +1274,20 @@ export function AiUgcStudio({
                       onPause={() => setVoicePreviewStatus((current) => (current === "loading" ? current : "idle"))}
                       onEnded={() => setVoicePreviewStatus("idle")}
                       onError={() => {
+                        const audio = voicePreviewAudioRef.current;
+                        const apiSrc = `/api/app/studio/voice-preview?voice=${encodeURIComponent(voice)}`;
+                        // No pre-generated file for this voice yet — synthesize
+                        // it on demand instead. Guarded so a failure of the
+                        // fallback itself can't loop back into onError forever.
+                        if (audio && !audio.src.includes("/api/")) {
+                          setVoicePreviewStatus("loading");
+                          audio.src = apiSrc;
+                          void audio.play().catch(() => {
+                            setVoicePreviewStatus("idle");
+                            setVoicePreviewError("Could not play preview.");
+                          });
+                          return;
+                        }
                         setVoicePreviewStatus("idle");
                         setVoicePreviewError("Could not load preview.");
                       }}
@@ -1249,15 +1329,13 @@ export function AiUgcStudio({
                     />
                   </div>
                 ) : rendering ? (
-                  <div className="mb-4 flex min-h-40 flex-col items-center justify-center gap-1.5 rounded-xl bg-ink p-4 text-center">
-                    <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/25 border-t-white" />
-                    <p className="text-xs font-bold text-white">Your AI creator is rendering</p>
-                    {renderStartedAt && (
-                      <p className="text-[11px] font-semibold text-white/70 tabular-nums">
-                        {formatTime(renderElapsedSeconds)} elapsed
-                      </p>
-                    )}
-                  </div>
+                  <RenderingTile
+                    className="mb-4 rounded-xl"
+                    elapsed={renderStartedAt ? formatTime(renderElapsedSeconds) : null}
+                    slow={renderIsSlow}
+                    canceling={canceling}
+                    onCancel={() => void cancelRender()}
+                  />
                 ) : null}
                 <MediaSlot
                   label="Product or CTA clip"
@@ -1425,15 +1503,13 @@ export function AiUgcStudio({
                       />
                     </div>
                   ) : rendering ? (
-                    <div className="-mx-4 -mt-4 mb-4 flex min-h-40 flex-col items-center justify-center gap-1.5 rounded-t-xl bg-ink p-4 text-center">
-                      <span className="h-7 w-7 animate-spin rounded-full border-2 border-white/25 border-t-white" />
-                      <p className="text-xs font-bold text-white">Your AI creator is rendering</p>
-                      {renderStartedAt && (
-                        <p className="text-[11px] font-semibold text-white/70 tabular-nums">
-                          {formatTime(renderElapsedSeconds)} elapsed
-                        </p>
-                      )}
-                    </div>
+                    <RenderingTile
+                      className="-mx-4 -mt-4 mb-4 rounded-t-xl"
+                      elapsed={renderStartedAt ? formatTime(renderElapsedSeconds) : null}
+                      slow={renderIsSlow}
+                      canceling={canceling}
+                      onCancel={() => void cancelRender()}
+                    />
                   ) : (
                     generationError && (
                       <div className="-mx-4 -mt-4 mb-4 flex min-h-24 flex-col items-center justify-center gap-1 rounded-t-xl bg-red-50 p-4 text-center">
@@ -1536,15 +1612,27 @@ export function AiUgcStudio({
               ) : rendering ? (
                 <div className="flex min-h-80 flex-col items-center justify-center bg-page/35 p-6 text-center">
                   <span className="h-10 w-10 animate-spin rounded-full border-[3px] border-primary/25 border-t-primary" />
-                  <p className="mt-4 font-bold text-ink">Your AI creator is rendering</p>
+                  <p className="mt-4 font-bold text-ink">
+                    {renderIsSlow ? "Taking longer than usual" : "Your AI creator is rendering"}
+                  </p>
                   {renderStartedAt && (
                     <p className="mt-1 text-xs font-bold uppercase tracking-[0.08em] text-primary-deep tabular-nums">
                       {formatTime(renderElapsedSeconds)} elapsed
                     </p>
                   )}
                   <p className="mt-1 max-w-sm text-sm text-muted">
-                    Keep this page open or come back from Drafts. The finished video will be attached automatically.
+                    {renderIsSlow
+                      ? "Most renders finish in a couple of minutes. You can cancel and try again — cancelling returns your credits."
+                      : "Keep this page open or come back from Drafts. The finished video will be attached automatically."}
                   </p>
+                  <button
+                    type="button"
+                    onClick={() => void cancelRender()}
+                    disabled={canceling}
+                    className="btn-subtle mt-4 !py-1.5 text-sm disabled:opacity-50"
+                  >
+                    {canceling ? "Canceling…" : "Cancel render"}
+                  </button>
                 </div>
               ) : (
                 <div className="flex min-h-72 flex-col items-center justify-center bg-page/35 p-6 text-center">
