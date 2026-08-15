@@ -26,6 +26,10 @@ const apiKey = required("GEMINI_API_KEY");
 const MODEL = "gemini-2.5-flash-preview-tts";
 const SAMPLE_SCRIPT = "Hey! This is a quick preview of how I sound.";
 const OUT_DIR = path.join(process.cwd(), "public", "voice-previews");
+// How long to wait out a rate limit on one voice before deferring it to a
+// later run. Lower it (MAX_RATE_LIMIT_RETRIES=2) to sweep the remaining
+// voices quickly instead of blocking ~60s per retry on a stubborn one.
+const MAX_RATE_LIMIT_RETRIES = Number(process.env.MAX_RATE_LIMIT_RETRIES ?? 10);
 
 // Mirrors lib/replicate-avatar.ts's VOICES — kept in sync by hand since this
 // script can't import that TS module directly. If you add a voice there,
@@ -110,6 +114,7 @@ async function main() {
   mkdirSync(OUT_DIR, { recursive: true });
   let generated = 0;
   let skipped = 0;
+  const deferred = [];
 
   for (const voice of VOICES) {
     const slug = voiceSlug(voice);
@@ -126,9 +131,17 @@ async function main() {
       if (result.rateLimited) {
         attempt++;
         // Retries are cheap (they just wait out Gemini's own suggested
-        // delay), and the free-tier window has been observed recovering
-        // reliably within it — worth being patient rather than giving up.
-        if (attempt > 10) throw new Error(`${voice}: rate-limited too many times in a row, aborting.`);
+        // delay), and the window has been observed recovering reliably
+        // within it — worth being patient rather than giving up.
+        if (attempt > MAX_RATE_LIMIT_RETRIES) {
+          // Give up on THIS voice, not the run. Aborting here used to strand
+          // every voice after it unattempted, so one stubborn voice cost a
+          // whole pass; the script is resumable (it skips existing files),
+          // so the leftovers are just picked up next run.
+          console.log(`skip   ${slug} — still rate-limited after ${attempt - 1} retries, leaving for the next run`);
+          deferred.push(slug);
+          break;
+        }
         console.log(`limit  ${slug} — waiting ${result.retrySeconds}s (attempt ${attempt})`);
         await new Promise((r) => setTimeout(r, result.retrySeconds * 1000));
         continue;
@@ -144,6 +157,9 @@ async function main() {
   }
 
   console.log(`\n${generated} generated, ${skipped} already present, ${VOICES.length} total.`);
+  if (deferred.length) {
+    console.log(`${deferred.length} deferred (rate limit): ${deferred.join(", ")} — re-run to pick them up.`);
+  }
 }
 
 main().catch((e) => {
